@@ -1,0 +1,170 @@
+/**
+ * =====================================================
+ * BOM CONTROL SYSTEM V11
+ *
+ * FILE: controller.js
+ *
+ * Меню, полное обновление, установка, диагностика.
+ * =====================================================
+ */
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("BOM CONTROL V11")
+    .addItem("🔄 Обновить систему", "runFullUpdate")
+    .addSeparator()
+    .addItem("📥 Импорт BOM", "runBOMImport")
+    .addItem("📊 Обновить Dashboard", "updateDashboard")
+    .addItem("📦 Проверить получение", "archiveReceivedMaterials")
+    .addSeparator()
+    .addItem("🔎 Диагностика", "runV11Diagnostic")
+    .addItem("🧪 Тест V11", "runV11Debug")
+    .addItem("🎨 Тест цветов", "runV11StatusTest")
+    .addSeparator()
+    .addItem("⚙ Установка V11", "installV11")
+    .addToUi();
+}
+
+/**
+ * Полное обновление системы.
+ */
+function runFullUpdate() {
+  const lock = acquireScriptLock();
+  try {
+    logSystem("runFullUpdate", "Старт обновления", "INFO");
+
+    syncV11();
+    saveDeficitChanges();
+
+    recalculateMaterials();
+    syncV11();
+
+    archiveReceivedMaterials();
+    syncV11();
+
+    recalculateMaterials();
+    syncV11();
+
+    updateDeficitSummary();
+    syncV11();
+
+    recalculateBOMState();
+    syncV11();
+
+    applyStatusColors();
+    syncV11();
+
+    updateDashboard();
+    syncV11();
+
+    logSystem("runFullUpdate", "Обновление завершено", "INFO");
+    SpreadsheetApp.getUi().alert("✅ BOM CONTROL V11 обновлена");
+  } catch (error) {
+    logSystem("runFullUpdate", "ОШИБКА: " + error.message, error, "ERROR");
+    SpreadsheetApp.getUi().alert("Ошибка:\n" + error.message);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Запуск импорта BOM из папки Drive.
+ */
+function runBOMImport() {
+  try {
+    syncAllBOM();
+    SpreadsheetApp.getUi().alert("✅ Импорт BOM завершён");
+  } catch (error) {
+    SpreadsheetApp.getUi().alert("Ошибка импорта:\n" + error.message);
+  }
+}
+
+function showBOMImport() {
+  runBOMImport();
+}
+
+/**
+ * Синхронизация Google Sheets.
+ */
+function syncV11() {
+  SpreadsheetApp.flush();
+  Utilities.sleep(500);
+}
+
+/**
+ * Полная проверка системы (наличие листов).
+ */
+function fullSystemCheck() {
+  const result = {};
+  Object.keys(V11_CONFIG.SHEETS).forEach((key) => {
+    result[key] = checkSheetExists(V11_CONFIG.SHEETS[key]);
+  });
+  logSystem("fullSystemCheck", "Проверка завершена", result);
+  return result;
+}
+
+/**
+ * Обновление одного BOM.
+ */
+function updateSingleBOM(bom) {
+  if (!bom) {
+    return;
+  }
+  const data = getMaterialsByBOM(bom);
+  if (!data || !data.length) {
+    return;
+  }
+  recalculateBOMState();
+  applyStatusColors();
+  updateDashboard();
+  logSystem("updateSingleBOM", "BOM обновлен: " + bom, "INFO");
+}
+
+function getMaterialsByBOM(bom) {
+  const index = buildMaterialIndex();
+  const C = V11_CONFIG.MATERIAL_COLUMNS;
+  const result = [];
+  for (const m of index.values()) {
+    if (normalizeMaterialId(m.values[C.BOM - 1]) === normalizeMaterialId(bom)) {
+      result.push(m);
+    }
+  }
+  return result;
+}
+
+/**
+ * Установка системы.
+ */
+function installV11() {
+  const lock = acquireScriptLock();
+  try {
+    ensureAllSheets();
+    formatAllSheets();
+    installV11Triggers();
+    logSystem("installV11", "Система установлена", "INFO");
+    SpreadsheetApp.getUi().alert("BOM Control System V11 установлена");
+  } catch (error) {
+    SpreadsheetApp.getUi().alert("Ошибка установки V11: " + error.message);
+    logSystem("installV11", error.message, error, "ERROR");
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Восстановление системы.
+ */
+function rebuildV11() {
+  logSystem("rebuildV11", "Начато восстановление", "INFO");
+  installV11();
+  syncV11();
+  runFullUpdate();
+  logSystem("rebuildV11", "Восстановление завершено", "INFO");
+}
+
+/**
+ * Проверка существования листа.
+ */
+function checkSheetExists(name) {
+  return Boolean(SpreadsheetApp.getActive().getSheetByName(name));
+}
