@@ -120,7 +120,8 @@ function recalculateBOMState() {
       } else if (item.waiting > 0) {
         status = V11_CONFIG.BOM_STATUS.YELLOW;
       } else {
-        status = V11_CONFIG.BOM_STATUS.GREEN;
+        // Позиции на складе, но не все получены производством — не «Готов»
+        status = V11_CONFIG.BOM_STATUS.YELLOW;
       }
 
       // Готовность = число полученных позиций

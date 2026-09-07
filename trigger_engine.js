@@ -69,31 +69,36 @@ function v11OnEdit(e) {
     const column = e.range.getColumn();
 
     if (name === V11_CONFIG.SHEETS.DEFICIT_SUMMARY) {
-      if (column === V11_CONFIG.DEFICIT_COLUMNS.RECEIVED && row > 1) {
-        processSummaryReceived(row);
-        refreshAfterChange();
-      }
-      if (column === V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY && row > 1) {
-        processSummaryCheckbox(row);
-        refreshAfterChange();
-      }
-      if (column === V11_CONFIG.DEFICIT_COLUMNS.EXPECTED_DATE && row > 1) {
-        const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
-        const date = e.range.getValue();
-        eventDeliveryDateChanged(id, date);
-        refreshAfterChange();
-      }
-      if (column === V11_CONFIG.DEFICIT_COLUMNS.DEADLINE_DATE && row > 1) {
-        const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
-        const date = e.range.getValue();
-        eventDeadlineDateChanged(id, date);
-        refreshAfterChange();
-      }
-      if (column === V11_CONFIG.DEFICIT_COLUMNS.ORDERED && row > 1) {
-        const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
-        const qty = e.range.getValue();
-        eventMaterialOrdered(id, qty);
-        refreshAfterChange();
+      let handled = false;
+      try {
+        if (column === V11_CONFIG.DEFICIT_COLUMNS.RECEIVED && row > 1) {
+          handled = true;
+          processSummaryReceived(row);
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY && row > 1) {
+          handled = true;
+          processSummaryCheckbox(row);
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.EXPECTED_DATE && row > 1) {
+          handled = true;
+          const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
+          const date = e.range.getValue();
+          eventDeliveryDateChanged(id, date);
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.DEADLINE_DATE && row > 1) {
+          handled = true;
+          const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
+          const date = e.range.getValue();
+          eventDeadlineDateChanged(id, date);
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.ORDERED && row > 1) {
+          handled = true;
+          const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
+          const qty = e.range.getValue();
+          eventMaterialOrdered(id, qty);
+        }
+      } catch (error) {
+        logSystem("v11OnEdit", "DEFICIT_SUMMARY обработка: " + error.message, error, "ERROR");
+      } finally {
+        if (handled) {
+          refreshAfterChange();
+        }
       }
     }
 
