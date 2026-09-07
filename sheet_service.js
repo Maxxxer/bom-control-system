@@ -141,14 +141,16 @@ function formatAllSheets() {
  * Батч-обновление ячеек одного листа.
  *
  * changes: [{row, col, value}]
- * Группирует по (row, col) и пишет один раз через RangeList.
+ * Пишет каждую ячейку отдельно (Range.setValue), т.к. у RangeList
+ * в Apps Script нет метода setValues для записи разных значений.
  */
 function batchWrite(sheet, changes) {
   if (!changes || changes.length === 0) {
     return;
   }
-  const rangeList = changes.map((c) => sheet.getRange(c.row, c.col));
-  rangeList.setValues(changes.map((c) => [c.value]));
+  changes.forEach((c) => {
+    sheet.getRange(c.row, c.col).setValue(c.value);
+  });
 }
 
 /**
