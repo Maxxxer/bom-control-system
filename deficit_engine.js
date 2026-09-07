@@ -104,7 +104,7 @@ function updateDeficitSummary() {
       target.getRange(1, 1, 1, expectedHeader.length).setValues([expectedHeader]);
     }
 
-    createDeliveryCheckboxes();
+    createDeliveryCheckboxes(result.length);
     flushSheets();
 
     logSystem("updateDeficitSummary", "Материалов в сводке: " + result.length, "INFO");
@@ -192,16 +192,23 @@ function saveDeficitChanges() {
 /**
  * Чекбоксы «Получено» (кол 1) и «Реальная поставка» (кол 11).
  */
-function createDeliveryCheckboxes() {
+function createDeliveryCheckboxes(rowCount) {
   const sheet = getSheetByKey("DEFICIT_SUMMARY");
-  const rows = sheet.getLastRow() - 1;
-  if (rows <= 0) {
+  const lastRow = sheet.getLastRow();
+  const maxRows = Math.max(lastRow - 1, rowCount || 0);
+  if (maxRows <= 0) {
     return;
   }
-  sheet.getRange(2, V11_CONFIG.DEFICIT_COLUMNS.RECEIVED, rows, 1)
-    .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
-  sheet.getRange(2, V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY, rows, 1)
-    .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  // Очистить старые чекбоксы, чтобы они не оставались на пустых строках
+  sheet.getRange(2, V11_CONFIG.DEFICIT_COLUMNS.RECEIVED, maxRows, 1).clearDataValidations();
+  sheet.getRange(2, V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY, maxRows, 1).clearDataValidations();
+
+  if (rowCount > 0) {
+    sheet.getRange(2, V11_CONFIG.DEFICIT_COLUMNS.RECEIVED, rowCount, 1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+    sheet.getRange(2, V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY, rowCount, 1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  }
 }
 
 /**

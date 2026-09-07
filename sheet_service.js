@@ -76,7 +76,9 @@ function clearRange(sheet, row, col, numRows, numCols) {
   if (numRows <= 0 || numCols <= 0) {
     return;
   }
-  sheet.getRange(row, col, numRows, numCols).clearContent();
+  const range = sheet.getRange(row, col, numRows, numCols);
+  range.clearContent();
+  range.clearDataValidations();
 }
 
 /**
