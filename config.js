@@ -382,7 +382,7 @@ const V11_CONFIG = {
    * FOLDER_ID — заполнить ID папки с актуальными файлами BOM.
    */
   DRIVE: {
-    FOLDER_ID: "",
+    FOLDER_ID: "1Y7YoqpFcZuJ1shnvw3h9sWZFWkNiEZfR",
     ALLOWED_MIME: [
       "application/vnd.google-apps.spreadsheet",
       "text/csv"
