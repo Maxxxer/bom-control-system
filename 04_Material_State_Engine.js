@@ -1505,32 +1505,6 @@ function recalculateMaterialStatus(materialId){
 
 
 }
-/**
- * =====================================================
- * Безопасное преобразование числа
- * =====================================================
- */
-
-function parseMaterialNumber(value){
-
-
-  const n =
-    Number(value);
-
-
-
-  if(
-    isNaN(n)
-  ){
-
-    return 0;
-
-  }
-
-
-  return n;
-
-}
 
 
 

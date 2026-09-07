@@ -497,6 +497,9 @@ function addSystemEvent(data){
     new Date(),
 
 
+    generateEventId(),
+
+
     data.eventType || "",
 
 
@@ -506,10 +509,10 @@ function addSystemEvent(data){
     data.bom || "",
 
 
-    data.comment || "",
+    getCurrentUser(),
 
 
-    getCurrentUser()
+    data.comment || ""
 
 
   ]);

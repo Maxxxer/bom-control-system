@@ -455,6 +455,9 @@ function getStatusColor(status){
 
   status = String(status).trim();
 
+  /* Срез ведущих эмодзи, чтобы цвета BOM-статусов работали */
+  status = status.replace(/^[^A-Za-zА-Яа-яЁё0-9]+/, "");
+
 
   switch(status){
 

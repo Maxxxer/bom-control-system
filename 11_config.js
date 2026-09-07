@@ -144,11 +144,11 @@ DEFICIT_SUMMARY:
 
 
 BOM_STATE:
-6,
+11,
 
 
 BOM_REVISION:
-5,
+4,
 
 
 MATERIAL_HISTORY:
@@ -156,7 +156,7 @@ MATERIAL_HISTORY:
 
 
 EVENT_LOG:
-5,
+7,
 
 
 SYSTEM_LOG:
@@ -272,13 +272,23 @@ BOM:1,
 
 VERSION:2,
 
-TOTAL_MATERIALS:3,
+DATE_CREATED:3,
 
-READY_MATERIALS:4,
+TOTAL_MATERIALS:4,
 
-STATUS:5,
+DEFICIT:5,
 
-UPDATED:6
+NOT_ORDERED:6,
+
+LAST_DELIVERY:7,
+
+DEADLINE:8,
+
+STATUS:9,
+
+READY:10,
+
+UPDATED:11
 
 },
 
@@ -294,15 +304,13 @@ UPDATED:6
 BOM_REVISION_COLUMNS:{
 
 
-BOM:1,
+DATE:1,
 
-VERSION:2,
+BOM:2,
 
-DATE:3,
+VERSION:3,
 
-USER:4,
-
-COMMENT:5
+USER:4
 
 },
 
@@ -328,9 +336,9 @@ OLD_VALUE:4,
 
 NEW_VALUE:5,
 
-COMMENT:6,
+USER:6,
 
-USER:7
+COMMENT:7
 
 },
 
@@ -348,13 +356,17 @@ EVENT_COLUMNS:{
 
 DATE:1,
 
-EVENT_TYPE:2,
+EVENT_ID:2,
 
-MATERIAL_ID:3,
+EVENT_TYPE:3,
 
-COMMENT:4,
+MATERIAL_ID:4,
 
-USER:5
+BOM:5,
+
+USER:6,
+
+DATA:7
 
 },
 
@@ -443,11 +455,16 @@ DEFICIT_SUMMARY:[
 BOM_STATE:[
 
 "BOM",
-"VERSION",
-"TOTAL",
-"READY",
-"STATUS",
-"UPDATED"
+"Версия",
+"Дата создания",
+"Позиций",
+"Дефицит",
+"Незаказано",
+"Последняя поставка",
+"Крайний срок",
+"Статус",
+"Готовность",
+"Обновлено"
 
 ],
 
@@ -455,11 +472,10 @@ BOM_STATE:[
 
 BOM_REVISION:[
 
+"Дата создания",
 "BOM",
-"VERSION",
-"DATE",
-"USER",
-"COMMENT"
+"Версия",
+"Создал"
 
 ],
 
@@ -467,13 +483,13 @@ BOM_REVISION:[
 
 MATERIAL_HISTORY:[
 
-"DATE",
-"MATERIAL_ID",
-"EVENT",
-"OLD_VALUE",
-"NEW_VALUE",
-"COMMENT",
-"USER"
+"Дата",
+"MaterialID",
+"Событие",
+"Старое значение",
+"Новое значение",
+"Пользователь",
+"Комментарий"
 
 ],
 
@@ -481,11 +497,13 @@ MATERIAL_HISTORY:[
 
 EVENT_LOG:[
 
-"DATE",
-"EVENT_TYPE",
-"MATERIAL_ID",
-"COMMENT",
-"USER"
+"Дата",
+"Event ID",
+"Тип события",
+"MaterialID",
+"BOM",
+"Пользователь",
+"Данные"
 
 ],
 

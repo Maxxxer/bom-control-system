@@ -165,13 +165,12 @@ V11_CONFIG.SHEETS.SYSTEM_LOG
 const headers = [
 
 "Дата",
-"Тип",
 "Функция",
-"Пользователь",
 "Сообщение",
+"Уровень",
 "Данные"
 
-];
+  ];
 
 
 
@@ -201,6 +200,101 @@ logSystem(
 "SYSTEM_LOG создан"
 
 );
+
+
+}
+/**
+ * =====================================================
+ * Запись в SYSTEM_LOG
+ *
+ * Сигнатуры вызовов:
+ * logSystem(fn, msg)
+ * logSystem(fn, msg, data)
+ * logSystem(fn, msg, data, level)
+ * logSystem(fn, msg, level) — из safeSystemLog
+ * =====================================================
+ */
+function logSystem(
+  functionName,
+  message,
+  data,
+  level
+){
+
+
+  const ss =
+    SpreadsheetApp
+      .getActive();
+
+
+
+  const sheet =
+    ss.getSheetByName(
+      V11_CONFIG.SHEETS.SYSTEM_LOG
+    );
+
+
+
+  if(!sheet)
+    return;
+
+
+
+  /**
+   * Нормализация аргументов:
+   * если data — строка-уровень, то это level
+   */
+  if(
+    typeof data === "string" &&
+    (
+      data === "INFO" ||
+      data === "ERROR" ||
+      data === "WARNING" ||
+      data === "WARN" ||
+      data === "DEBUG"
+    )
+  ){
+
+    level = data;
+
+    data = "";
+
+  }
+
+
+
+  let dataText = "";
+
+  if(data){
+    dataText =
+      typeof data === "string"
+      ?
+      data
+      :
+      JSON.stringify(data);
+  }
+
+
+
+  sheet.appendRow([
+
+
+    new Date(),
+
+
+    functionName,
+
+
+    message,
+
+
+    level || "INFO",
+
+
+    dataText
+
+
+  ]);
 
 
 }

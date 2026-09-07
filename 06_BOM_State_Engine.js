@@ -59,7 +59,6 @@ throw new Error(
 
 
 
-
 const data =
 materialSheet
 .getDataRange()
@@ -78,9 +77,7 @@ return [];
 
 
 
-
 const bomMap = {};
-
 
 
 
@@ -178,7 +175,23 @@ waiting:0,
 stock:0,
 
 
-received:0
+received:0,
+
+
+created:
+row[
+V11_CONFIG
+.MATERIAL_COLUMNS
+.UPDATED-1
+]
+||
+"",
+
+
+maxExpected:null,
+
+
+maxDeadline:null
 
 
 };
@@ -189,14 +202,12 @@ received:0
 
 
 
-
 const item =
 bomMap[bom];
 
 
 
 item.total++;
-
 
 
 
@@ -266,6 +277,30 @@ V11_CONFIG
 ];
 
 
+/* Отслеживание максимальных дат */
+if(expected){
+  const d =
+    new Date(expected);
+  if(
+    !item.maxExpected ||
+    isNaN(item.maxExpected) ||
+    d > new Date(item.maxExpected)
+  ){
+    item.maxExpected = expected;
+  }
+}
+
+if(deadline){
+  const d =
+    new Date(deadline);
+  if(
+    !item.maxDeadline ||
+    isNaN(item.maxDeadline) ||
+    d > new Date(item.maxDeadline)
+  ){
+    item.maxDeadline = deadline;
+  }
+}
 
 
 
@@ -289,7 +324,6 @@ continue;
 
 
 
-
 /**
  * Получено производством
  */
@@ -301,7 +335,6 @@ item.received++;
 continue;
 
 }
-
 
 
 
@@ -319,7 +352,6 @@ item.stock++;
 continue;
 
 }
-
 
 
 
@@ -342,7 +374,6 @@ continue;
 
 
 
-
 /**
  * Частичный заказ
  */
@@ -357,7 +388,6 @@ item.partial++;
 continue;
 
 }
-
 
 
 
@@ -397,11 +427,7 @@ item.waiting++;
 
 
 
-
 }
-
-
-
 
 
 const output=[];
@@ -489,14 +515,19 @@ V11_CONFIG
 
 /**
  *
- * BOM_STATE:
+ * BOM_STATE (11 колонок):
  *
  * 1 BOM
- * 2 VERSION
- * 3 TOTAL_MATERIALS
- * 4 READY_MATERIALS
- * 5 STATUS
- * 6 UPDATED
+ * 2 Версия
+ * 3 Дата создания
+ * 4 Позиций
+ * 5 Дефицит
+ * 6 Незаказано
+ * 7 Последняя поставка
+ * 8 Крайний срок
+ * 9 Статус
+ * 10 Готовность
+ * 11 Обновлено
  *
  */
 
@@ -510,13 +541,28 @@ bom,
 item.version,
 
 
+item.created || "",
+
+
 item.total,
 
 
-item.ready,
+item.notOrdered + item.partial,
+
+
+item.notOrdered,
+
+
+item.maxExpected || "",
+
+
+item.maxDeadline || "",
 
 
 status,
+
+
+item.ready,
 
 
 new Date()
@@ -527,7 +573,6 @@ new Date()
 
 
 });
-
 
 
 
@@ -560,7 +605,6 @@ V11_CONFIG
 
 
 }
-
 
 
 
@@ -621,7 +665,6 @@ logSystem(
 error.message
 
 );
-
 
 return [];
 
