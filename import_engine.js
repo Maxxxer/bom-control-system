@@ -105,15 +105,20 @@ function parseBOMFile(file) {
   };
 
   const materials = [];
+  const nameCol = idx.name;
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r[0]) {
       continue;
     }
+    const name = nameCol !== -1 ? String(r[nameCol] || "").trim() : "";
+    if (!name) {
+      continue;
+    }
     materials.push({
       row: idx.row !== -1 ? toNumber(r[idx.row]) : i,
       code: idx.code !== -1 ? r[idx.code] : "",
-      name: idx.name !== -1 ? r[idx.name] : "",
+      name: name,
       unit: idx.unit !== -1 ? r[idx.unit] : "",
       qty: idx.qty !== -1 ? toNumber(r[idx.qty]) : 0,
       deadline: idx.deadline !== -1 ? r[idx.deadline] : ""

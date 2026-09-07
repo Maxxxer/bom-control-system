@@ -197,6 +197,9 @@ function validateBOMMaterial(material) {
   if (material.row === undefined || material.row === null) {
     throw new Error("Не указан BOM_ROW");
   }
+  if (!String(material.name || "").trim()) {
+    throw new Error("Не указано наименование материала");
+  }
 }
 
 /**
