@@ -73,6 +73,9 @@ function processEvent(event) {
       case E.DELIVERY_DATE_CHANGED:
         updateExpectedDeliveryDate(event.materialId, event.data && event.data.newDate);
         break;
+      case E.DEADLINE_DATE_CHANGED:
+        updateDeadlineDate(event.materialId, event.data && event.data.newDate);
+        break;
       case E.MATERIAL_ORDERED:
         updateMaterialOrder(event.materialId, event.data && event.data.quantity);
         break;
@@ -123,6 +126,10 @@ function eventCancelMaterialReceived(materialId) {
 
 function eventDeliveryDateChanged(materialId, newDate) {
   createEvent(V11_CONFIG.EVENTS.DELIVERY_DATE_CHANGED, { materialId: materialId, newDate: newDate });
+}
+
+function eventDeadlineDateChanged(materialId, newDate) {
+  createEvent(V11_CONFIG.EVENTS.DEADLINE_DATE_CHANGED, { materialId: materialId, newDate: newDate });
 }
 
 function eventMaterialOrdered(materialId, quantity) {

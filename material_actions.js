@@ -101,6 +101,23 @@ function updateExpectedDeliveryDate(materialId, newDate, index) {
 }
 
 /**
+ * Изменение крайнего срока
+ */
+function updateDeadlineDate(materialId, newDate, index) {
+  updateMaterialState(materialId, {
+    DEADLINE_DATE: newDate
+  }, index);
+
+  recalculateMaterialStatus(materialId, index);
+
+  addSystemEvent({
+    eventType: V11_CONFIG.EVENTS.DEADLINE_DATE_CHANGED,
+    materialId: materialId,
+    comment: "Изменён крайний срок"
+  });
+}
+
+/**
  * Изменение количества заказа
  */
 function updateMaterialOrder(materialId, quantity, index) {

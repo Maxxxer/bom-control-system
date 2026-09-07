@@ -83,6 +83,12 @@ function v11OnEdit(e) {
         eventDeliveryDateChanged(id, date);
         refreshAfterChange();
       }
+      if (column === V11_CONFIG.DEFICIT_COLUMNS.DEADLINE_DATE && row > 1) {
+        const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
+        const date = e.range.getValue();
+        eventDeadlineDateChanged(id, date);
+        refreshAfterChange();
+      }
     }
 
     if (name.indexOf("BOM_") === 0) {
@@ -100,6 +106,7 @@ function v11ScheduledUpdate() {
   const lock = acquireScriptLock();
   try {
     setV11Busy(true);
+    saveDeficitChanges();
     archiveReceivedMaterials();
     recalculateMaterials();
     updateDeficitSummary();
@@ -121,6 +128,7 @@ function refreshAfterChange() {
   const lock = acquireScriptLock();
   try {
     setV11Busy(true);
+    saveDeficitChanges();
     recalculateMaterials();
     recalculateBOMState();
     updateDeficitSummary();
