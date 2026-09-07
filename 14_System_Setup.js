@@ -109,13 +109,11 @@ error.message
 
 );
 
-
 }
 
 
 
 }
-
 
 
 
@@ -151,17 +149,13 @@ if(
 
 ss.insertSheet(name);
 
-
 }
 
 
 
 });
 
-
 }
-
-
 
 
 
@@ -237,9 +231,6 @@ V11_CONFIG.SHEETS.MATERIAL_STATE,
 
 
 
-
-
-
 /**
  * BOM Revision
  */
@@ -266,10 +257,7 @@ V11_CONFIG.SHEETS.BOM_REVISION,
 
 );
 
-
 }
-
-
 
 
 
@@ -288,6 +276,8 @@ V11_CONFIG.SHEETS.DEFICIT_SUMMARY,
 
 
 [
+
+"Получено",
 
 "MaterialID",
 
@@ -316,10 +306,7 @@ V11_CONFIG.SHEETS.DEFICIT_SUMMARY,
 
 );
 
-
 }
-
-
 
 
 
@@ -375,8 +362,6 @@ V11_CONFIG.SHEETS.BOM_STATE,
 
 
 
-
-
 /**
  * Dashboard
  */
@@ -412,10 +397,7 @@ V11_CONFIG.SHEETS.DASHBOARD,
 
 );
 
-
 }
-
-
 
 
 
@@ -454,10 +436,7 @@ V11_CONFIG.SHEETS.MATERIAL_HISTORY,
 
 );
 
-
 }
-
-
 
 
 
@@ -496,10 +475,7 @@ V11_CONFIG.SHEETS.EVENT_LOG,
 
 );
 
-
 }
-
-
 
 
 
@@ -532,13 +508,9 @@ V11_CONFIG.SHEETS.SYSTEM_LOG,
 
 ]
 
-
 );
 
-
 }
-
-
 
 
 
@@ -585,10 +557,7 @@ V11_CONFIG.SHEETS.ARCHIVE,
 
 );
 
-
 }
-
-
 
 
 
@@ -630,13 +599,11 @@ headers.length
 headers
 ]);
 
-
 }
 
 
+
 }
-
-
 
 
 
@@ -683,7 +650,6 @@ sheet.getLastColumn()
 .setFontWeight(
 "bold"
 );
-
 
 }
 

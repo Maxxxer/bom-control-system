@@ -52,10 +52,50 @@ throw new Error(
 
 
 /*
+ Определяем схему: новая (12 колонок) или старая (11)
+*/
+
+const headerFirst =
+String(
+target.getRange(1,1).getValue()
+);
+
+const isNewSchema =
+headerFirst ===
+"Получено";
+
+
+/*
+ Индексы колонок в зависимости от схемы
+*/
+
+const oldMaterialIdIdx =
+isNewSchema ?
+(V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID - 1)
+:
+0;
+
+const oldRealDeliveryIdx =
+isNewSchema ?
+(V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY - 1)
+:
+9;
+
+const oldReceivedIdx =
+isNewSchema ?
+(V11_CONFIG.DEFICIT_COLUMNS.RECEIVED - 1)
+:
+0;
+
+
+
+/*
  Сохраняем чекбоксы
 */
 
 const oldCheckbox={};
+
+const oldReceived={};
 
 
 
@@ -73,7 +113,7 @@ target
 2,
 1,
 oldLastRow-1,
-11
+V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY
 )
 .getValues();
 
@@ -83,17 +123,20 @@ oldData.forEach(row=>{
 
 
 const id =
-row[
-V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID-1
-];
+row[oldMaterialIdIdx];
 
 
 if(id){
 
 oldCheckbox[id] =
-row[
-V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY-1
-] === true;
+row[oldRealDeliveryIdx] === true;
+
+if(isNewSchema){
+
+oldReceived[id] =
+row[oldReceivedIdx] === true;
+
+}
 
 }
 
@@ -102,8 +145,6 @@ V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY-1
 
 
 }
-
-
 
 
 
@@ -151,6 +192,22 @@ continue;
 
 }
 
+
+
+/*
+ Архивные материалы убираем
+*/
+
+if(
+row[
+V11_CONFIG.MATERIAL_COLUMNS.STATE-1
+] ===
+V11_CONFIG.MATERIAL_STATE.ARCHIVED
+){
+
+continue;
+
+}
 
 
 
@@ -240,8 +297,9 @@ V11_CONFIG.MATERIAL_STATUS.ORDERED_ON_TIME;
 
 
 
-
 result.push([
+
+oldReceived[materialId] || false,
 
 
 materialId,
@@ -290,8 +348,6 @@ status
 
 
 
-
-
 /*
  Очистка старых данных
 */
@@ -309,14 +365,12 @@ target
 2,
 1,
 rowsToClear,
-11
+V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY
 )
 .clearContent();
 
 
 }
-
-
 
 
 
@@ -332,9 +386,50 @@ target
 2,
 1,
 result.length,
-11
+V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY
 )
 .setValues(result);
+
+
+}
+
+
+
+/*
+ Обновление заголовка (миграция на 12 колонок)
+*/
+
+const currentHeader =
+target
+.getRange(
+1,
+1,
+1,
+V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY
+)
+.getValues()[0];
+
+
+
+const expectedHeader =
+V11_CONFIG.HEADERS.DEFICIT_SUMMARY;
+
+
+
+if(
+currentHeader.join("|") !==
+expectedHeader.join("|")
+){
+
+
+target
+.getRange(
+1,
+1,
+1,
+expectedHeader.length
+)
+.setValues([expectedHeader]);
 
 
 }
@@ -357,9 +452,8 @@ logSystem(
 
 );
 
-
-
 }
+
 
 
 
@@ -400,7 +494,6 @@ Number(result[0])
 
 
 }
-
 
 
 
@@ -449,14 +542,13 @@ return;
 
 
 
-
 const data =
 sheet
 .getRange(
 2,
 1,
 lastRow-1,
-11
+V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY
 )
 .getValues();
 
@@ -466,11 +558,27 @@ let changed=0;
 
 
 
-
 for(let i=0;i<data.length;i++){
 
 
 const row=data[i];
+
+
+
+/*
+ Строки с чекбоксом "Получено" не сохраняем
+ они будут архивированы
+*/
+
+if(
+row[
+V11_CONFIG.DEFICIT_COLUMNS.RECEIVED-1
+] === true
+){
+
+continue;
+
+}
 
 
 
@@ -483,7 +591,6 @@ V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID-1
 
 if(!materialId)
 continue;
-
 
 
 
@@ -510,8 +617,6 @@ V11_CONFIG.DEFICIT_COLUMNS.DEADLINE_DATE-1
 
 
 
-
-
 const material =
 getMaterialById(
 materialId
@@ -521,7 +626,6 @@ materialId
 
 if(!material)
 continue;
-
 
 
 
@@ -553,8 +657,6 @@ V11_CONFIG.MATERIAL_COLUMNS.DEADLINE_DATE-1
 
 
 
-
-
 if(
 
 oldOrdered===ordered &&
@@ -568,7 +670,6 @@ String(oldDeadline)===String(deadline)
 continue;
 
 }
-
 
 
 
@@ -636,7 +737,6 @@ comment:
 
 });
 
-
 }
 
 
@@ -661,9 +761,8 @@ logSystem(
 
 );
 
-
-
 }
+
 
 
 
@@ -704,6 +803,31 @@ return;
 
 
 
+/*
+ Чекбокс "Получено" (колонка 1)
+*/
+
+sheet
+.getRange(
+2,
+V11_CONFIG.DEFICIT_COLUMNS.RECEIVED,
+rows,
+1
+)
+.setDataValidation(
+
+SpreadsheetApp
+.newDataValidation()
+.requireCheckbox()
+.build()
+
+);
+
+
+
+/*
+ Чекбокс реальной поставки (колонка 11)
+*/
 
 sheet
 .getRange(
@@ -721,8 +845,6 @@ SpreadsheetApp
 
 );
 
-
-
 }
 
 
@@ -732,7 +854,7 @@ SpreadsheetApp
 
 /**
  * =====================================================
- * Обработка поставки
+ * Обработка чекбокса реальной поставки
  * =====================================================
  */
 
@@ -755,7 +877,6 @@ return;
 
 
 
-
 const materialId =
 sheet
 .getRange(
@@ -771,7 +892,6 @@ return;
 
 
 
-
 const checked =
 sheet
 .getRange(
@@ -779,7 +899,6 @@ row,
 V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY
 )
 .getValue();
-
 
 
 
@@ -797,7 +916,130 @@ else{
 cancelRealDelivery(materialId);
 
 
+
 }
+
+
+
+}
+
+
+
+
+
+/**
+ * =====================================================
+ * Обработка чекбокса "Получено производством"
+ *
+ * При отметке материал:
+ * - отмечается полученным производством
+ * - архивируется с отметкой кто и когда
+ * =====================================================
+ */
+
+
+function processSummaryReceived(row){
+
+
+
+const sheet =
+SpreadsheetApp
+.getActive()
+.getSheetByName(
+V11_CONFIG.SHEETS.DEFICIT_SUMMARY
+);
+
+
+
+if(!sheet)
+return;
+
+
+
+const materialId =
+sheet
+.getRange(
+row,
+V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID
+)
+.getValue();
+
+
+
+if(!materialId)
+return;
+
+
+
+const checked =
+sheet
+.getRange(
+row,
+V11_CONFIG.DEFICIT_COLUMNS.RECEIVED
+)
+.getValue();
+
+
+
+if(checked===true){
+
+
+archiveFromDeficitSummary(materialId);
+
+
+
+}
+
+
+
+}
+
+
+
+
+
+/**
+ * =====================================================
+ * Архивация из сводки дефицитов
+ *
+ * 1. Отметка получения производством
+ * 2. Перенос в архив
+ * =====================================================
+ */
+
+
+function archiveFromDeficitSummary(materialId){
+
+
+
+/*
+ Отмечаем получение производством
+*/
+
+confirmMaterialReceived(materialId);
+
+
+
+/*
+ Переносим в архив
+*/
+
+archiveMaterial(materialId);
+
+
+
+SpreadsheetApp.flush();
+
+
+
+logSystem(
+
+"archiveFromDeficitSummary",
+
+"Материал получен и архивирован: "+
+materialId
+
+);
 
 
 
@@ -822,6 +1064,7 @@ saveDeficitChanges();
 
 
 SpreadsheetApp.flush();
+
 
 
 Utilities.sleep(500);

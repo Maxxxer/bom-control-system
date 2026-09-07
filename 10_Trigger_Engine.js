@@ -38,7 +38,6 @@ ScriptApp
 
 
 
-
 /**
  * Ежедневная проверка
  */
@@ -49,7 +48,6 @@ ScriptApp
 .timeBased()
 .everyHours(1)
 .create();
-
 
 
 
@@ -76,10 +74,7 @@ logSystem(
 
 );
 
-
-
 }
-
 
 
 
@@ -107,13 +102,9 @@ ScriptApp
 trigger
 );
 
-
 });
 
-
 }
-
-
 
 
 
@@ -151,10 +142,45 @@ e.range.getColumn();
 
 
 
+/**
+ * Сводка дефицитов:
+ * чекбокс "Получено" (колонка 1)
+ */
+if(
+name ===
+V11_CONFIG.SHEETS.DEFICIT_SUMMARY
+){
+
+
+if(
+column ===
+V11_CONFIG.DEFICIT_COLUMNS.RECEIVED
+&&
+row>1
+){
+
+
+processSummaryReceived(
+row
+);
+
+
+
+refreshAfterChange();
+
+
+
+}
+
+
+
+}
+
 
 
 /**
- * Сводка дефицитов
+ * Сводка дефицитов:
+ * чекбокс реальной поставки
  */
 if(
 name ===
@@ -189,9 +215,6 @@ refreshAfterChange();
 
 
 
-
-
-
 /**
  * Изменение ожидаемой даты
  */
@@ -214,7 +237,7 @@ const id =
 sheet
 .getRange(
 row,
-1
+V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID
 )
 .getValue();
 
@@ -249,8 +272,6 @@ refreshAfterChange();
 
 
 
-
-
 /**
  * Изменение BOM
  */
@@ -266,7 +287,6 @@ checkBOMRevision();
 
 
 }
-
 
 
 
@@ -297,8 +317,6 @@ error.message
 
 
 
-
-
 /**
  * Обновление после события
  */
@@ -313,7 +331,6 @@ applyStatusColors();
 
 
 }
-
 
 
 
@@ -360,7 +377,6 @@ error.message
 
 
 
-
 /**
  * Защита от параллельного запуска
  */
@@ -383,8 +399,8 @@ lock
 
 return lock;
 
-
 }
+
 
 
 
@@ -417,9 +433,6 @@ finally{
 
 lock.releaseLock();
 
-
 }
-
-
 
 }

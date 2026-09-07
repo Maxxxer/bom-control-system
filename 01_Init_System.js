@@ -113,7 +113,6 @@ function createSheetIfMissing(
     sheet =
       ss.insertSheet(name);
 
-
   }
 
 
@@ -407,12 +406,14 @@ return [
 
 
 /**
- * DEFICIT_SUMMARY (11 колонок)
+ * DEFICIT_SUMMARY (12 колонок)
  */
 function getSummaryHeaders(){
 
 
 return [
+
+"Получено",
 
 "MaterialID",
 
