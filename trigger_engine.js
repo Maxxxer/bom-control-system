@@ -89,6 +89,12 @@ function v11OnEdit(e) {
         eventDeadlineDateChanged(id, date);
         refreshAfterChange();
       }
+      if (column === V11_CONFIG.DEFICIT_COLUMNS.ORDERED && row > 1) {
+        const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
+        const qty = e.range.getValue();
+        eventMaterialOrdered(id, qty);
+        refreshAfterChange();
+      }
     }
 
     if (name.indexOf("BOM_") === 0) {

@@ -60,8 +60,12 @@ function updateDeficitSummary() {
       const expected = row[C.EXPECTED_DATE - 1] || "";
       const deadline = row[C.DEADLINE_DATE - 1] || "";
 
+      const realDelivery = row[C.REAL_DELIVERY - 1] === true;
+
       let status;
-      if (ordered <= 0) {
+      if (realDelivery) {
+        status = V11_CONFIG.MATERIAL_STATUS.STOCK;
+      } else if (ordered <= 0) {
         status = V11_CONFIG.MATERIAL_STATUS.NOT_ORDERED;
       } else if (ordered < required) {
         status = V11_CONFIG.MATERIAL_STATUS.PARTIAL_ORDER;
