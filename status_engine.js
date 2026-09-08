@@ -126,7 +126,10 @@ function recalculateMaterials() {
     const data = readSheetValues(sheet);
     const C = V11_CONFIG.MATERIAL_COLUMNS;
 
-    const writes = [];
+    const deficitCol = [];
+    const statusCol = [];
+    const stateCol = [];
+    const updatedCol = [];
     const historyRows = [];
     const eventRows = [];
     let counter = 0;
@@ -135,14 +138,18 @@ function recalculateMaterials() {
       const row = data[i];
       const id = normalizeMaterialId(row[C.MATERIAL_ID - 1]);
       if (!id) {
+        deficitCol.push([""]);
+        statusCol.push([""]);
+        stateCol.push([""]);
+        updatedCol.push([""]);
         continue;
       }
       const result = computeMaterialStatus(row);
 
-      writes.push({ row: i + 1, col: C.DEFICIT, value: result.deficit });
-      writes.push({ row: i + 1, col: C.STATUS, value: result.status });
-      writes.push({ row: i + 1, col: C.STATE, value: result.state });
-      writes.push({ row: i + 1, col: C.UPDATED, value: new Date() });
+      deficitCol.push([result.deficit]);
+      statusCol.push([result.status]);
+      stateCol.push([result.state]);
+      updatedCol.push([new Date()]);
 
       if (result.oldStatus && result.oldStatus !== result.status) {
         eventRows.push({
@@ -164,8 +171,11 @@ function recalculateMaterials() {
       counter++;
     }
 
-    if (writes.length) {
-      batchWrite(sheet, writes);
+    if (deficitCol.length) {
+      sheet.getRange(2, C.DEFICIT, deficitCol.length, 1).setValues(deficitCol);
+      sheet.getRange(2, C.STATUS, statusCol.length, 1).setValues(statusCol);
+      sheet.getRange(2, C.STATE, stateCol.length, 1).setValues(stateCol);
+      sheet.getRange(2, C.UPDATED, updatedCol.length, 1).setValues(updatedCol);
     }
     if (historyRows.length) {
       appendHistoryRows(historyRows);

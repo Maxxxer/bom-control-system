@@ -33,28 +33,16 @@ function runFullUpdate() {
   try {
     logSystem("runFullUpdate", "Старт обновления", "INFO");
 
-    syncV11();
     saveDeficitChanges();
-
     recalculateMaterials();
-    syncV11();
 
     archiveReceivedMaterials();
-    syncV11();
-
-    recalculateMaterials();
-    syncV11();
 
     updateDeficitSummary();
-    syncV11();
-
     recalculateBOMState();
-    syncV11();
-
     applyStatusColors();
-    syncV11();
-
     updateDashboard();
+
     syncV11();
 
     logSystem("runFullUpdate", "Обновление завершено", "INFO");
@@ -88,7 +76,6 @@ function showBOMImport() {
  */
 function syncV11() {
   SpreadsheetApp.flush();
-  Utilities.sleep(500);
 }
 
 /**

@@ -91,8 +91,6 @@ function archiveMaterial(materialId, index) {
     STATUS: V11_CONFIG.MATERIAL_STATUS.ARCHIVED
   }, index);
 
-  flushSheets();
-
   createEvent(V11_CONFIG.EVENTS.MATERIAL_ARCHIVED, {
     materialId: materialId,
     comment: "Материал отправлен в архив"
@@ -121,7 +119,16 @@ function archiveReceivedMaterials() {
       }
     }
 
-    archiveList.forEach((m) => archiveMaterial(m.id));
+    if (archiveList.length) {
+      const index = new Map();
+      for (let i = 1; i < data.length; i++) {
+        const id = normalizeMaterialId(data[i][C.MATERIAL_ID - 1]);
+        if (id) {
+          index.set(id, { row: i + 1, values: data[i] });
+        }
+      }
+      archiveList.forEach((m) => archiveMaterial(m.id, index));
+    }
 
     flushSheets();
 

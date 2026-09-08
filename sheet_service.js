@@ -143,15 +143,52 @@ function formatAllSheets() {
  * Батч-обновление ячеек одного листа.
  *
  * changes: [{row, col, value}]
- * Пишет каждую ячейку отдельно (Range.setValue), т.к. у RangeList
- * в Apps Script нет метода setValues для записи разных значений.
+ * Группирует по строкам и для каждой строки пишет непрерывные
+ * отрезки колонок через Range.setValues — это сокращает число
+ * вызовов SpreadsheetApp по сравнению с записью каждой ячейки.
+ * Промежуточные колонки НЕ затираются (пишем только отрезки).
  */
 function batchWrite(sheet, changes) {
   if (!changes || changes.length === 0) {
     return;
   }
+  const byRow = {};
   changes.forEach((c) => {
-    sheet.getRange(c.row, c.col).setValue(c.value);
+    if (!byRow[c.row]) {
+      byRow[c.row] = {};
+    }
+    byRow[c.row][c.col] = c.value;
+  });
+
+  Object.keys(byRow).forEach((rowStr) => {
+    const row = Number(rowStr);
+    const cols = Object.keys(byRow[rowStr])
+      .map(Number)
+      .sort(function (a, b) { return a - b; });
+
+    let runStart = cols[0];
+    let runEnd = cols[0];
+    const runs = [];
+    for (let i = 1; i < cols.length; i++) {
+      if (cols[i] === runEnd + 1) {
+        runEnd = cols[i];
+      } else {
+        runs.push([runStart, runEnd]);
+        runStart = cols[i];
+        runEnd = cols[i];
+      }
+    }
+    runs.push([runStart, runEnd]);
+
+    runs.forEach((run) => {
+      const cStart = run[0];
+      const cEnd = run[1];
+      const values = [];
+      for (let col = cStart; col <= cEnd; col++) {
+        values.push(byRow[rowStr][col] !== undefined ? byRow[rowStr][col] : "");
+      }
+      sheet.getRange(row, cStart, 1, values.length).setValues([values]);
+    });
   });
 }
 

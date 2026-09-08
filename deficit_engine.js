@@ -130,6 +130,7 @@ function saveDeficitChanges() {
     }
     const data = readRange(sheet, 2, 1, lastRow - 1, V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY);
     const D = V11_CONFIG.DEFICIT_COLUMNS;
+    const index = buildMaterialIndex();
     let changed = 0;
 
     for (let i = 0; i < data.length; i++) {
@@ -145,7 +146,7 @@ function saveDeficitChanges() {
       const ordered = toNumber(row[D.ORDERED - 1]);
       const expected = row[D.EXPECTED_DATE - 1] || "";
       const deadline = row[D.DEADLINE_DATE - 1] || "";
-      const material = getMaterialById(materialId);
+      const material = getMaterialById(materialId, index);
       if (!material) {
         continue;
       }
@@ -166,8 +167,7 @@ function saveDeficitChanges() {
         ORDERED: ordered,
         EXPECTED_DATE: expected,
         DEADLINE_DATE: deadline
-      });
-      flushSheets();
+      }, index);
 
       addMaterialHistory({
         materialId: materialId,
