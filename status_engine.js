@@ -53,6 +53,9 @@ function computeMaterialStatus(row) {
   } else if (ordered <= 0) {
     status = MS.NOT_ORDERED;
     state = MST.DEFICIT;
+  } else if (!expected) {
+    status = MS.DATE_UNKNOWN;
+    state = MST.WAITING;
   } else if (ordered < required) {
     status = MS.PARTIAL_ORDER;
     state = MST.PARTIAL_ORDER;

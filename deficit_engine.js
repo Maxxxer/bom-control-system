@@ -79,6 +79,8 @@ function updateDeficitSummary() {
         status = V11_CONFIG.MATERIAL_STATUS.STOCK;
       } else if (ordered <= 0) {
         status = V11_CONFIG.MATERIAL_STATUS.NOT_ORDERED;
+      } else if (!expected) {
+        status = V11_CONFIG.MATERIAL_STATUS.DATE_UNKNOWN;
       } else if (ordered < required) {
         status = V11_CONFIG.MATERIAL_STATUS.PARTIAL_ORDER;
       } else if (expected && deadline && new Date(expected) > new Date(deadline)) {

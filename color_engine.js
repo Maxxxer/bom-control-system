@@ -27,6 +27,7 @@ function getStatusColor(status) {
   switch (normalized) {
     // Красная зона
     case "Не заказано":
+    case "Дата поставки неизвестна":
     case "Есть незаказанный материал":
     case "Есть незаказанные материалы":
     case "Заказано частично":
