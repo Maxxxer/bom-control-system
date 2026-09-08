@@ -127,6 +127,7 @@ function installV11() {
   try {
     ensureAllSheets();
     formatAllSheets();
+    protectMaterialStateSheet();
     installV11Triggers();
     logSystem("installV11", "Система установлена", "INFO");
     SpreadsheetApp.getUi().alert("BOM Control System V11 установлена");
@@ -135,6 +136,29 @@ function installV11() {
     logSystem("installV11", error.message, error, "ERROR");
   } finally {
     lock.releaseLock();
+  }
+}
+
+/**
+ * Защита листа MATERIAL_STATE от ручного редактирования.
+ * Скрипт (владелец) продолжает иметь доступ к записи.
+ */
+function protectMaterialStateSheet() {
+  const sheet = getSheetByKey("MATERIAL_STATE");
+  const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+  protections.forEach((p) => p.remove());
+  const protection = sheet.protect();
+  protection.setDescription("MATERIAL_STATE защищён от ручного редактирования");
+  protection.setWarningOnly(false);
+  // Дать скрипту (текущему пользователю) возможность писать, чтобы правки из
+  // сводки/импорта сохранялись, не ломая скрипт при защищённом листе.
+  const user = getCurrentUser();
+  if (user && user !== "unknown") {
+    try {
+      protection.addEditor(user);
+    } catch (e) {
+      logSystem("protectMaterialStateSheet", "Не удалось добавить редактора: " + user + " — " + e.message, e, "WARNING");
+    }
   }
 }
 

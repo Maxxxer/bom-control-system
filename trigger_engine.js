@@ -68,6 +68,12 @@ function v11OnEdit(e) {
     const row = e.range.getRow();
     const column = e.range.getColumn();
 
+    // MATERIAL_STATE — центр данных, ручное редактирование запрещено
+    if (name === V11_CONFIG.SHEETS.MATERIAL_STATE) {
+      logSystem("v11OnEdit", "Ручное редактирование MATERIAL_STATE запрещено", "WARNING");
+      return;
+    }
+
     if (name === V11_CONFIG.SHEETS.DEFICIT_SUMMARY) {
       let handled = false;
       try {
@@ -124,6 +130,7 @@ function v11ScheduledUpdate() {
     recalculateBOMState();
     applyStatusColors();
     updateDashboard();
+    exportBOMMaterialsToDrive();
   } catch (error) {
     logSystem("v11ScheduledUpdate", error.message, error, "ERROR");
   } finally {

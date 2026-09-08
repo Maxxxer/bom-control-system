@@ -21,9 +21,12 @@ function updateDeficitSummary() {
     const C = V11_CONFIG.MATERIAL_COLUMNS;
     const D = V11_CONFIG.DEFICIT_COLUMNS;
 
-    // Сохранить старые чекбоксы
+    // Сохранить старые чекбоксы и ручные значения (чтобы перерисовка не стирала их)
     const oldCheckbox = {};
     const oldReceived = {};
+    const manualExpected = {};
+    const manualDeadline = {};
+    const manualOrdered = {};
     const oldLastRow = target.getLastRow();
     if (oldLastRow > 1) {
       const oldData = readRange(target, 2, 1, oldLastRow - 1, V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY);
@@ -32,6 +35,9 @@ function updateDeficitSummary() {
         if (id) {
           oldCheckbox[id] = row[D.REAL_DELIVERY - 1] === true;
           oldReceived[id] = row[D.RECEIVED - 1] === true;
+          manualExpected[id] = row[D.EXPECTED_DATE - 1];
+          manualDeadline[id] = row[D.DEADLINE_DATE - 1];
+          manualOrdered[id] = row[D.ORDERED - 1];
         }
       });
     }
@@ -55,10 +61,16 @@ function updateDeficitSummary() {
       }
 
       const required = toNumber(row[C.REQUIRED - 1]);
-      const ordered = toNumber(row[C.ORDERED - 1]);
+      const ordered = toNumber(row[C.ORDERED - 1]) || toNumber(manualOrdered[materialId]) || 0;
       const deficit = Math.max(required - toNumber(row[C.RESERVED - 1]) - ordered, 0);
-      const expected = row[C.EXPECTED_DATE - 1] || "";
-      const deadline = row[C.DEADLINE_DATE - 1] || "";
+      const expVal = row[C.EXPECTED_DATE - 1];
+      const expected = (expVal !== "" && expVal !== null && expVal !== undefined)
+        ? expVal
+        : (manualExpected[materialId] || "");
+      const deadlineVal = row[C.DEADLINE_DATE - 1];
+      const deadline = (deadlineVal !== "" && deadlineVal !== null && deadlineVal !== undefined)
+        ? deadlineVal
+        : (manualDeadline[materialId] || "");
 
       const realDelivery = row[C.REAL_DELIVERY - 1] === true;
 
@@ -157,8 +169,8 @@ function saveDeficitChanges() {
 
       if (
         oldOrdered === ordered &&
-        String(oldExpected) === String(expected) &&
-        String(oldDeadline) === String(deadline)
+        normalizeDateValue(oldExpected) === normalizeDateValue(expected) &&
+        normalizeDateValue(oldDeadline) === normalizeDateValue(deadline)
       ) {
         continue;
       }

@@ -78,6 +78,22 @@ function toDate(value) {
 }
 
 /**
+ * Нормализация значения даты для сравнения.
+ * Возвращает timestamp (число) или "" — чтобы Date/строка/пусто
+ * сравнивались единообразно без ложных срабатываний из-за таймзоны.
+ */
+function normalizeDateValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  const d = new Date(value);
+  if (isNaN(d.getTime())) {
+    return String(value).trim();
+  }
+  return d.getTime();
+}
+
+/**
  * Пустая строка-заглушка для диапазона
  */
 function emptyArray(length) {
