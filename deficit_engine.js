@@ -6,8 +6,23 @@
  *
  * Сводка дефицитов: обновление, сохранение ручных изменений,
  * обработка чекбоксов «Получено» и «Реальная поставка».
+ * По ТЗ «Требуется» (кол. 8) = дефицит = Требуется − Зарезервировано.
  * =====================================================
  */
+
+/**
+ * Маппинг колонки сводки на имя поля для проверки прав.
+ */
+function getDeficitFieldName(column) {
+  const D = V11_CONFIG.DEFICIT_COLUMNS;
+  if (column === D.RECEIVED) return "RECEIVED";
+  if (column === D.REQUIRED) return "REQUIRED";
+  if (column === D.ORDERED) return "ORDERED";
+  if (column === D.EXPECTED_DATE) return "EXPECTED_DATE";
+  if (column === D.DEADLINE_DATE) return "DEADLINE_DATE";
+  if (column === D.REAL_DELIVERY) return "REAL_DELIVERY";
+  return "";
+}
 
 /**
  * Обновление сводки дефицитов.
@@ -60,9 +75,12 @@ function updateDeficitSummary() {
         continue;
       }
 
-      const required = toNumber(row[C.REQUIRED - 1]);
+      const rawRequired = toNumber(row[C.REQUIRED - 1]);
+      const reserved = toNumber(row[C.RESERVED - 1]);
+      // ТЗ: дефицит = Требуется − Зарезервировано (без вычета заказанного)
+      const deficit = Math.max(rawRequired - reserved, 0);
+
       const ordered = toNumber(row[C.ORDERED - 1]) || toNumber(manualOrdered[materialId]) || 0;
-      const deficit = Math.max(required - toNumber(row[C.RESERVED - 1]) - ordered, 0);
       const expVal = row[C.EXPECTED_DATE - 1];
       const expected = (expVal !== "" && expVal !== null && expVal !== undefined)
         ? expVal
@@ -74,15 +92,25 @@ function updateDeficitSummary() {
 
       const realDelivery = row[C.REAL_DELIVERY - 1] === true;
 
+      // Валидация обязательных полей BOM (серый цвет)
+      const missingRow = !String(row[C.BOM_ROW - 1] || "").trim();
+      const missingCode = !String(row[C.MATERIAL_CODE - 1] || "").trim();
+      const missingUnit = !String(row[C.UNIT - 1] || "").trim();
+      const missingQty = rawRequired <= 0;
+      const missingDeadline = deadlineVal === "" || deadlineVal === null || deadlineVal === undefined;
+      const hasError = missingRow || missingCode || missingUnit || missingQty || missingDeadline;
+
       let status;
-      if (realDelivery) {
+      if (hasError) {
+        status = V11_CONFIG.MATERIAL_STATUS.ERROR;
+      } else if (realDelivery) {
         status = V11_CONFIG.MATERIAL_STATUS.STOCK;
       } else if (ordered <= 0) {
         status = V11_CONFIG.MATERIAL_STATUS.NOT_ORDERED;
+      } else if (ordered < deficit) {
+        status = V11_CONFIG.MATERIAL_STATUS.PARTIAL_ORDER;
       } else if (!expected) {
         status = V11_CONFIG.MATERIAL_STATUS.DATE_UNKNOWN;
-      } else if (ordered < required) {
-        status = V11_CONFIG.MATERIAL_STATUS.PARTIAL_ORDER;
       } else if (expected && deadline && new Date(expected) > new Date(deadline)) {
         status = V11_CONFIG.MATERIAL_STATUS.ORDERED_LATE;
       } else {
@@ -93,11 +121,12 @@ function updateDeficitSummary() {
         oldReceived[materialId] || false,
         materialId,
         row[C.BOM - 1],
+        row[C.BOM_ROW - 1],
         row[C.MATERIAL_CODE - 1],
         row[C.MATERIAL_NAME - 1],
-        required,
-        ordered,
+        row[C.UNIT - 1],
         deficit,
+        ordered,
         expected,
         deadline,
         oldCheckbox[materialId] || false,
@@ -111,7 +140,7 @@ function updateDeficitSummary() {
       writeValues(target, 2, 1, result);
     }
 
-    // Миграция заголовка на канонический (русский, 12 колонок)
+    // Миграция заголовка на канонический (русский, 13 колонок)
     const expectedHeader = V11_CONFIG.HEADERS.DEFICIT_SUMMARY;
     const currentHeader = target.getRange(1, 1, 1, V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY).getValues()[0];
     if (currentHeader.join("|") !== expectedHeader.join("|")) {
@@ -204,7 +233,7 @@ function saveDeficitChanges() {
 }
 
 /**
- * Чекбоксы «Получено» (кол 1) и «Реальная поставка» (кол 11).
+ * Чекбоксы «Получено» (кол 1) и «Реальная поставка» (кол 12).
  */
 function createDeliveryCheckboxes(rowCount) {
   const sheet = getSheetByKey("DEFICIT_SUMMARY");

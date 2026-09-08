@@ -6,12 +6,14 @@
  *
  * Импорт BOM из папки Google Drive.
  * getAllBOMFiles() перебирает файлы в папке V11_CONFIG.DRIVE.FOLDER_ID.
+ * По ТЗ экономист вводит «Зарезервировано» в колонке BOM-файла.
+ * BOM, отмеченные «Выполнено», исключаются из сканирования.
  * =====================================================
  */
 
 /**
  * Получить все актуальные BOM-файлы из папки Drive.
- * Возвращает массив файлов, допустимых по типу.
+ * Возвращает массив файлов, допустимых по типу, без исключённых.
  */
 function getAllBOMFiles() {
   const folderId = V11_CONFIG.DRIVE.FOLDER_ID;
@@ -33,8 +35,11 @@ function getAllBOMFiles() {
     }
   }
 
-  logSystem("getAllBOMFiles", "Найдено BOM-файлов: " + result.length, "INFO");
-  return result;
+  // ТЗ: BOM, отмеченные «Выполнено», исключаются из дальнейшего сканирования
+  const filtered = filterExcludedBOMFiles(result);
+
+  logSystem("getAllBOMFiles", "Найдено BOM-файлов (без исключённых): " + filtered.length, "INFO");
+  return filtered;
 }
 
 /**
@@ -101,7 +106,8 @@ function parseBOMFile(file) {
     name: header.indexOf("Наименование") !== -1 ? header.indexOf("Наименование") : header.indexOf("NAME"),
     unit: header.indexOf("Ед.изм") !== -1 ? header.indexOf("Ед.изм") : header.indexOf("UNIT"),
     qty: header.indexOf("Требуется") !== -1 ? header.indexOf("Требуется") : header.indexOf("REQUIRED"),
-    deadline: header.indexOf("Крайний срок") !== -1 ? header.indexOf("Крайний срок") : header.indexOf("DEADLINE")
+    deadline: header.indexOf("Крайний срок") !== -1 ? header.indexOf("Крайний срок") : header.indexOf("DEADLINE"),
+    reserved: header.indexOf("Зарезервировано") !== -1 ? header.indexOf("Зарезервировано") : header.indexOf("RESERVED")
   };
 
   const materials = [];
@@ -121,7 +127,8 @@ function parseBOMFile(file) {
       name: name,
       unit: idx.unit !== -1 ? r[idx.unit] : "",
       qty: idx.qty !== -1 ? toNumber(r[idx.qty]) : 0,
-      deadline: idx.deadline !== -1 ? r[idx.deadline] : ""
+      deadline: idx.deadline !== -1 ? r[idx.deadline] : "",
+      reserved: idx.reserved !== -1 ? toNumber(r[idx.reserved]) : 0
     });
   }
 
@@ -173,7 +180,8 @@ function importBOM(bomData) {
           name: material.name,
           unit: material.unit,
           required: material.qty,
-          deadline: material.deadline
+          deadline: material.deadline,
+          reserved: material.reserved
         });
       } else {
         compareMaterialChange(exists, material);
@@ -190,9 +198,11 @@ function importBOM(bomData) {
 
 /**
  * Сравнение изменений материала при импорте.
+ * Обновляет требуемое кол-во, наименование и «Зарезервировано».
  */
 function compareMaterialChange(oldMaterial, newMaterial) {
-  const oldQty = toNumber(oldMaterial.values[V11_CONFIG.MATERIAL_COLUMNS.REQUIRED - 1]);
+  const C = V11_CONFIG.MATERIAL_COLUMNS;
+  const oldQty = toNumber(oldMaterial.values[C.REQUIRED - 1]);
   if (oldQty !== toNumber(newMaterial.qty)) {
     createEvent(V11_CONFIG.EVENTS.BOM_QTY_CHANGED, {
       materialId: oldMaterial.id,
@@ -200,12 +210,18 @@ function compareMaterialChange(oldMaterial, newMaterial) {
       newValue: newMaterial.qty
     });
   }
-  const oldName = oldMaterial.values[V11_CONFIG.MATERIAL_COLUMNS.MATERIAL_NAME - 1];
+  const oldName = oldMaterial.values[C.MATERIAL_NAME - 1];
   if (String(oldName) !== String(newMaterial.name)) {
     createEvent(V11_CONFIG.EVENTS.BOM_NAME_CHANGED, {
       materialId: oldMaterial.id,
       oldValue: oldName,
       newValue: newMaterial.name
     });
+  }
+  // «Зарезервировано» (введено экономистом) может обновиться
+  const oldReserved = toNumber(oldMaterial.values[C.RESERVED - 1]);
+  if (oldReserved !== toNumber(newMaterial.reserved)) {
+    updateMaterialState(oldMaterial.id, { RESERVED: newMaterial.reserved });
+    recalculateMaterialDeficit(oldMaterial.id);
   }
 }

@@ -140,13 +140,15 @@ function debugCheckSheets() {
 
 function debugCheckColors() {
   const testStatuses = [
+    "Ошибка данных",
     "Не заказано",
+    "Не указана дата поставки",
     "Заказано частично",
-    "Заказано (опаздывает)",
-    "Заказано (в срок)",
+    "Ожидаем (опаздывает)",
+    "Ожидаем (в срок)",
     "На складе",
     "Получено производством",
-    "Готов"
+    "Готов к производству"
   ];
   const result = {};
   testStatuses.forEach((status) => {
@@ -198,14 +200,15 @@ function runV11StatusTest() {
   logSystem(testName, "Проверка цветов статусов", "INFO");
 
   const tests = [
+    { status: "Ошибка данных", expected: V11_CONFIG.COLORS.GRAY },
     { status: "Не заказано", expected: V11_CONFIG.COLORS.RED },
+    { status: "Не указана дата поставки", expected: V11_CONFIG.COLORS.RED },
     { status: "Заказано частично", expected: V11_CONFIG.COLORS.RED },
-    { status: "Заказано (опаздывает)", expected: V11_CONFIG.COLORS.ORANGE },
-    { status: "Заказано (в срок)", expected: V11_CONFIG.COLORS.YELLOW },
-    { status: "Ожидается поставка", expected: V11_CONFIG.COLORS.YELLOW },
+    { status: "Ожидаем (опаздывает)", expected: V11_CONFIG.COLORS.ORANGE },
+    { status: "Ожидаем (в срок)", expected: V11_CONFIG.COLORS.YELLOW },
     { status: "На складе", expected: V11_CONFIG.COLORS.STOCK },
     { status: "Получено производством", expected: V11_CONFIG.COLORS.RECEIVED },
-    { status: "Готов", expected: V11_CONFIG.COLORS.GREEN }
+    { status: "Готов к производству", expected: V11_CONFIG.COLORS.READY }
   ];
 
   let errors = 0;

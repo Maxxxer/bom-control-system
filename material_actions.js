@@ -6,13 +6,23 @@
  *
  * Действия с материалом: поставка, получение производством,
  * изменение даты/заказа. Вызываются через событийную шину.
+ * По ТЗ права по ролям:
+ *   снабженец/менеджер — заказ, ожидаемая дата, реальная поставка.
+ *   менеджер — также крайний срок.
+ *   кладовщик — «Получено».
  * =====================================================
  */
 
 /**
- * Реальная поставка на склад
+ * Реальная поставка на склад.
+ * Разрешена ролям снабженца и менеджера.
  */
 function confirmRealDelivery(materialId, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "REAL_DELIVERY")) {
+    logSystem("confirmRealDelivery", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   updateMaterialState(materialId, {
     REAL_DELIVERY: true,
     REAL_DELIVERY_DATE: new Date()
@@ -28,9 +38,15 @@ function confirmRealDelivery(materialId, index) {
 }
 
 /**
- * Отмена реальной поставки
+ * Отмена реальной поставки.
+ * Разрешена ролям снабженца и менеджера.
  */
 function cancelRealDelivery(materialId, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "REAL_DELIVERY")) {
+    logSystem("cancelRealDelivery", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   updateMaterialState(materialId, {
     REAL_DELIVERY: false,
     REAL_DELIVERY_DATE: V11_CONFIG.DEFAULTS.DATE
@@ -46,9 +62,15 @@ function cancelRealDelivery(materialId, index) {
 }
 
 /**
- * Получение материалом производством
+ * Получение материалом производством.
+ * Разрешено только кладовщику.
  */
 function confirmMaterialReceived(materialId, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "RECEIVED")) {
+    logSystem("confirmMaterialReceived", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   updateMaterialState(materialId, {
     RECEIVED: true,
     RECEIVED_DATE: new Date(),
@@ -65,9 +87,15 @@ function confirmMaterialReceived(materialId, index) {
 }
 
 /**
- * Отмена получения
+ * Отмена получения.
+ * Разрешено только кладовщику.
  */
 function cancelMaterialReceived(materialId, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "RECEIVED")) {
+    logSystem("cancelMaterialReceived", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   updateMaterialState(materialId, {
     RECEIVED: false,
     RECEIVED_DATE: V11_CONFIG.DEFAULTS.DATE,
@@ -84,9 +112,15 @@ function cancelMaterialReceived(materialId, index) {
 }
 
 /**
- * Изменение ожидаемой даты поставки
+ * Изменение ожидаемой даты поставки.
+ * Разрешено снабженцу и менеджеру.
  */
 function updateExpectedDeliveryDate(materialId, newDate, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "EXPECTED_DATE")) {
+    logSystem("updateExpectedDeliveryDate", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   updateMaterialState(materialId, {
     EXPECTED_DATE: newDate
   }, index);
@@ -101,9 +135,15 @@ function updateExpectedDeliveryDate(materialId, newDate, index) {
 }
 
 /**
- * Изменение крайнего срока
+ * Изменение крайнего срока.
+ * Разрешено менеджеру и экономисту.
  */
 function updateDeadlineDate(materialId, newDate, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "DEADLINE_DATE")) {
+    logSystem("updateDeadlineDate", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   updateMaterialState(materialId, {
     DEADLINE_DATE: newDate
   }, index);
@@ -118,9 +158,15 @@ function updateDeadlineDate(materialId, newDate, index) {
 }
 
 /**
- * Изменение количества заказа
+ * Изменение количества заказа.
+ * Разрешено снабженцу и менеджеру.
  */
 function updateMaterialOrder(materialId, quantity, index) {
+  const role = getCurrentUserRole();
+  if (!canEditField(role, "ORDERED")) {
+    logSystem("updateMaterialOrder", "Запрещено для роли: " + role + " (материал " + materialId + ")", "WARNING");
+    return;
+  }
   const old = getMaterialById(materialId, index);
   const oldValue = old ? toNumber(old.values[V11_CONFIG.MATERIAL_COLUMNS.ORDERED - 1]) : 0;
   const newValue = Math.max(0, toNumber(quantity));

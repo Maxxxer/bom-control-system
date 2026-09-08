@@ -83,14 +83,18 @@ function exportBOMFile(file) {
     const index = buildMaterialIndex();
     const C = V11_CONFIG.MATERIAL_COLUMNS;
     let count = 0;
+    const lastCol = sheet.getLastColumn();
+    const colors = [];
 
     for (let i = 1; i < data.length; i++) {
       const rowNum = toNumber(data[i][idx.row]);
       if (!rowNum) {
+        colors.push(new Array(lastCol).fill(V11_CONFIG.COLORS.WHITE));
         continue;
       }
       const material = findMaterialInBOM(bomName, rowNum, index);
       if (!material) {
+        colors.push(new Array(lastCol).fill(V11_CONFIG.COLORS.WHITE));
         continue;
       }
       const values = material.values;
@@ -114,7 +118,13 @@ function exportBOMFile(file) {
         sheet.getRange(i + 1, idx.status + 1).setValue(values[C.STATUS - 1] || "");
       }
 
+      // Подкрасить строку согласно статусу (ТЗ: позиции BOM подкрашиваются по статусам)
+      colors.push(new Array(lastCol).fill(getStatusColor(values[C.STATUS - 1])));
       count++;
+    }
+
+    if (colors.length && colors.length === data.length - 1) {
+      sheet.getRange(2, 1, colors.length, lastCol).setBackgrounds(colors);
     }
 
     if (count > 0) {

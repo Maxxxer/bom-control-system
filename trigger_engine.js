@@ -67,6 +67,8 @@ function v11OnEdit(e) {
     const name = sheet.getName();
     const row = e.range.getRow();
     const column = e.range.getColumn();
+    const user = getCurrentUser();
+    const role = getCurrentUserRole();
 
     // MATERIAL_STATE — центр данных, ручное редактирование запрещено
     if (name === V11_CONFIG.SHEETS.MATERIAL_STATE) {
@@ -74,30 +76,63 @@ function v11OnEdit(e) {
       return;
     }
 
+    // DASHBOARD — только чекбокс «Выполнено» и только при «Готов к производству»
+    if (name === V11_CONFIG.SHEETS.DASHBOARD) {
+      if (column !== V11_CONFIG.DASHBOARD_COLUMNS.DONE || row <= 1) {
+        revertEdit(e);
+        logSystem("v11OnEdit", "В дашборде разрешён только чекбокс «Выполнено» (" + user + ")", "WARNING");
+        return;
+      }
+      const bom = sheet.getRange(row, V11_CONFIG.DASHBOARD_COLUMNS.BOM).getValue();
+      const status = sheet.getRange(row, V11_CONFIG.DASHBOARD_COLUMNS.STATUS).getValue();
+      const checked = e.range.getValue();
+      if (checked === true && status !== V11_CONFIG.BOM_STATUS.READY) {
+        revertEdit(e);
+        logSystem("v11OnEdit", "«Выполнено» можно отметить только при «Готов к производству»: " + bom, "WARNING");
+        return;
+      }
+      setBOMDone(bom, checked === true);
+      return;
+    }
+
+    // DEFICIT_SUMMARY
     if (name === V11_CONFIG.SHEETS.DEFICIT_SUMMARY) {
+      if (!role) {
+        revertEdit(e);
+        logSystem("v11OnEdit", "Неизвестная роль: " + user + " — правка отклонена", "WARNING");
+        return;
+      }
+      const fieldName = getDeficitFieldName(column);
+      if (!fieldName) {
+        revertEdit(e);
+        logSystem("v11OnEdit", "Поле запрещено для правки: колонка " + column + " (" + user + ")", "WARNING");
+        return;
+      }
+      if (!canEditField(role, fieldName)) {
+        revertEdit(e);
+        logSystem("v11OnEdit", "Запрещено для роли " + role + " поле " + fieldName + " (" + user + ")", "WARNING");
+        return;
+      }
       let handled = false;
       try {
-        if (column === V11_CONFIG.DEFICIT_COLUMNS.RECEIVED && row > 1) {
+        if (column === V11_CONFIG.DEFICIT_COLUMNS.RECEIVED) {
           handled = true;
           processSummaryReceived(row);
-        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY && row > 1) {
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY) {
           handled = true;
           processSummaryCheckbox(row);
-        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.EXPECTED_DATE && row > 1) {
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.EXPECTED_DATE) {
           handled = true;
           const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
-          const date = e.range.getValue();
-          eventDeliveryDateChanged(id, date);
-        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.DEADLINE_DATE && row > 1) {
+          eventDeliveryDateChanged(id, e.range.getValue());
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.DEADLINE_DATE) {
           handled = true;
           const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
-          const date = e.range.getValue();
-          eventDeadlineDateChanged(id, date);
-        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.ORDERED && row > 1) {
+          eventDeadlineDateChanged(id, e.range.getValue());
+        } else if (column === V11_CONFIG.DEFICIT_COLUMNS.ORDERED) {
           handled = true;
           const id = sheet.getRange(row, V11_CONFIG.DEFICIT_COLUMNS.MATERIAL_ID).getValue();
-          const qty = e.range.getValue();
-          eventMaterialOrdered(id, qty);
+          eventMaterialOrdered(id, e.range.getValue());
         }
       } catch (error) {
         logSystem("v11OnEdit", "DEFICIT_SUMMARY обработка: " + error.message, error, "ERROR");
@@ -106,6 +141,7 @@ function v11OnEdit(e) {
           refreshAfterChange();
         }
       }
+      return;
     }
 
     if (name.indexOf("BOM_") === 0) {
@@ -113,6 +149,19 @@ function v11OnEdit(e) {
     }
   } catch (error) {
     logSystem("v11OnEdit", error.message, error, "ERROR");
+  }
+}
+
+/**
+ * Откат запрещённой ручной правки.
+ */
+function revertEdit(e) {
+  try {
+    if (e && e.range && e.oldValue !== undefined) {
+      e.range.setValue(e.oldValue);
+    }
+  } catch (err) {
+    logSystem("revertEdit", err.message, err, "ERROR");
   }
 }
 

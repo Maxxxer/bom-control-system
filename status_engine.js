@@ -5,14 +5,41 @@
  * FILE: status_engine.js
  *
  * Расчёт статуса и дефицита материала.
- * Устранена мёртвая ветка READY (READY — агрегат на уровне BOM).
- * Единая формула дефицита: required - reserved - ordered.
+ * По ТЗ:
+ *   дефицит = Требуется (BOM) − Зарезервировано.
+ *   «Требуется» в сводке = дефицит.
+ *   Заказ ≥ дефицит → потребность удовлетворена → проверяем дату.
+ *   Заказ < дефицит → потребность не удовлетворена.
+ * Обязательные поля BOM (порядковый №, код, ед.изм, кол-во, срок)
+ * при отсутствии → статус «Ошибка данных» (серый).
  * =====================================================
  */
 
 /**
+ * Проверка полноты обязательных полей BOM.
+ * Возвращает объект с флагами и признак hasError.
+ */
+function validateBOMMaterialFields(row) {
+  const C = V11_CONFIG.MATERIAL_COLUMNS;
+  const missingRow = !String(row[C.BOM_ROW - 1] || "").trim();
+  const missingCode = !String(row[C.MATERIAL_CODE - 1] || "").trim();
+  const missingUnit = !String(row[C.UNIT - 1] || "").trim();
+  const missingQty = toNumber(row[C.REQUIRED - 1]) <= 0;
+  const deadlineVal = row[C.DEADLINE_DATE - 1];
+  const missingDeadline = deadlineVal === "" || deadlineVal === null || deadlineVal === undefined;
+  return {
+    missingRow: missingRow,
+    missingCode: missingCode,
+    missingUnit: missingUnit,
+    missingQty: missingQty,
+    missingDeadline: missingDeadline,
+    hasError: missingRow || missingCode || missingUnit || missingQty || missingDeadline
+  };
+}
+
+/**
  * Чистый расчёт статуса по строке.
- * Возвращает { status, state, deficit, oldStatus, oldState }.
+ * Возвращает { status, state, deficit, oldStatus, oldState, hasError, missing }.
  */
 function computeMaterialStatus(row) {
   const C = V11_CONFIG.MATERIAL_COLUMNS;
@@ -27,7 +54,10 @@ function computeMaterialStatus(row) {
   const oldStatus = row[C.STATUS - 1];
   const oldState = row[C.STATE - 1];
 
-  const deficit = Math.max(required - reserved - ordered, 0);
+  const missing = validateBOMMaterialFields(row);
+
+  // ДЕФИЦИТ ПО ТЗ: required − reserved (НЕ вычитаем ordered!)
+  const deficit = Math.max(required - reserved, 0);
 
   const MS = V11_CONFIG.MATERIAL_STATUS;
   const MST = V11_CONFIG.MATERIAL_STATE;
@@ -41,9 +71,9 @@ function computeMaterialStatus(row) {
   } else if (oldStatus === MS.REMOVED) {
     status = MS.REMOVED;
     state = MST.REMOVED;
-  } else if (required <= 0) {
-    status = MS.NO_REQUIREMENT;
-    state = MST.NO_REQUIREMENT;
+  } else if (missing.hasError) {
+    status = MS.ERROR;
+    state = MST.ERROR;
   } else if (received) {
     status = MS.RECEIVED;
     state = MST.RECEIVED;
@@ -53,19 +83,27 @@ function computeMaterialStatus(row) {
   } else if (ordered <= 0) {
     status = MS.NOT_ORDERED;
     state = MST.DEFICIT;
+  } else if (ordered < deficit) {
+    status = MS.PARTIAL_ORDER;
+    state = MST.PARTIAL_ORDER;
   } else if (!expected) {
     status = MS.DATE_UNKNOWN;
     state = MST.WAITING;
-  } else if (ordered < required) {
-    status = MS.PARTIAL_ORDER;
-    state = MST.PARTIAL_ORDER;
   } else {
     const late = expected && deadline && new Date(expected) > new Date(deadline);
     status = late ? MS.ORDERED_LATE : MS.ORDERED_ON_TIME;
     state = late ? MST.WAITING_LATE : MST.WAITING;
   }
 
-  return { status: status, state: state, deficit: deficit, oldStatus: oldStatus, oldState: oldState };
+  return {
+    status: status,
+    state: state,
+    deficit: deficit,
+    oldStatus: oldStatus,
+    oldState: oldState,
+    hasError: missing.hasError,
+    missing: missing
+  };
 }
 
 /**

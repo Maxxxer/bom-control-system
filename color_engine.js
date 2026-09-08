@@ -5,7 +5,7 @@
  * FILE: color_engine.js
  *
  * Цветовое оформление. Единая карта цветов.
- * Исправлены маппинги BOM-статусов (PARTIAL → оранжевый, ORANGE → оранжевый).
+ * По ТЗ серым подсвечиваются позиции с ошибками («Ошибка данных»).
  * =====================================================
  */
 
@@ -16,7 +16,7 @@ function applyStatusColors() {
 }
 
 /**
- * Справочник цветов. Срезает ведущие эмодзи/небуквенные символы.
+ * Справочник цвета по статусу.
  */
 function getStatusColor(status) {
   if (!status) {
@@ -25,25 +25,26 @@ function getStatusColor(status) {
   const normalized = String(status).replace(/^[^A-Za-zА-Яа-яЁё0-9]+/, "").trim();
 
   switch (normalized) {
+    // Серый — ошибка / неполные данные
+    case "Ошибка данных":
+      return V11_CONFIG.COLORS.GRAY;
+
     // Красная зона
     case "Не заказано":
-    case "Дата поставки неизвестна":
-    case "Есть незаказанный материал":
-    case "Есть незаказанные материалы":
+    case "Не указана дата поставки":
     case "Заказано частично":
-    case "Частично заказан":
+    case "Не обработан":
       return V11_CONFIG.COLORS.RED;
 
     // Оранжевая зона
-    case "Заказано (опаздывает)":
-    case "Поставка позже срока":
-    case "Просрочено":
-    case "Просрочка поставки":
+    case "Ожидаем (опаздывает)":
+    case "Частично отобран":
+    case "Ожидание поставки (опаздывает)":
       return V11_CONFIG.COLORS.ORANGE;
 
     // Жёлтая зона
-    case "Заказано (в срок)":
-    case "Ожидается поставка":
+    case "Ожидаем (в срок)":
+    case "Ожидание поставки (в срок)":
     case "WAITING":
       return V11_CONFIG.COLORS.YELLOW;
 
@@ -52,13 +53,10 @@ function getStatusColor(status) {
     case "STOCK":
       return V11_CONFIG.COLORS.STOCK;
 
-    // Зелёная зона (получено)
+    // Зелёная зона (получено / готово)
     case "Получено":
     case "Получено производством":
     case "RECEIVED":
-      return V11_CONFIG.COLORS.RECEIVED;
-
-    // Зелёная зона (готово)
     case "Готов":
     case "Готов к производству":
     case "READY":
@@ -83,7 +81,7 @@ function colorMaterialStateRows() {
   const data = range.getValues();
   const C = V11_CONFIG.MATERIAL_COLUMNS;
 
-  const colors = data.map((row) => {
+  const colors = data.map(function (row) {
     const received = row[C.RECEIVED - 1] === true;
     const stock = row[C.REAL_DELIVERY - 1] === true;
     let color;
@@ -101,7 +99,7 @@ function colorMaterialStateRows() {
 }
 
 /**
- * DEFICIT_SUMMARY
+ * DEFICIT_SUMMARY (13 колонок)
  */
 function colorDeficitSummaryRows() {
   const sheet = getSheetByKey("DEFICIT_SUMMARY");
@@ -114,29 +112,9 @@ function colorDeficitSummaryRows() {
   const data = range.getValues();
   const D = V11_CONFIG.DEFICIT_COLUMNS;
 
-  const colors = data.map((row) => {
-    const ordered = toNumber(row[D.ORDERED - 1]);
-    const deficit = toNumber(row[D.DEFICIT - 1]);
-    const expected = row[D.EXPECTED_DATE - 1];
-    const deadline = row[D.DEADLINE_DATE - 1];
-    const realDelivery = row[D.REAL_DELIVERY - 1] === true;
+  const colors = data.map(function (row) {
     const status = row[D.STATUS - 1];
-
-    let color;
-    if (status === V11_CONFIG.MATERIAL_STATUS.RECEIVED) {
-      color = V11_CONFIG.COLORS.RECEIVED;
-    } else if (realDelivery) {
-      color = V11_CONFIG.COLORS.STOCK;
-    } else if (deficit > 0 && ordered === 0) {
-      color = V11_CONFIG.COLORS.RED;
-    } else if (deficit > 0 && ordered > 0) {
-      color = V11_CONFIG.COLORS.RED;
-    } else if (expected && deadline && new Date(expected) > new Date(deadline)) {
-      color = V11_CONFIG.COLORS.ORANGE;
-    } else {
-      color = getStatusColor(status);
-    }
-    return new Array(lastColumn).fill(color);
+    return new Array(lastColumn).fill(getStatusColor(status));
   });
 
   range.setBackgrounds(colors);
@@ -154,8 +132,8 @@ function colorBOMStateRows() {
   }
   const range = sheet.getRange(2, 1, lastRow - 1, lastColumn);
   const data = range.getValues();
-  const colors = data.map((row) =>
-    new Array(lastColumn).fill(getStatusColor(row[V11_CONFIG.BOM_COLUMNS.STATUS - 1]))
-  );
+  const colors = data.map(function (row) {
+    return new Array(lastColumn).fill(getStatusColor(row[V11_CONFIG.BOM_COLUMNS.STATUS - 1]));
+  });
   range.setBackgrounds(colors);
 }

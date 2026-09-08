@@ -13,8 +13,8 @@
 
 const V11_CONFIG = {
 
-  VERSION: "11.2.0",
-  SCHEMA_VERSION: "2.0.0",
+  VERSION: "11.3.0",
+  SCHEMA_VERSION: "2.1.0",
 
   SYSTEM: {
     NAME: "BOM CONTROL SYSTEM V11",
@@ -45,7 +45,8 @@ const V11_CONFIG = {
     EVENT_LOG: "EVENT_LOG",
     ARCHIVE: "Архив",
     BOM_REVISION: "BOM_REVISION",
-    SYSTEM_LOG: "SYSTEM_LOG"
+    SYSTEM_LOG: "SYSTEM_LOG",
+    EXCLUDED_BOMS: "EXCLUDED_BOMS"
   },
 
   /**
@@ -53,14 +54,15 @@ const V11_CONFIG = {
    */
   COLUMN_COUNT: {
     MATERIAL_STATE: 21,
-    DEFICIT_SUMMARY: 12,
+    DEFICIT_SUMMARY: 13,
     BOM_STATE: 11,
     BOM_REVISION: 4,
     MATERIAL_HISTORY: 7,
     EVENT_LOG: 7,
     SYSTEM_LOG: 5,
-    DASHBOARD: 9,
-    ARCHIVE: 11
+    DASHBOARD: 11,
+    ARCHIVE: 11,
+    EXCLUDED_BOMS: 3
   },
 
   /**
@@ -91,21 +93,24 @@ const V11_CONFIG = {
   },
 
   /**
-   * DEFICIT_SUMMARY (12)
+   * DEFICIT_SUMMARY (13)
+   * «Требуется» (кол. 8) = дефицит = BOM.Требуется − Зарезервировано.
+   * Это сумма, которую должен заказать снабженец.
    */
   DEFICIT_COLUMNS: {
     RECEIVED: 1,
     MATERIAL_ID: 2,
     BOM: 3,
-    CODE: 4,
-    NAME: 5,
-    REQUIRED: 6,
-    ORDERED: 7,
-    DEFICIT: 8,
-    EXPECTED_DATE: 9,
-    DEADLINE_DATE: 10,
-    REAL_DELIVERY: 11,
-    STATUS: 12
+    ROW: 4,
+    CODE: 5,
+    NAME: 6,
+    UNIT: 7,
+    REQUIRED: 8,
+    ORDERED: 9,
+    EXPECTED_DATE: 10,
+    DEADLINE_DATE: 11,
+    REAL_DELIVERY: 12,
+    STATUS: 13
   },
 
   /**
@@ -190,18 +195,20 @@ const V11_CONFIG = {
   },
 
   /**
-   * DASHBOARD (9)
+   * DASHBOARD (11)
    */
   DASHBOARD_COLUMNS: {
-    BOM: 1,
-    STATUS: 2,
-    DATE_CREATED: 3,
-    TOTAL_MATERIALS: 4,
-    DEFICIT: 5,
-    NOT_ORDERED: 6,
-    LAST_DELIVERY: 7,
-    DEADLINE: 8,
-    READY: 9
+    DONE: 1,
+    BOM: 2,
+    STATUS: 3,
+    DATE_CREATED: 4,
+    TOTAL_MATERIALS: 5,
+    DEFICIT: 6,
+    NOT_ORDERED: 7,
+    LAST_DELIVERY: 8,
+    DEADLINE: 9,
+    READY: 10,
+    MISSING_ITEMS: 11
   },
 
   /**
@@ -216,9 +223,9 @@ const V11_CONFIG = {
       "Статус", "State", "Обновлено"
     ],
     DEFICIT_SUMMARY: [
-      "Получено", "MaterialID", "BOM", "Код", "Наименование", "Требуется",
-      "Заказано", "Дефицит", "Ожидаемая поставка", "Крайний срок",
-      "Реальная поставка", "Статус"
+      "Получено", "MaterialID", "BOM", "Строка", "Код", "Наименование",
+      "Ед.изм", "Требуется", "Заказано", "Ожидаемая поставка",
+      "Крайний срок", "Реальная поставка", "Статус"
     ],
     BOM_STATE: [
       "BOM", "Версия", "Дата создания", "Позиций", "Дефицит", "Незаказано",
@@ -234,25 +241,28 @@ const V11_CONFIG = {
     ],
     SYSTEM_LOG: ["Дата", "Функция", "Сообщение", "Уровень", "Данные"],
     DASHBOARD: [
-      "BOM", "Статус", "Дата создания", "Позиций", "Дефицит", "Незаказано",
-      "Последняя поставка", "Крайний срок", "Готовность"
+      "Выполнено", "BOM", "Статус", "Дата создания", "Позиций", "Дефицит",
+      "Незаказано", "Последняя поставка", "Крайний срок", "Готовность",
+      "Недостающие позиции"
     ],
     ARCHIVE: [
       "Дата архивации", "BOM", "Версия", "Код материала", "Наименование",
       "Количество", "Дата поставки", "Дата получения", "Кто отметил",
       "Состояние", "История"
-    ]
+    ],
+    EXCLUDED_BOMS: ["BOM", "Выполнено", "Дата"]
   },
 
   /**
    * Статусы материалов
    */
   MATERIAL_STATUS: {
+    ERROR: "Ошибка данных",
     NOT_ORDERED: "Не заказано",
     PARTIAL_ORDER: "Заказано частично",
-    ORDERED_ON_TIME: "Заказано (в срок)",
-    ORDERED_LATE: "Заказано (опаздывает)",
-    DATE_UNKNOWN: "Дата поставки неизвестна",
+    ORDERED_ON_TIME: "Ожидаем (в срок)",
+    ORDERED_LATE: "Ожидаем (опаздывает)",
+    DATE_UNKNOWN: "Не указана дата поставки",
     STOCK: "На складе",
     RECEIVED: "Получено производством",
     READY: "Готов",
@@ -273,6 +283,7 @@ const V11_CONFIG = {
     RECEIVED: "RECEIVED",
     READY: "READY",
     NO_REQUIREMENT: "NO_REQUIREMENT",
+    ERROR: "ERROR",
     ARCHIVED: "ARCHIVED",
     REMOVED: "REMOVED"
   },
@@ -282,11 +293,12 @@ const V11_CONFIG = {
    * «Готов» = все позиции BOM получены производством
    */
   BOM_STATUS: {
-    RED: "🔴 Есть незаказанные материалы",
-    PARTIAL: "🟠 Частично заказан",
-    ORANGE: "🟠 Просрочка поставки",
-    YELLOW: "🟡 Ожидается поставка",
-    GREEN: "🟢 Готов к производству"
+    NOT_PROCESSED: "Не обработан",
+    PARTIAL_SELECTED: "Частично отобран",
+    WAITING_ON_TIME: "Ожидание поставки (в срок)",
+    WAITING_LATE: "Ожидание поставки (опаздывает)",
+    READY: "Готов к производству",
+    ERROR: "Ошибка данных"
   },
 
   /**
@@ -327,6 +339,7 @@ const V11_CONFIG = {
     RECEIVED: "#B6D7A8",
     READY: "#D9EAD3",
     NO_REQUIREMENT: "#E7E6E6",
+    GRAY: "#D9D9D9",
     WHITE: "#FFFFFF"
   },
 
@@ -334,11 +347,12 @@ const V11_CONFIG = {
    * Карта цветов для статусов материалов
    */
   STATUS_COLOR_MAP: {
+    "Ошибка данных": "GRAY",
     "Не заказано": "RED",
-    "Дата поставки неизвестна": "RED",
+    "Не указана дата поставки": "RED",
     "Заказано частично": "RED",
-    "Заказано (опаздывает)": "ORANGE",
-    "Заказано (в срок)": "YELLOW",
+    "Ожидаем (опаздывает)": "ORANGE",
+    "Ожидаем (в срок)": "YELLOW",
     "На складе": "STOCK",
     "Получено производством": "RECEIVED",
     "Готов": "GREEN",
@@ -390,5 +404,15 @@ const V11_CONFIG = {
       "application/vnd.google-apps.spreadsheet",
       "text/csv"
     ]
+  },
+
+  /**
+   * Роли пользователей
+   */
+  ROLES: {
+    ECONOMIST: "economist",
+    PROCUREMENT: "procurement",
+    MANAGER: "manager",
+    STOREKEEPER: "storekeeper"
   }
 };

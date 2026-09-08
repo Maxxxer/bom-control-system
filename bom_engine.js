@@ -117,7 +117,7 @@ function addMaterialFromBOM(material) {
       material.name || "",
       material.unit || "",
       toNumber(material.required || 0),
-      0,
+      toNumber(material.reserved || 0),
       0,
       0,
       "",
