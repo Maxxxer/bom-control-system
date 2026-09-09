@@ -197,7 +197,12 @@ function v12HandleDeficitEdit(e) {
     v12SetExpectedDate(positionId, e.range.getValue());
   } else if (column === D.REAL_DELIVERY) {
     const checked = e.range.getValue();
-    v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
+    try {
+      v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
+    } catch (err) {
+      v12RevertEdit(e);
+      try { SpreadsheetApp.getUi().alert("Не удалось отметить поставку: " + err.message); } catch (e2) {}
+    }
   } else {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка", "WARNING");

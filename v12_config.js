@@ -62,7 +62,7 @@ const V12_CONFIG = {
     BOM_REGISTRY: 12,
     POSITION_STATE: 30,
     MATERIAL_STATE: 9,
-    DEFICIT_SUMMARY: 15,
+    DEFICIT_SUMMARY: 14,
     PICKING: 15,
     WORKING_BOM: 14,
     SUPPLY: 13,
@@ -148,10 +148,11 @@ const V12_CONFIG = {
   },
 
   /**
-   * DEFICIT_SUMMARY (15) — проекция для снабжения (заказ, даты, поставка).
-   * Только позиции с дефицитом > 0. Дефицит (кол. DEFICIT_QTY) = max(0, required − reserved).
+   * DEFICIT_SUMMARY (14) — проекция для снабжения (заказ, даты, поставка).
+   * Только позиции, материал которых ещё не приехал (availableForProduction < required).
+   * Дефицит (кол. DEFICIT_QTY) = max(0, required − reserved).
    * Порядок: Дефицит, Заказано, Ожидаемая поставка, Крайний срок, Реальная поставка,
-   * Поставлено, Непокрытая потребность, Статус. Колонка «Получено» убрана — её отмечают кладовщики в ОТБОРКЕ.
+   * Непокрытая потребность, Статус. Колонки «Получено» и «Поставлено» убраны — их отмечают кладовщики/снабжение в ОТБОРКЕ.
    */
   DEFICIT_COLUMNS: {
     POSITION_ID: 1,
@@ -166,9 +167,8 @@ const V12_CONFIG = {
     EXPECTED_DATE: 10,
     DEADLINE: 11,
     REAL_DELIVERY: 12,
-    REAL_DELIVERY_QTY: 13,
-    UNCOVERED_NEED: 14,
-    STATUS: 15
+    UNCOVERED_NEED: 13,
+    STATUS: 14
   },
 
   /**
@@ -365,7 +365,7 @@ const V12_CONFIG = {
     DEFICIT_SUMMARY: [
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
       "Дефицит", "Заказано", "Ожидаемая поставка", "Крайний срок", "Реальная поставка",
-      "Поставлено", "Непокрытая потребность", "Статус"
+      "Непокрытая потребность", "Статус"
     ],
     PICKING: [
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",

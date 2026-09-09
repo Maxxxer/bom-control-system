@@ -82,8 +82,10 @@ function v12RefreshDeficitSummary() {
     if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
       continue;
     }
-    if (toNumber(r[P.DEFICIT_QTY - 1]) <= 0) {
-      continue;   // нет дефицита — в сводку не берём
+    const requiredQty = toNumber(r[P.REQUIRED_QTY - 1]);
+    const availableQty = toNumber(r[P.RESERVED_QTY - 1]) + toNumber(r[P.REAL_DELIVERY_QTY - 1]);
+    if (availableQty >= requiredQty || toNumber(r[P.DEFICIT_QTY - 1]) <= 0) {
+      continue;   // материал на складе или нет дефицита — в сводку не берём
     }
     rows.push([
       r[P.POSITION_ID - 1],
@@ -98,9 +100,8 @@ function v12RefreshDeficitSummary() {
       v12FormatDateOnly(r[P.EXPECTED_DATE - 1]),
       v12FormatDateOnly(r[P.DEADLINE - 1]),
       false, // REAL_DELIVERY checkbox
-      r[P.REAL_DELIVERY_QTY - 1],
       r[P.UNCOVERED_NEED - 1],
-      v12SupplyStatusDisplay(r[P.SUPPLY_STATE - 1], r[P.VALIDATION_STATUS - 1])
+      v12DeficitStatusDisplay(r)
     ]);
   }
 
@@ -109,6 +110,65 @@ function v12RefreshDeficitSummary() {
     v12WriteRows("DEFICIT_SUMMARY", 2, rows);
   }
   v12InstallDeficitCheckboxes(rows.length);
+  v12ApplyDeficitColors(rows);
+}
+
+/**
+ * Статус «Сводки дефицитов» — обновляется только при введённых «Заказано» и «Ожидаемая поставка».
+ *   ordered < дефицит → «Заказано частично»;
+ *   ordered >= дефицит и ожидаемая <= крайний срок → «Ожидание поставки (в Срок)»;
+ *   ordered >= дефицит и ожидаемая > крайний срок → «Ожидание поставки (Опаздывает)».
+ */
+function v12DeficitStatusDisplay(row) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  if (row[P.VALIDATION_STATUS - 1] === V12_CONFIG.VALIDATION_STATUS.ERROR) {
+    return "Ошибка данных";
+  }
+  const ordered = toNumber(row[P.ORDERED_QTY - 1]);
+  const deficit = toNumber(row[P.DEFICIT_QTY - 1]);
+  const expected = row[P.EXPECTED_DATE - 1];
+  const deadline = row[P.DEADLINE - 1];
+
+  if (ordered <= 0) {
+    return "Не заказано";
+  }
+  // Статус обновляется только когда введены и количество заказа, и ожидаемая поставка.
+  if (!expected) {
+    return "Заказано";
+  }
+  const exp = new Date(expected).getTime();
+  const dead = new Date(deadline).getTime();
+  if (ordered < deficit) {
+    return "Заказано частично";
+  }
+  if (isNaN(exp) || isNaN(dead)) {
+    return "Заказано";
+  }
+  return exp <= dead ? "Ожидание поставки (в Срок)" : "Ожидание поставки (Опаздывает)";
+}
+
+/**
+ * Окраска строк «Сводки дефицитов» по статусу: жёлтый/оранжевый/красный/серый.
+ */
+function v12ApplyDeficitColors(rows) {
+  if (!rows.length) {
+    return;
+  }
+  const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
+  const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const C = V12_CONFIG.COLORS;
+  const colors = rows.map(function (r) {
+    const status = r[D.STATUS - 1];
+    if (status === "Ожидание поставки (в Срок)") return C.YELLOW;
+    if (status === "Ожидание поставки (Опаздывает)") return C.ORANGE;
+    if (status === "Заказано частично") return C.RED;
+    if (status === "Ошибка данных") return C.GRAY;
+    return C.WHITE;
+  });
+  const background = colors.map(function (c) {
+    return new Array(V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY).fill(c);
+  });
+  sheet.getRange(2, 1, rows.length, V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY).setBackgrounds(background);
 }
 
 /**
@@ -128,6 +188,20 @@ function v12SupplyStatusDisplay(supplyState, validation) {
     [V12_CONFIG.SUPPLY_STATE.DELIVERED]: "Поставлено"
   };
   return map[supplyState] || supplyState || "";
+}
+
+/**
+ * Человекочитаемый статус производства (для ОТБОРКИ и WORKING BOM).
+ * READY_FOR_HANDOFF → «На складе» (материал приехал и готов к отборке).
+ */
+function v12ProductionStatusDisplay(state) {
+  const map = {
+    [V12_CONFIG.PRODUCTION_STATE.NOT_AVAILABLE]: "Нет в наличии",
+    [V12_CONFIG.PRODUCTION_STATE.PARTIALLY_AVAILABLE]: "Частично доступно",
+    [V12_CONFIG.PRODUCTION_STATE.READY_FOR_HANDOFF]: "На складе",
+    [V12_CONFIG.PRODUCTION_STATE.RECEIVED]: "Передано"
+  };
+  return map[state] || state || "";
 }
 
 /**
@@ -185,7 +259,7 @@ function v12RefreshPicking() {
       r[P.RESERVED_QTY - 1],
       r[P.AVAILABLE_FOR_PRODUCTION - 1],
       warehouse,
-      r[P.PRODUCTION_STATE - 1],
+      v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
       false, // CHECKBOX
       r[P.RECEIVED_BY_PRODUCTION_QTY - 1],
       new Date()
@@ -197,6 +271,7 @@ function v12RefreshPicking() {
     v12WriteRows("PICKING", 2, rows);
   }
   v12InstallPickingCheckboxes(rows.length);
+  v12ApplyPickingColors(rows);
 }
 
 /**
@@ -215,6 +290,25 @@ function v12InstallPickingCheckboxes(rowCount) {
     sheet.getRange(2, K.CHECKBOX, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
   }
+}
+
+/**
+ * Окраска строк ОТБОРКИ: «На складе» — голубой.
+ */
+function v12ApplyPickingColors(rows) {
+  if (!rows.length) {
+    return;
+  }
+  const sheet = v12GetSheetByKey("PICKING");
+  const K = V12_CONFIG.PICKING_COLUMNS;
+  const C = V12_CONFIG.COLORS;
+  const colors = rows.map(function (r) {
+    return r[K.PRODUCTION_STATE - 1] === "На складе" ? C.STOCK : C.WHITE;
+  });
+  const background = colors.map(function (c) {
+    return new Array(V12_CONFIG.COLUMN_COUNT.PICKING).fill(c);
+  });
+  sheet.getRange(2, 1, rows.length, V12_CONFIG.COLUMN_COUNT.PICKING).setBackgrounds(background);
 }
 
 /**
@@ -245,7 +339,7 @@ function v12RefreshWorkingBOM() {
       r[P.REAL_DELIVERY_QTY - 1],
       r[P.AVAILABLE_FOR_PRODUCTION - 1],
       r[P.RECEIVED_BY_PRODUCTION_QTY - 1],
-      r[P.PRODUCTION_STATE - 1],
+      v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
       new Date()
     ]);
   }
