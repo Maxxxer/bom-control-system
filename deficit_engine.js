@@ -161,6 +161,8 @@ function updateDeficitSummary() {
 
 /**
  * Сохранение ручных изменений из сводки (заказ, даты) в MATERIAL_STATE.
+ * Возвращает массив изменённых materialId (для точечного пересчёта).
+ * ОПТИМИЗАЦИЯ: изменения пишутся одним batchWrite, история — одним writeValues.
  */
 function saveDeficitChanges() {
   const lock = acquireScriptLock();
@@ -169,12 +171,15 @@ function saveDeficitChanges() {
     flushSheets();
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) {
-      return;
+      return [];
     }
     const data = readRange(sheet, 2, 1, lastRow - 1, V11_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY);
     const D = V11_CONFIG.DEFICIT_COLUMNS;
     const index = buildMaterialIndex();
-    let changed = 0;
+    const changedIds = [];
+    const updates = [];
+    const historyRows = [];
+    const MS = getSheetByKey("MATERIAL_STATE");
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -194,9 +199,10 @@ function saveDeficitChanges() {
         continue;
       }
       const old = material.values;
-      const oldOrdered = toNumber(old[V11_CONFIG.MATERIAL_COLUMNS.ORDERED - 1]);
-      const oldExpected = old[V11_CONFIG.MATERIAL_COLUMNS.EXPECTED_DATE - 1] || "";
-      const oldDeadline = old[V11_CONFIG.MATERIAL_COLUMNS.DEADLINE_DATE - 1] || "";
+      const C = V11_CONFIG.MATERIAL_COLUMNS;
+      const oldOrdered = toNumber(old[C.ORDERED - 1]);
+      const oldExpected = old[C.EXPECTED_DATE - 1] || "";
+      const oldDeadline = old[C.DEADLINE_DATE - 1] || "";
 
       if (
         oldOrdered === ordered &&
@@ -206,24 +212,33 @@ function saveDeficitChanges() {
         continue;
       }
 
-      updateMaterialState(materialId, {
-        ORDERED: ordered,
-        EXPECTED_DATE: expected,
-        DEADLINE_DATE: deadline
-      }, index);
+      changedIds.push(materialId);
+      if (C.ORDERED) updates.push({ row: material.row, col: C.ORDERED, value: ordered });
+      if (C.EXPECTED_DATE) updates.push({ row: material.row, col: C.EXPECTED_DATE, value: expected });
+      if (C.DEADLINE_DATE) updates.push({ row: material.row, col: C.DEADLINE_DATE, value: deadline });
+      if (C.UPDATED) updates.push({ row: material.row, col: C.UPDATED, value: new Date() });
 
-      addMaterialHistory({
-        materialId: materialId,
-        event: "DEFICIT_SUMMARY_UPDATE",
-        oldValue: JSON.stringify({ ordered: oldOrdered, expected: oldExpected, deadline: oldDeadline }),
-        newValue: JSON.stringify({ ordered: ordered, expected: expected, deadline: deadline }),
-        comment: "Изменение через сводку дефицитов"
-      });
-      changed++;
+      historyRows.push([
+        new Date(),
+        materialId,
+        "DEFICIT_SUMMARY_UPDATE",
+        JSON.stringify({ ordered: oldOrdered, expected: oldExpected, deadline: oldDeadline }),
+        JSON.stringify({ ordered: ordered, expected: expected, deadline: deadline }),
+        getCurrentUser(),
+        "Изменение через сводку дефицитов"
+      ]);
+    }
+
+    if (updates.length) {
+      batchWrite(MS, updates);
+    }
+    if (historyRows.length) {
+      appendHistoryRows(historyRows);
     }
 
     flushSheets();
-    logSystem("saveDeficitChanges", "Изменено материалов: " + changed, "INFO");
+    logSystem("saveDeficitChanges", "Изменено материалов: " + changedIds.length, "INFO");
+    return changedIds;
   } catch (error) {
     logSystem("saveDeficitChanges", error.message, error, "ERROR");
     throw error;

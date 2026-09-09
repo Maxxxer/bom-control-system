@@ -6,6 +6,10 @@
  *
  * Единый логгер. Одна сигнатура:
  *   logSystem(functionName, message, data?, level?)
+ *
+ * ОПТИМИЗАЦИЯ: строки буферизуются в памяти и пишутся
+ * БАТЧЕМ (одним writeValues), а не по одной через appendRow.
+ * flushSystemLog() вызывается в конце массовых операций.
  * =====================================================
  */
 
@@ -16,6 +20,10 @@ const LOG_LEVELS = {
   WARN: "WARNING",
   DEBUG: "DEBUG"
 };
+
+// Буфер лога и порог автосброса
+let _logBuffer = [];
+let _logThreshold = 50;
 
 /**
  * Запись в SYSTEM_LOG.
@@ -43,21 +51,42 @@ function logSystem(functionName, message, data, level) {
     dataText = typeof data === "string" ? data : JSON.stringify(data);
   }
 
-  const sheet = getSheetByName(V11_CONFIG.SHEETS.SYSTEM_LOG);
-  if (!sheet) {
+  if (V11_CONFIG.SETTINGS.ENABLE_LOGGING === false) {
     return;
   }
 
+  _logBuffer.push([
+    new Date(),
+    functionName,
+    message,
+    level || LOG_LEVELS.INFO,
+    dataText
+  ]);
+
+  if (_logBuffer.length >= _logThreshold) {
+    flushSystemLog();
+  }
+}
+
+/**
+ * Сбросить буфер в SYSTEM_LOG одним вызовом.
+ */
+function flushSystemLog() {
+  if (!_logBuffer.length) {
+    return;
+  }
+  const sheet = getSheetByName(V11_CONFIG.SHEETS.SYSTEM_LOG);
+  if (!sheet) {
+    _logBuffer = [];
+    return;
+  }
   try {
-    sheet.appendRow([
-      new Date(),
-      functionName,
-      message,
-      level || LOG_LEVELS.INFO,
-      dataText
-    ]);
+    const rows = _logBuffer;
+    _logBuffer = [];
+    writeValues(sheet, sheet.getLastRow() + 1, 1, rows);
   } catch (e) {
-    console.error("logSystem failed: " + e.message);
+    _logBuffer = [];
+    console.error("flushSystemLog failed: " + e.message);
   }
 }
 

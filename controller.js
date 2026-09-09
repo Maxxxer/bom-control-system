@@ -52,6 +52,7 @@ function runFullUpdate() {
     SpreadsheetApp.getUi().alert("Ошибка:\n" + error.message);
   } finally {
     lock.releaseLock();
+    flushSystemLog();
   }
 }
 
@@ -136,6 +137,7 @@ function installV11() {
     logSystem("installV11", error.message, error, "ERROR");
   } finally {
     lock.releaseLock();
+    flushSystemLog();
   }
 }
 

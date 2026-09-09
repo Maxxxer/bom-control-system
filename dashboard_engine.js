@@ -32,11 +32,14 @@ function updateDashboard() {
     return;
   }
 
+  // Читаем «Выполнено» ОДИН раз (а не на каждую BOM)
+  const excludedMap = buildExcludedMap();
+
   const rows = data.slice(1).map(function (r) {
     const bom = r[0];
     const cached = cache[bom] || {};
     return [
-      isBOMDone(bom),                    // 1 DONE (чекбокс)
+      isBOMDone(bom, excludedMap),       // 1 DONE (чекбокс)
       bom,                               // 2 BOM
       r[8] || "",                        // 3 STATUS
       r[2] || "",                        // 4 DATE_CREATED
@@ -56,15 +59,23 @@ function updateDashboard() {
   dashboard.getRange(2, V11_CONFIG.DASHBOARD_COLUMNS.DONE, rows.length, 1)
     .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
 
-  // Hover-подсказки (ноты) на статус (колонка 3) — недостающие позиции
-  rows.forEach(function (r, i) {
-    const cell = dashboard.getRange(i + 2, V11_CONFIG.DASHBOARD_COLUMNS.STATUS);
-    const note = r[10] ? "Недостающие позиции:\n" + r[10] : "";
-    cell.setNote(note);
+  // Hover-подсказки (ноты) на статус (колонка 3) — одним вызовом setNotes
+  const notes = rows.map(function (r) {
+    return [r[10] ? "Недостающие позиции:\n" + r[10] : ""];
   });
+  dashboard.getRange(2, V11_CONFIG.DASHBOARD_COLUMNS.STATUS, rows.length, 1)
+    .setNotes(notes);
 
   applyDashboardColors();
-  dashboard.autoResizeColumns(1, 11);
+
+  // autoResizeColumns — очень медленная операция; включаем только для небольших дашбордов
+  if (
+    V11_CONFIG.SETTINGS.AUTO_RESIZE_DASHBOARD === true &&
+    rows.length <= V11_CONFIG.SETTINGS.AUTO_RESIZE_MAX_ROWS
+  ) {
+    dashboard.autoResizeColumns(1, 11);
+  }
+
   setupDashboardFilter();
 
   logSystem("updateDashboard", "Dashboard обновлён: " + rows.length, "INFO");

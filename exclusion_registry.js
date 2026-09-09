@@ -12,15 +12,38 @@
  */
 
 /**
- * Является ли BOM отмеченным «Выполнено».
+ * Собрать карту «Выполнено» (bom → true) ОДНИМ чтением листа.
+ * Используется в дашборде, чтобы не читать лист на каждую BOM.
  */
-function isBOMDone(bom) {
+function buildExcludedMap() {
   const sheet = getSheetByKey("EXCLUDED_BOMS");
   const data = readSheetValues(sheet);
+  const map = {};
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][1] === true) {
+      const id = normalizeMaterialId(data[i][0]);
+      if (id) {
+        map[id] = true;
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Является ли BOM отмеченным «Выполнено».
+ * Если передан готовый map — используем его (быстрый путь), иначе читаем лист.
+ */
+function isBOMDone(bom, map) {
   const id = normalizeMaterialId(bom);
   if (!id) {
     return false;
   }
+  if (map) {
+    return map[id] === true;
+  }
+  const sheet = getSheetByKey("EXCLUDED_BOMS");
+  const data = readSheetValues(sheet);
   for (let i = 1; i < data.length; i++) {
     if (
       normalizeMaterialId(data[i][0]) === id &&

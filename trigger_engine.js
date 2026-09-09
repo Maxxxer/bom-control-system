@@ -185,18 +185,34 @@ function v11ScheduledUpdate() {
   } finally {
     setV11Busy(false);
     lock.releaseLock();
+    flushSystemLog();
   }
 }
 
 /**
  * Обновление после изменения (используется из onEdit/импорта).
+ *
+ * ОПТИМИЗАЦИЯ: вместо полного recalculateMaterials() (пересчёт и перезапись
+ * ВСЕХ строк MATERIAL_STATE на каждое изменение) — точечный пересчёт только
+ * материалов, изменённых через сводку (их возвращает saveDeficitChanges).
+ * Остальные действия (чекбоксы, заказ, даты) уже пересчитывают свой материал
+ * внутри своего обработчика (confirmRealDelivery / updateExpectedDeliveryDate и т.д.).
  */
 function refreshAfterChange() {
   const lock = acquireScriptLock();
   try {
     setV11Busy(true);
-    saveDeficitChanges();
-    recalculateMaterials();
+    const changedIds = saveDeficitChanges() || [];
+
+    // Точечный пересчёт только тех материалов, которые изменились через сводку
+    if (changedIds.length) {
+      const index = buildMaterialIndex();
+      changedIds.forEach((id) => recalculateMaterialStatus(id, index));
+    }
+    // Гарантируем, что батч-записи (updateMaterialState → batchWrite) видны
+    // последующим чтениям MATERIAL_STATE в recalculateBOMState / updateDeficitSummary.
+    flushSheets();
+
     recalculateBOMState();
     updateDeficitSummary();
     updateDashboard();
@@ -206,6 +222,7 @@ function refreshAfterChange() {
   } finally {
     setV11Busy(false);
     lock.releaseLock();
+    flushSystemLog();
   }
 }
 

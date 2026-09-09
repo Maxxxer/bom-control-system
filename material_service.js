@@ -11,17 +11,17 @@
 
 /**
  * Собрать индекс материалов в памяти.
- * Читает лист один раз, возвращает Map<nromalizedId, {row, values}>.
+ * Читает лист один раз (если data не передан), возвращает Map<normalizedId, {row, values}>.
+ * Если data уже прочитано вызывающим кодом — передаём его, чтобы НЕ читать лист повторно.
  */
-function buildMaterialIndex() {
-  const sheet = getSheetByKey("MATERIAL_STATE");
-  const data = readSheetValues(sheet);
+function buildMaterialIndex(data) {
+  const rows = data || readSheetValues(getSheetByKey("MATERIAL_STATE"));
   const idCol = V11_CONFIG.MATERIAL_COLUMNS.MATERIAL_ID - 1;
   const index = new Map();
-  for (let i = 1; i < data.length; i++) {
-    const id = normalizeMaterialId(data[i][idCol]);
+  for (let i = 1; i < rows.length; i++) {
+    const id = normalizeMaterialId(rows[i][idCol]);
     if (id) {
-      index.set(id, { row: i + 1, values: data[i] });
+      index.set(id, { row: i + 1, values: rows[i] });
     }
   }
   return index;

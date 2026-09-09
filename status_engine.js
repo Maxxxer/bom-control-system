@@ -186,13 +186,17 @@ function recalculateMaterials() {
         continue;
       }
       const result = computeMaterialStatus(row);
+      const statusChanged = result.oldStatus && result.oldStatus !== result.status;
+      const stateChanged = result.oldState && result.oldState !== result.state;
 
       deficitCol.push([result.deficit]);
       statusCol.push([result.status]);
       stateCol.push([result.state]);
-      updatedCol.push([new Date()]);
+      // UPDATED обновляем ТОЛЬКО при реальном изменении статуса/состояния,
+      // иначе сохраняем прежнее значение (чтобы даты не «мигали» при каждом пересчёте).
+      updatedCol.push([(statusChanged || stateChanged) ? new Date() : (row[C.UPDATED - 1] || "")]);
 
-      if (result.oldStatus && result.oldStatus !== result.status) {
+      if (statusChanged) {
         eventRows.push({
           date: new Date(),
           id: generateEventId(),
@@ -203,7 +207,7 @@ function recalculateMaterials() {
           data: JSON.stringify({ comment: result.oldStatus + " → " + result.status })
         });
       }
-      if (result.oldState && result.oldState !== result.state) {
+      if (stateChanged) {
         historyRows.push([
           new Date(), id, "STATE_CHANGED", result.oldState, result.state,
           getCurrentUser(), "Изменено внутреннее состояние"

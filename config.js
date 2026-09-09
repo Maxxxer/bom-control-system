@@ -391,7 +391,11 @@ const V11_CONFIG = {
     LOCK_TIMEOUT: 30000,
     CACHE_SECONDS: 300,
     ARCHIVE_AFTER_DAYS: 30,
-    MAX_RECALC_RETRIES: 3
+    MAX_RECALC_RETRIES: 3,
+    // Производительность: autoResizeColumns на Dashboard — очень медленная операция.
+    // Отключаем по умолчанию; включаем только при небольшом числе строк.
+    AUTO_RESIZE_DASHBOARD: false,
+    AUTO_RESIZE_MAX_ROWS: 100
   },
 
   /**
