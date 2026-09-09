@@ -500,9 +500,9 @@ function v12ApplyDashboardColors() {
 function v12SetupDashboardNotes(rows) {
   const sheet = v12GetSheetByKey("DASHBOARD");
   const notes = rows.map(function (r) {
-    return r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1]
+    return [r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1]
       ? "Недостающие позиции:\n" + r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1]
-      : "";
+      : ""];
   });
   if (notes.length) {
     sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.STATUS, notes.length, 1).setNotes(notes);
