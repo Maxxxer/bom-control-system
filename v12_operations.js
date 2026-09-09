@@ -159,5 +159,7 @@ function v12GetWarehouseQtyForPositionRow(row, index) {
     model: row[P.MODEL - 1],
     unit: row[P.UNIT - 1]
   });
-  return v12GetWarehouseQty(materialKey, index);
+  // ВАЖНО: сюда НЕЛЬЗЯ передавать индекс POSITION_STATE — v12GetWarehouseQty
+  // ожидает индекс MATERIAL_STATE. Без аргумента она сама строит корректный индекс.
+  return v12GetWarehouseQty(materialKey);
 }

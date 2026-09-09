@@ -314,11 +314,16 @@ function v12AggregateBomStates() {
       bomMap[bomId] = {
         bomName: r[P.BOM_NAME - 1],
         total: 0, collected: 0, notOrdered: 0, partial: 0,
-        late: 0, onTime: 0, errors: 0, missing: []
+        late: 0, onTime: 0, errors: 0, missing: [],
+        minDeadline: null
       };
     }
     const b = bomMap[bomId];
     b.total++;
+    const deadline = r[P.DEADLINE - 1];
+    if (deadline && (b.minDeadline === null || new Date(b.minDeadline) > new Date(deadline))) {
+      b.minDeadline = deadline;
+    }
     const supply = r[P.SUPPLY_STATE - 1];
     const production = r[P.PRODUCTION_STATE - 1];
     const validation = r[P.VALIDATION_STATUS - 1];
@@ -388,6 +393,7 @@ function v12RefreshDashboard() {
   const agg = v12AggregateBomStates();
   const excluded = v12BuildExcludedMap();
   const bomIds = Object.keys(agg);
+  const revDates = v12BuildRevisionDateMap();
   const rows = [];
 
   bomIds.forEach(function (bomId) {
@@ -408,8 +414,8 @@ function v12RefreshDashboard() {
       a.total,
       a.collected,
       progress,
-      "",
-      "",
+      revDates[bomId] || "",
+      a.minDeadline || "",
       missingText,
       new Date()
     ]);
@@ -422,6 +428,28 @@ function v12RefreshDashboard() {
   v12InstallDashboardCheckboxes(rows.length);
   v12ApplyDashboardColors();
   v12SetupDashboardNotes(rows);
+}
+
+/**
+ * Карта «дата создания» BOM из BOM_REVISION (самая ранняя ревизия).
+ * Возвращает { bomId: date }.
+ */
+function v12BuildRevisionDateMap() {
+  const revData = v12ReadSheet("BOM_REVISION");
+  const R = V12_CONFIG.BOM_REVISION_COLUMNS;
+  const map = {};
+  for (let i = 1; i < revData.length; i++) {
+    const bomId = normalizeMaterialId(revData[i][R.BOM_ID - 1]);
+    const date = revData[i][R.DATE - 1];
+    if (!bomId || !date) {
+      continue;
+    }
+    const t = new Date(date).getTime();
+    if (!map[bomId] || (!isNaN(t) && t < new Date(map[bomId]).getTime())) {
+      map[bomId] = date;
+    }
+  }
+  return map;
 }
 
 /**

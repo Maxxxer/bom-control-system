@@ -1,6 +1,6 @@
 /**
  * =====================================================
- * BOM CONTROL SYSTEM V11
+ * BOM CONTROL SYSTEM
  *
  * FILE: logger.js
  *
@@ -51,7 +51,7 @@ function logSystem(functionName, message, data, level) {
     dataText = typeof data === "string" ? data : JSON.stringify(data);
   }
 
-  if (V11_CONFIG.SETTINGS.ENABLE_LOGGING === false) {
+  if (V12_CONFIG.SETTINGS.ENABLE_LOGGING === false) {
     return;
   }
 
@@ -75,7 +75,7 @@ function flushSystemLog() {
   if (!_logBuffer.length) {
     return;
   }
-  const sheet = getSheetByName(V11_CONFIG.SHEETS.SYSTEM_LOG);
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.SYSTEM_LOG);
   if (!sheet) {
     _logBuffer = [];
     return;

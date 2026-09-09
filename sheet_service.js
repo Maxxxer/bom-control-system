@@ -1,23 +1,16 @@
 /**
  * =====================================================
- * BOM CONTROL SYSTEM V11
+ * BOM CONTROL SYSTEM
  *
  * FILE: sheet_service.js
  *
- * Обёртки над SpreadsheetApp.
+ * Общие обёртки над SpreadsheetApp — базовый сервис.
  * Все обращения к листам — только через этот сервис.
  * =====================================================
  */
 
 /**
- * Получить активную таблицу
- */
-function getActiveSpreadsheet() {
-  return SpreadsheetApp.getActive();
-}
-
-/**
- * Получить лист по имени из конфига
+ * Получить лист по имени.
  */
 function getSheetByName(sheetName) {
   if (!sheetName) {
@@ -26,20 +19,8 @@ function getSheetByName(sheetName) {
   return SpreadsheetApp.getActive().getSheetByName(sheetName);
 }
 
-function getSheetByKey(key) {
-  const name = V11_CONFIG.SHEETS[key];
-  if (!name) {
-    throw new Error("Нет листа с ключом: " + key);
-  }
-  const sheet = getSheetByName(name);
-  if (!sheet) {
-    throw new Error("Лист не найден: " + name);
-  }
-  return sheet;
-}
-
 /**
- * Прочитать весь диапазон листа как матрицу
+ * Прочитать весь диапазон листа как матрицу.
  */
 function readSheetValues(sheet) {
   if (!sheet) {
@@ -48,19 +29,8 @@ function readSheetValues(sheet) {
   return sheet.getDataRange().getValues();
 }
 
-function readSheetByKey(key) {
-  return readSheetValues(getSheetByKey(key));
-}
-
 /**
- * Прочитать диапазон
- */
-function readRange(sheet, row, col, numRows, numCols) {
-  return sheet.getRange(row, col, numRows, numCols).getValues();
-}
-
-/**
- * Записать массив значений
+ * Записать массив значений.
  */
 function writeValues(sheet, row, col, values) {
   if (!values || !values.length) {
@@ -70,7 +40,7 @@ function writeValues(sheet, row, col, values) {
 }
 
 /**
- * Очистить содержимое диапазона
+ * Очистить содержимое диапазона.
  */
 function clearRange(sheet, row, col, numRows, numCols) {
   if (numRows <= 0 || numCols <= 0) {
@@ -82,7 +52,7 @@ function clearRange(sheet, row, col, numRows, numCols) {
 }
 
 /**
- * Очистить тело листа (ниже заголовка), оставив первую строку
+ * Очистить тело листа (ниже заголовка), оставив первую строку.
  */
 function clearBody(sheet) {
   const lastRow = sheet.getLastRow();
@@ -92,14 +62,14 @@ function clearBody(sheet) {
 }
 
 /**
- * Добавить строку
+ * Добавить строку.
  */
 function appendRow(sheet, row) {
   sheet.appendRow(row);
 }
 
 /**
- * Создать лист, если нет; записать заголовки, если пуст
+ * Создать лист, если нет; записать заголовки, если пуст.
  */
 function ensureSheet(name, headers) {
   const ss = SpreadsheetApp.getActive();
@@ -112,31 +82,6 @@ function ensureSheet(name, headers) {
     sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
   }
   return sheet;
-}
-
-/**
- * Создать все листы из конфига
- */
-function ensureAllSheets() {
-  const headers = V11_CONFIG.HEADERS;
-  Object.keys(V11_CONFIG.SHEETS).forEach((key) => {
-    const name = V11_CONFIG.SHEETS[key];
-    const header = headers[key] || [];
-    ensureSheet(name, header);
-  });
-}
-
-/**
- * Форматировать все листы: закрепить шапку, жирный заголовок
- */
-function formatAllSheets() {
-  Object.values(V11_CONFIG.SHEETS).forEach((name) => {
-    const sheet = getSheetByName(name);
-    if (sheet) {
-      sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, sheet.getLastColumn()).setFontWeight("bold");
-    }
-  });
 }
 
 /**
@@ -190,11 +135,4 @@ function batchWrite(sheet, changes) {
       sheet.getRange(row, cStart, 1, values.length).setValues([values]);
     });
   });
-}
-
-/**
- * Unlock helper — снять возможные блокировки (не используется в проде)
- */
-function flushSheets() {
-  SpreadsheetApp.flush();
 }

@@ -1,10 +1,10 @@
 /**
  * =====================================================
- * BOM CONTROL SYSTEM V11
+ * BOM CONTROL SYSTEM
  *
  * FILE: lock.js
  *
- * Единый механизм блокировок (ScriptLock).
+ * Единый механизм блокировок (ScriptLock) — общий сервис.
  * =====================================================
  */
 
@@ -22,7 +22,7 @@ function acquireScriptLock() {
   }
 
   const lock = LockService.getScriptLock();
-  lock.waitLock(V11_CONFIG.SETTINGS.LOCK_TIMEOUT);
+  lock.waitLock(V12_CONFIG.SETTINGS.LOCK_TIMEOUT);
   _heldLock = lock;
   _lockDepth = 1;
 

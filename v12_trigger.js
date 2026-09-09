@@ -13,6 +13,15 @@
  */
 
 /**
+ * Удалить все проектные триггеры (в т.ч. оставшиеся от V11).
+ */
+function removeV11Triggers() {
+  ScriptApp.getProjectTriggers().forEach((trigger) => {
+    ScriptApp.deleteTrigger(trigger);
+  });
+}
+
+/**
  * Установить триггеры V12 (удалив старые).
  */
 function v12InstallTriggers() {
@@ -180,9 +189,13 @@ function v12HandleDeficitEdit(e) {
   } else if (column === D.REAL_DELIVERY) {
     const checked = e.range.getValue();
     v12SetRealDeliveryQty(positionId, checked === true ? sheet.getRange(row, D.REQUIRED_QTY).getValue() : 0);
+  } else if (column === D.RECEIVED) {
+    // «Получено» = полная реальная поставка: ставим/обнуляем REAL_DELIVERY_QTY.
+    const checked = e.range.getValue();
+    v12SetRealDeliveryQty(positionId, checked === true ? sheet.getRange(row, D.REQUIRED_QTY).getValue() : 0);
   } else {
     v12RevertEdit(e);
-    logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка", "WARNING");
+    logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка/Получено", "WARNING");
   }
 }
 
