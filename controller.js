@@ -9,20 +9,8 @@
  */
 
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu("BOM CONTROL V11")
-    .addItem("🔄 Обновить систему", "runFullUpdate")
-    .addSeparator()
-    .addItem("📥 Импорт BOM", "runBOMImport")
-    .addItem("📊 Обновить Dashboard", "updateDashboard")
-    .addItem("📦 Проверить получение", "archiveReceivedMaterials")
-    .addSeparator()
-    .addItem("🔎 Диагностика", "runV11Diagnostic")
-    .addItem("🧪 Тест V11", "runV11Debug")
-    .addItem("🎨 Тест цветов", "runV11StatusTest")
-    .addSeparator()
-    .addItem("⚙ Установка V11", "installV11")
-    .addToUi();
+  // V12 — активная система (архитектура SOURCE ≠ STATE ≠ VIEW).
+  v12OnOpen();
 }
 
 /**

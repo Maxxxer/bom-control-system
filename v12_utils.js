@@ -1,0 +1,102 @@
+/**
+ * =====================================================
+ * BOM CONTROL SYSTEM V12
+ *
+ * FILE: v12_utils.js
+ *
+ * Утилиты V12: стабильный positionId, materialKey (К5),
+ * валидация по ТЗ №8 (К4), нормализация значений.
+ * Переиспользует generic-помощники из utils.js
+ * (toNumber, normalizeMaterialId, getCurrentUser).
+ * =====================================================
+ */
+
+/**
+ * Построить materialKey по ТЗ №68–71 (К5):
+ *   если есть code -> code; иначе name|model|unit.
+ */
+function v12BuildMaterialKey(parts) {
+  const code = String((parts && parts.code) || "").trim();
+  if (code) {
+    return code;
+  }
+  const name = String((parts && parts.name) || "").trim();
+  const model = String((parts && parts.model) || "").trim();
+  const unit = String((parts && parts.unit) || "").trim();
+  return [name, model, unit].join("|");
+}
+
+/**
+ * Построить стабильный ключ позиции для первичного связывания.
+ * Используется только при создании positionId (не как primary key впоследствии).
+ * Ключ детерминирован: code|name|model|unit (без строки и без версии).
+ */
+function v12BuildPositionStableKey(row) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const code = String(row[P.MATERIAL_CODE - 1] || "").trim();
+  const name = String(row[P.MATERIAL_NAME - 1] || "").trim();
+  const model = String(row[P.MODEL - 1] || "").trim();
+  const unit = String(row[P.UNIT - 1] || "").trim();
+  return [code, name, model, unit].join("|");
+}
+
+/**
+ * Сгенерировать уникальный positionId:
+ *   bomId + ":" + materialKey, при дубликатах в рамках одного BOM —
+ *   добавляется числовой суффикс (#2, #3, ...).
+ * existingIds — Set уже занятых positionId в рамках этого BOM.
+ */
+function v12GeneratePositionId(bomId, materialKey, existingIds) {
+  const bom = String(bomId || "").trim();
+  const key = String(materialKey || "").trim() || "UNKNOWN";
+  const base = bom + ":" + key;
+  if (!existingIds || !existingIds.has(base)) {
+    return base;
+  }
+  let n = 2;
+  while (existingIds && existingIds.has(base + "#" + n)) {
+    n++;
+  }
+  return base + "#" + n;
+}
+
+/**
+ * Валидация позиции по ТЗ №8 (К4):
+ * обязательны — Строка, Наименование, Модель, Ед.изм, Требуемое,
+ * Зарезервировано (0 — валидный дефолт), Срок; Код — НЕ обязателен.
+ */
+function v12ValidatePosition(row) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const missing = {
+    row: !String(row[P.BOM_ROW - 1] || "").trim(),
+    name: !String(row[P.MATERIAL_NAME - 1] || "").trim(),
+    model: !String(row[P.MODEL - 1] || "").trim(),
+    unit: !String(row[P.UNIT - 1] || "").trim(),
+    requiredQty: toNumber(row[P.REQUIRED_QTY - 1]) <= 0,
+    deadline: !(row[P.DEADLINE - 1] !== "" && row[P.DEADLINE - 1] !== null && row[P.DEADLINE - 1] !== undefined)
+  };
+  missing.hasError = missing.row || missing.name || missing.model || missing.unit ||
+    missing.requiredQty || missing.deadline;
+  return { valid: !missing.hasError, missing: missing };
+}
+
+/**
+ * Нормализация строки для сравнения (без регистра/пробелов).
+ */
+function v12Norm(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+/**
+ * Безопасное приведение к дате (для сравнения в расчётах).
+ */
+function v12DateValue(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+  const d = new Date(value);
+  if (isNaN(d.getTime())) {
+    return String(value).trim();
+  }
+  return d.getTime();
+}
