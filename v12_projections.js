@@ -77,7 +77,6 @@ function v12RefreshDeficitSummary() {
       r[P.EXPECTED_DATE - 1],
       r[P.DEADLINE - 1],
       r[P.REAL_DELIVERY_QTY - 1],
-      r[P.SUPPLY_STATE - 1],
       false, // RECEIVED checkbox
       false, // REAL_DELIVERY checkbox
       v12SupplyStatusDisplay(r[P.SUPPLY_STATE - 1], r[P.VALIDATION_STATUS - 1])
@@ -111,7 +110,7 @@ function v12SupplyStatusDisplay(supplyState, validation) {
 }
 
 /**
- * Чекбоксы «Получено» (RECEIVED, кол. 15) и «Реальная поставка» (REAL_DELIVERY, кол. 16).
+ * Чекбоксы «Получено» (RECEIVED, кол. 14) и «Реальная поставка» (REAL_DELIVERY, кол. 15).
  */
 function v12InstallDeficitCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");

@@ -180,8 +180,8 @@ function v12GetDeficitRequiredQty(positionId, index) {
 
 /**
  * DEFICIT_SUMMARY: заказ (ORDERED_QTY кол. 9), дата (EXPECTED кол. 11),
- * дата крайнего срока (DEADLINE кол. 12), реальная поставка (REAL_DELIVERY кол. 16),
- * получено (RECEIVED кол. 15).
+ * дата крайнего срока (DEADLINE кол. 12), реальная поставка (REAL_DELIVERY кол. 15),
+ * получено (RECEIVED кол. 14).
  */
 function v12HandleDeficitEdit(e) {
   const D = V12_CONFIG.DEFICIT_COLUMNS;
