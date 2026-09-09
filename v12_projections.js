@@ -60,6 +60,9 @@ function v12RefreshDeficitSummary() {
     if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
       continue;
     }
+    if (toNumber(r[P.DEFICIT_QTY - 1]) <= 0) {
+      continue;   // нет дефицита — в сводку не берём
+    }
     rows.push([
       r[P.POSITION_ID - 1],
       r[P.BOM_NAME - 1],
@@ -68,8 +71,6 @@ function v12RefreshDeficitSummary() {
       r[P.MATERIAL_NAME - 1],
       r[P.MODEL - 1],
       r[P.UNIT - 1],
-      r[P.REQUIRED_QTY - 1],
-      r[P.RESERVED_QTY - 1],
       r[P.DEFICIT_QTY - 1],
       r[P.ORDERED_QTY - 1],
       r[P.UNCOVERED_NEED - 1],
@@ -110,7 +111,7 @@ function v12SupplyStatusDisplay(supplyState, validation) {
 }
 
 /**
- * Чекбоксы «Получено» (RECEIVED, кол. 17) и «Реальная поставка» (REAL_DELIVERY, кол. 18).
+ * Чекбоксы «Получено» (RECEIVED, кол. 15) и «Реальная поставка» (REAL_DELIVERY, кол. 16).
  */
 function v12InstallDeficitCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");

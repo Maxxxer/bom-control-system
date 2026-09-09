@@ -169,9 +169,19 @@ function v12HandleDashboardEdit(e) {
 }
 
 /**
- * DEFICIT_SUMMARY: заказ (ORDERED_QTY кол. 11), дата (EXPECTED кол. 13),
- * дата крайнего срока (DEADLINE кол. 14), реальная поставка (REAL_DELIVERY кол. 18),
- * получено (RECEIVED кол. 17).
+ * Потребность (REQUIRED_QTY) позиции из POSITION_STATE — для «Реальной поставки»/«Получено».
+ * Колонки «Требуется» в Сводке больше нет, поэтому берём из центрального состояния.
+ */
+function v12GetDeficitRequiredQty(positionId, index) {
+  const pos = v12GetPositionById(positionId, index);
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  return pos ? toNumber(pos.values[P.REQUIRED_QTY - 1]) : 0;
+}
+
+/**
+ * DEFICIT_SUMMARY: заказ (ORDERED_QTY кол. 9), дата (EXPECTED кол. 11),
+ * дата крайнего срока (DEADLINE кол. 12), реальная поставка (REAL_DELIVERY кол. 16),
+ * получено (RECEIVED кол. 15).
  */
 function v12HandleDeficitEdit(e) {
   const D = V12_CONFIG.DEFICIT_COLUMNS;
@@ -188,11 +198,11 @@ function v12HandleDeficitEdit(e) {
     v12SetExpectedDate(positionId, e.range.getValue());
   } else if (column === D.REAL_DELIVERY) {
     const checked = e.range.getValue();
-    v12SetRealDeliveryQty(positionId, checked === true ? sheet.getRange(row, D.REQUIRED_QTY).getValue() : 0);
+    v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
   } else if (column === D.RECEIVED) {
     // «Получено» = полная реальная поставка: ставим/обнуляем REAL_DELIVERY_QTY.
     const checked = e.range.getValue();
-    v12SetRealDeliveryQty(positionId, checked === true ? sheet.getRange(row, D.REQUIRED_QTY).getValue() : 0);
+    v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
   } else {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка/Получено", "WARNING");
