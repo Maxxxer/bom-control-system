@@ -42,6 +42,28 @@ function v12RefreshProjections() {
 }
 
 /**
+ * Формат «только дата» (dd.MM.yyyy) — в проекциях колонки дат не содержат времени.
+ */
+function v12FormatDateOnly(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+  let d;
+  if (value instanceof Date) {
+    d = value;
+  } else {
+    d = new Date(value);
+  }
+  if (isNaN(d.getTime())) {
+    return String(value);
+  }
+  const dd = ("0" + d.getDate()).slice(-2);
+  const mm = ("0" + (d.getMonth() + 1)).slice(-2);
+  const yyyy = d.getFullYear();
+  return dd + "." + mm + "." + yyyy;
+}
+
+/**
  * DEFICIT_SUMMARY: активные (не архив/не удалённые, не переданные производству)
  * позиции для снабжения. Колонки из V12_CONFIG.DEFICIT_COLUMNS.
  */
@@ -73,12 +95,11 @@ function v12RefreshDeficitSummary() {
       r[P.UNIT - 1],
       r[P.DEFICIT_QTY - 1],
       r[P.ORDERED_QTY - 1],
-      r[P.UNCOVERED_NEED - 1],
-      r[P.EXPECTED_DATE - 1],
-      r[P.DEADLINE - 1],
-      r[P.REAL_DELIVERY_QTY - 1],
-      false, // RECEIVED checkbox
+      v12FormatDateOnly(r[P.EXPECTED_DATE - 1]),
+      v12FormatDateOnly(r[P.DEADLINE - 1]),
       false, // REAL_DELIVERY checkbox
+      r[P.REAL_DELIVERY_QTY - 1],
+      r[P.UNCOVERED_NEED - 1],
       v12SupplyStatusDisplay(r[P.SUPPLY_STATE - 1], r[P.VALIDATION_STATUS - 1])
     ]);
   }
@@ -110,7 +131,7 @@ function v12SupplyStatusDisplay(supplyState, validation) {
 }
 
 /**
- * Чекбоксы «Получено» (RECEIVED, кол. 14) и «Реальная поставка» (REAL_DELIVERY, кол. 15).
+ * Чекбокс «Реальная поставка» (REAL_DELIVERY, кол. 12).
  */
 function v12InstallDeficitCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
@@ -120,11 +141,8 @@ function v12InstallDeficitCheckboxes(rowCount) {
   if (maxRows <= 0) {
     return;
   }
-  sheet.getRange(2, D.RECEIVED, maxRows, 1).clearDataValidations();
   sheet.getRange(2, D.REAL_DELIVERY, maxRows, 1).clearDataValidations();
   if (rowCount > 0) {
-    sheet.getRange(2, D.RECEIVED, rowCount, 1)
-      .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
     sheet.getRange(2, D.REAL_DELIVERY, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
   }

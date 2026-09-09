@@ -27,8 +27,14 @@ function v12GetUserRole(email) {
 
 /**
  * Текущая роль пользователя.
+ * Если роли не настроены (V12_ROLE_MAP пуст) — все пользователи имеют роль ADMIN,
+ * чтобы приложение работало «из коробки». Как только владелец добавит email в
+ * V12_ROLE_MAP, RBAC активируется.
  */
 function v12GetCurrentUserRole() {
+  if (Object.keys(V12_ROLE_MAP).length === 0) {
+    return V12_CONFIG.ROLES.ADMIN;
+  }
   return v12GetUserRole(getCurrentUser());
 }
 

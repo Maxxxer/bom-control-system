@@ -179,9 +179,8 @@ function v12GetDeficitRequiredQty(positionId, index) {
 }
 
 /**
- * DEFICIT_SUMMARY: заказ (ORDERED_QTY кол. 9), дата (EXPECTED кол. 11),
- * дата крайнего срока (DEADLINE кол. 12), реальная поставка (REAL_DELIVERY кол. 15),
- * получено (RECEIVED кол. 14).
+ * DEFICIT_SUMMARY: заказ (ORDERED_QTY кол. 9), дата (EXPECTED кол. 10),
+ * реальная поставка (REAL_DELIVERY кол. 12). «Получено» убрано — отмечают кладовщики в ОТБОРКЕ.
  */
 function v12HandleDeficitEdit(e) {
   const D = V12_CONFIG.DEFICIT_COLUMNS;
@@ -199,13 +198,9 @@ function v12HandleDeficitEdit(e) {
   } else if (column === D.REAL_DELIVERY) {
     const checked = e.range.getValue();
     v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
-  } else if (column === D.RECEIVED) {
-    // «Получено» = полная реальная поставка: ставим/обнуляем REAL_DELIVERY_QTY.
-    const checked = e.range.getValue();
-    v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
   } else {
     v12RevertEdit(e);
-    logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка/Получено", "WARNING");
+    logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка", "WARNING");
   }
 }
 
