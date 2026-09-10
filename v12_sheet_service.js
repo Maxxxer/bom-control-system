@@ -35,7 +35,36 @@ function v12EnsureAllSheets() {
     const header = headers[key] || [];
     ensureSheet(name, header);
   });
+  v12MigratePickingSchema();
   v12FormatAllSheets();
+}
+
+/**
+ * Миграция листа ОТБОРКА под новую схему (без колонки «Передано (кол-во)»).
+ *
+ * В прежней схеме ОТБОРКА содержала 15 колонок: кол. 14 — «Передано (кол-во)»,
+ * кол. 15 — «Обновлено». Колонка «Передано (кол-во)» не читается кодом и всегда
+ * равна 0 для видимых строк (переданные позиции из проекции исключаются), поэтому
+ * она удаляется. Тело листа не трогаем — оно пересобирается v12RefreshPicking;
+ * приводим к канону только строку заголовков.
+ */
+function v12MigratePickingSchema() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.PICKING);
+  if (!sheet || typeof sheet.deleteColumn !== "function") {
+    return;
+  }
+  const expected = V12_CONFIG.HEADERS.PICKING.length;
+  const lastCol = sheet.getLastColumn();
+  if (lastCol > 0) {
+    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const legacyIndex = header.indexOf("Передано (кол-во)");
+    if (legacyIndex !== -1) {
+      sheet.deleteColumn(legacyIndex + 1);
+    }
+  }
+  // Канонический заголовок (после удаления смещённой колонки).
+  sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.PICKING]);
+  sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
 }
 
 /**

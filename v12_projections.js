@@ -580,7 +580,6 @@ function v12RefreshPicking() {
       warehouse,
       v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
       false, // CHECKBOX
-      r[P.RECEIVED_BY_PRODUCTION_QTY - 1],
       new Date()
     ]);
   }

@@ -63,7 +63,7 @@ const V12_CONFIG = {
     POSITION_STATE: 30,
     MATERIAL_STATE: 9,
     DEFICIT_SUMMARY: 14,
-    PICKING: 15,
+    PICKING: 14,
     WORKING_BOM: 14,
     SUPPLY: 13,
     DASHBOARD: 11,
@@ -172,7 +172,7 @@ const V12_CONFIG = {
   },
 
   /**
-   * ОТБОРКА (PICKING) (15) — интерфейс кладовщика/производства.
+   * ОТБОРКА (PICKING) (14) — интерфейс кладовщика/производства.
    */
   PICKING_COLUMNS: {
     POSITION_ID: 1,
@@ -188,8 +188,7 @@ const V12_CONFIG = {
     WAREHOUSE_QTY: 11,
     PRODUCTION_STATE: 12,
     CHECKBOX: 13,
-    RECEIVED_QTY: 14,
-    UPDATED_AT: 15
+    UPDATED_AT: 14
   },
 
   /**
@@ -371,7 +370,7 @@ const V12_CONFIG = {
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
       "Требуется", "Зарезервировано", "Доступно для производства",
       "Складской остаток", "ProductionState", "Отметка получено",
-      "Передано (кол-во)", "Обновлено"
+      "Обновлено"
     ],
     WORKING_BOM: [
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
