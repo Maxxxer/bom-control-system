@@ -627,6 +627,9 @@ function v12RefreshPicking() {
   const K = V12_CONFIG.PICKING_COLUMNS;
   const data = v12ReadSheet("POSITION_STATE");
   const codes = v12GetBomProjectCodes(data);
+  // Даты создания BOM (самая ранняя ревизия) — для колонки «Дата поставки»
+  // у позиций, изначально закрытых резервом BOM.
+  const bomCreatedDates = v12BuildRevisionDateMap();
   let filter = v12GetPickingFilter();
   // Выбран несуществующий/исчезнувший проект — сбрасываем фильтр на «Все проекты»
   // до сборки строк (иначе лист окажется пустым).
@@ -665,7 +668,7 @@ function v12RefreshPicking() {
         r[P.REQUIRED_QTY - 1],
         r[P.AVAILABLE_FOR_PRODUCTION - 1],
         v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-        v12PickingDeliveryDate(r),                   // «Дата поставки» (кол. 11)
+        v12PickingDeliveryDate(r, bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]), // «Дата поставки» (кол. 11)
         false // CHECKBOX
       ],
       color: v12PickingRowColor(r)
@@ -703,13 +706,22 @@ function v12RefreshPicking() {
 /**
  * Значение колонки «Дата поставки» ОТБОРКИ (кол. 11).
  *
- * Для материала, который уже на складе (READY_FOR_HANDOFF), показываем дату, в
- * которую поставка была отмечена как реальная (REAL_DELIVERY_DATE). Если фактической
- * даты нет (материал закрыт резервом BOM) — показываем ожидаемую дату прихода.
- * Для остальных позиций — ожидаемую дату поставки.
+ * Приоритет значений:
+ *   1) Если в BOM изначально зарезервировано >= требуется (материал закрыт
+ *      резервом BOM) — дата создания BOM (bomCreatedDate);
+ *   2) иначе для материала на складе (READY_FOR_HANDOFF) — дата реальной
+ *      поставки (REAL_DELIVERY_DATE);
+ *   3) иначе — ожидаемая дата прихода (EXPECTED_DATE).
  */
-function v12PickingDeliveryDate(r) {
+function v12PickingDeliveryDate(r, bomCreatedDate) {
   const P = V12_CONFIG.POSITION_COLUMNS;
+  const required = toNumber(r[P.REQUIRED_QTY - 1]);
+  const reserved = toNumber(r[P.RESERVED_QTY - 1]);
+  // Материал изначально закрыт резервом BOM (зарезервировано >= требуется) —
+  // дата поставки = дата создания BOM.
+  if (required > 0 && reserved >= required && bomCreatedDate) {
+    return v12FormatDateOnly(bomCreatedDate);
+  }
   if (r[P.PRODUCTION_STATE - 1] === V12_CONFIG.PRODUCTION_STATE.READY_FOR_HANDOFF) {
     const realDate = r[P.REAL_DELIVERY_DATE - 1];
     if (realDate !== "" && realDate !== null && realDate !== undefined) {

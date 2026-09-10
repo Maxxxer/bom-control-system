@@ -285,6 +285,43 @@ console.log("=== C5c: у товара НЕ на складе «Дата пост
   check("кол. 11 = «05.09.2026» (ожидаемая)", PK._data[1][K.EXPECTED_DATE - 1], "05.09.2026");
 }
 
+console.log("=== C5d: зарезервировано >= требуется → «Дата поставки» = дата создания BOM ===");
+{
+  const PK = makeSheet(C.SHEETS.PICKING, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  const BR = sheets[C.SHEETS.BOM_REVISION];
+  const RB = C.BOM_REVISION_COLUMNS;
+  // Дата создания BOM1 = 15.01.2026.
+  const revRow = new Array(C.COLUMN_COUNT.BOM_REVISION).fill("");
+  revRow[RB.DATE - 1] = new Date(2026, 0, 15);
+  revRow[RB.BOM_ID - 1] = "BOM1";
+  revRow[RB.REVISION - 1] = 1;
+  BR._data = [C.HEADERS.BOM_REVISION.slice(), revRow];
+
+  // Позиция: reserved=10 == required=10 → дата поставки = дата создания BOM.
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  PS._data.push(N.v12BuildPositionRow("BOM1", {
+    bomName: "BOM1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 10, deadline: "2026-09-01"
+  }, "BOM1:C1", 1, { expectedDate: "2026-09-05" }));
+
+  N.v12RefreshPicking();
+  const K = C.PICKING_COLUMNS;
+  check("резерв == требуется → «15.01.2026»", PK._data[1][K.EXPECTED_DATE - 1], "15.01.2026");
+
+  // Позиция: reserved=3 < required=10 → дата поставки = ожидаемая.
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  PS._data.push(N.v12BuildPositionRow("BOM1", {
+    bomName: "BOM1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 3, deadline: "2026-09-01"
+  }, "BOM1:C1", 1, { expectedDate: "2026-09-05" }));
+  N.v12RefreshPicking();
+  check("резерв < требуется → ожидаемая «05.09.2026»", PK._data[1][K.EXPECTED_DATE - 1], "05.09.2026");
+
+  // Не оставляем данные BOM_REVISION последующим тестам.
+  BR._data = [C.HEADERS.BOM_REVISION.slice()];
+}
+
 console.log("=== C7: разбор кода проекта (до пробела/дефиса/подчёркивания) ===");
 {
   const E = N.v12ExtractBomProjectCode;
