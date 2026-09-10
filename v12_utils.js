@@ -106,24 +106,35 @@ function v12ToDate(value) {
   if (value instanceof Date) {
     return isNaN(value.getTime()) ? null : value;
   }
+
+  // Число ИЛИ числовая строка. Числовая строка важна: серийный номер даты
+  // Sheets может прийти как текст ("46290") — иначе new Date("46290") вернул
+  // бы год 46290 (отображение «01.01.46290»).
+  let num = null;
   if (typeof value === "number") {
-    if (!isFinite(value) || value === 0) {
+    num = value;
+  } else if (typeof value === "string" && /^\d+(\.\d+)?$/.test(value.trim())) {
+    num = Number(value.trim());
+  }
+  if (num !== null) {
+    if (!isFinite(num) || num === 0) {
       return null;
     }
     // Серийный номер даты Google Sheets (дни от 1899-12-30).
-    if (value > 0 && value < 2958466) {
+    if (num > 0 && num < 2958466) {
       const d = new Date(1899, 11, 30);
-      d.setDate(d.getDate() + Math.floor(value));
+      d.setDate(d.getDate() + Math.floor(num));
       return d;
     }
-    const d = new Date(value);
-    return isNaN(d.getTime()) ? null : d;
+    const dn = new Date(num);
+    return isNaN(dn.getTime()) ? null : dn;
   }
+
   const s = String(value).trim();
   if (!s) {
     return null;
   }
-  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
   if (m) {
     return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
   }
