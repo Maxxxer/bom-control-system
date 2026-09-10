@@ -37,6 +37,9 @@ function v12EnsureAllSheets() {
   });
   v12MigratePickingSchema();
   v12FormatAllSheets();
+  // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
+  // строку заголовков (в т.ч. ячейку B1).
+  v12InstallPickingBomFilter();
 }
 
 /**

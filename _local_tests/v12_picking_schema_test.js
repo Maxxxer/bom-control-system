@@ -81,7 +81,7 @@ function makeSheet(name, header) {
 globalThis.SpreadsheetApp = {
   getActive() { return { getSheetByName(n) { return sheets[n] || null; }, insertSheet(n) { return makeSheet(n); } }; },
   getUi() { return { alert() {}, createMenu() { return this; } }; },
-  newDataValidation() { return { requireCheckbox() { return this; }, build() { return {}; } }; },
+  newDataValidation() { return { requireCheckbox() { return this; }, requireValueInList() { return this; }, build() { return {}; } }; },
   newConditionalFormatRule() { return { whenTextContains() { return this; }, setBackground() { return this; }, setRanges() { return this; }, build() { return {}; } }; },
   flush() {}
 };
@@ -201,6 +201,54 @@ console.log("=== C5: проекция v12RefreshPicking пишет 13 колон
   check("кол. 11 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
   check("кол. 12 = чекбокс false", row[K.CHECKBOX - 1], false);
   check("кол. 13 (UPDATED_AT) — дата", row[K.UPDATED_AT - 1] instanceof Date, true);
+}
+
+console.log("=== C6: фильтр по проекту (B1) и порядок сортировки ===");
+{
+  const K = C.PICKING_COLUMNS;
+  const F = C.PICKING_FILTER;
+  const PK = makeSheet(C.SHEETS.PICKING, CANON);
+  const PS2 = sheets[C.SHEETS.POSITION_STATE];
+  PS2._data = [C.HEADERS.POSITION_STATE.slice()];
+  // Проект AAA: строка 5 — нет в наличии (reserved=0), строка 1 — «На складе» (reserved=10).
+  PS2._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 5, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-01"
+  }, "AAA-100:C1", 1, {}));
+  PS2._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 1, code: "C2", name: "M-C2", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 10, deadline: "2026-09-01"
+  }, "AAA-100:C2", 1, {}));
+  // Проект BBB: одна строка, нет в наличии.
+  PS2._data.push(N.v12BuildPositionRow("BBB-200", {
+    bomName: "BBB-200", row: 1, code: "C3", name: "M-C3", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-01"
+  }, "BBB-200:C1", 1, {}));
+
+  // «Все проекты» → 3 строки.
+  PK._setCell(F.CELL_ROW, F.CELL_COL, F.ALL);
+  N.v12RefreshPicking();
+  check("Все проекты: 3 строки", PK.getLastRow() - 1, 3);
+
+  // Фильтр «AAA» → 2 строки, «На складе» сверху.
+  PK._setCell(F.CELL_ROW, F.CELL_COL, "AAA");
+  N.v12RefreshPicking();
+  check("AAA: 2 строки", PK.getLastRow() - 1, 2);
+  check("AAA: 1-я строка «На складе»", PK._data[1][K.PRODUCTION_STATE - 1], "На складе");
+  check("AAA: 1-я строка = C2", PK._data[1][K.MATERIAL_CODE - 1], "C2");
+  check("AAA: 2-я строка = C1", PK._data[2][K.MATERIAL_CODE - 1], "C1");
+
+  // Фильтр «BBB» → 1 строка.
+  PK._setCell(F.CELL_ROW, F.CELL_COL, "BBB");
+  N.v12RefreshPicking();
+  check("BBB: 1 строка", PK.getLastRow() - 1, 1);
+  check("BBB: код = C3", PK._data[1][K.MATERIAL_CODE - 1], "C3");
+
+  // Выбор несуществующего проекта → сброс на «Все проекты», 3 строки.
+  PK._setCell(F.CELL_ROW, F.CELL_COL, "ZZZ");
+  N.v12RefreshPicking();
+  check("ZZZ: значение сброшено на «Все проекты»", PK._data[0][F.CELL_COL - 1], F.ALL);
+  check("ZZZ: 3 строки (сброс)", PK.getLastRow() - 1, 3);
 }
 
 console.log("");

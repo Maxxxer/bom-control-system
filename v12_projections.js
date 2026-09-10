@@ -541,13 +541,96 @@ function v12HarvestPickingInput() {
 }
 
 /**
+ * Уникальные коды проектов для фильтра ОТБОРКИ.
+ *
+ * Код проекта = v12ExtractBomProjectCode(BOM_NAME) (часть имени BOM до первого
+ * дефиса). Учитываются только активные, ещё не переданные позиции. Пустые коды
+ * игнорируются (в фильтр не попадают).
+ * data (опц.): уже прочитанные значения POSITION_STATE — чтобы не читать лист
+ * повторно внутри одного пересчёта.
+ */
+function v12GetBomProjectCodes(data) {
+  const rows = data || v12ReadSheet("POSITION_STATE");
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const seen = {};
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (r[P.LIFECYCLE_STATE - 1] !== V12_CONFIG.LIFECYCLE_STATE.ACTIVE) {
+      continue;
+    }
+    if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
+      continue;
+    }
+    const code = v12ExtractBomProjectCode(r[P.BOM_NAME - 1]);
+    if (!code || seen[code]) {
+      continue;
+    }
+    seen[code] = true;
+    out.push(code);
+  }
+  return out.sort(function (a, b) { return a.localeCompare(b, "ru"); });
+}
+
+/**
+ * Прочитать выбранный проект-фильтр из ячейки B1 листа ОТБОРКА.
+ * Возвращает "" (без фильтра) для пустого значения, пункта «Все проекты» и
+ * легаси-заголовка «BOM» (чтобы не отфильтровать всё на старом листе).
+ */
+function v12GetPickingFilter() {
+  const K = V12_CONFIG.PICKING_COLUMNS;
+  const F = V12_CONFIG.PICKING_FILTER;
+  const cell = v12GetSheetByKey("PICKING").getRange(F.CELL_ROW, F.CELL_COL);
+  const raw = String(cell.getValue() || "").trim();
+  if (!raw || raw === F.ALL || raw === V12_CONFIG.HEADERS.PICKING[K.BOM_NAME - 1]) {
+    return "";
+  }
+  return raw;
+}
+
+/**
+ * Установить выпадающий список фильтра в ячейку B1 листа ОТБОРКА.
+ * Список: «(Все проекты)» + коды проектов. Если текущее значение ячейки не
+ * входит в список (легаси-заголовок «BOM» или исчезнувший проект) — сбрасываем
+ * на «(Все проекты)».
+ */
+function v12InstallPickingBomFilter(codes) {
+  const F = V12_CONFIG.PICKING_FILTER;
+  const codeList = codes || v12GetBomProjectCodes();
+  const list = [F.ALL].concat(codeList);
+  const cell = v12GetSheetByKey("PICKING").getRange(F.CELL_ROW, F.CELL_COL);
+  cell.clearDataValidations();
+  cell.setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(list, true).build()
+  );
+  const current = String(cell.getValue() || "").trim();
+  if (current !== F.ALL && codeList.indexOf(current) === -1) {
+    cell.setValue(F.ALL);
+  }
+}
+
+/**
  * ОТБОРКА (PICKING): активные позиции, готовые/частично готовые к передаче.
+ *
+ * Фильтр по проекту (код = первая часть BOM до дефиса) берётся из ячейки B1;
+ * «(Все проекты)»/пусто — без фильтра.
+ * Порядок строк: BOM -> «На складе» сверху -> номер строки в BOM.
  */
 function v12RefreshPicking() {
   v12HarvestPickingInput();
   const P = V12_CONFIG.POSITION_COLUMNS;
   const K = V12_CONFIG.PICKING_COLUMNS;
   const data = v12ReadSheet("POSITION_STATE");
+  const codes = v12GetBomProjectCodes(data);
+  let filter = v12GetPickingFilter();
+  // Выбран несуществующий/исчезнувший проект — сбрасываем фильтр на «Все проекты»
+  // до сборки строк (иначе лист окажется пустым).
+  if (filter && codes.indexOf(filter) === -1) {
+    v12GetSheetByKey("PICKING")
+      .getRange(V12_CONFIG.PICKING_FILTER.CELL_ROW, V12_CONFIG.PICKING_FILTER.CELL_COL)
+      .setValue(V12_CONFIG.PICKING_FILTER.ALL);
+    filter = "";
+  }
   const rows = [];
 
   for (let i = 1; i < data.length; i++) {
@@ -559,9 +642,13 @@ function v12RefreshPicking() {
     if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
       continue;
     }
+    const bomName = r[P.BOM_NAME - 1];
+    if (filter && v12ExtractBomProjectCode(bomName) !== filter) {
+      continue;   // позиция другого проекта — скрываем
+    }
     rows.push([
       r[P.POSITION_ID - 1],
-      r[P.BOM_NAME - 1],
+      bomName,
       r[P.BOM_ROW - 1],
       r[P.MATERIAL_CODE - 1],
       r[P.MATERIAL_NAME - 1],
@@ -576,12 +663,29 @@ function v12RefreshPicking() {
     ]);
   }
 
+  // Сортировка: первично BOM, затем «На складе» сверху, затем номер строки BOM.
+  const readyLabel = v12ProductionStatusDisplay(V12_CONFIG.PRODUCTION_STATE.READY_FOR_HANDOFF);
+  rows.sort(function (a, b) {
+    const byBom = String(a[K.BOM_NAME - 1] || "")
+      .localeCompare(String(b[K.BOM_NAME - 1] || ""), "ru");
+    if (byBom !== 0) {
+      return byBom;
+    }
+    const aReady = a[K.PRODUCTION_STATE - 1] === readyLabel ? 0 : 1;
+    const bReady = b[K.PRODUCTION_STATE - 1] === readyLabel ? 0 : 1;
+    if (aReady !== bReady) {
+      return aReady - bReady;
+    }
+    return toNumber(a[K.BOM_ROW - 1]) - toNumber(b[K.BOM_ROW - 1]);
+  });
+
   v12ClearBody("PICKING");
   if (rows.length) {
     v12WriteRows("PICKING", 2, rows);
   }
   v12InstallPickingCheckboxes(rows.length);
   v12ApplyPickingColors(rows);
+  v12InstallPickingBomFilter(codes);
 }
 
 /**

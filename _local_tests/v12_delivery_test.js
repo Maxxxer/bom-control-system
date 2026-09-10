@@ -65,7 +65,7 @@ function makeSheet(name, header) {
 globalThis.SpreadsheetApp = {
   getActive() { return { getSheetByName(n) { return sheets[n] || null; }, insertSheet(n) { return makeSheet(n); } }; },
   getUi() { return { alert() {}, createMenu() { return this; } }; },
-  newDataValidation() { return { requireCheckbox() { return this; }, build() { return {}; } }; },
+  newDataValidation() { return { requireCheckbox() { return this; }, requireValueInList() { return this; }, build() { return {}; } }; },
   newConditionalFormatRule() { return { whenTextContains() { return this; }, setBackground() { return this; }, setRanges() { return this; }, build() { return {}; } }; },
   flush() {}
 };

@@ -117,6 +117,12 @@ function v12OnEdit(e) {
 
       // ОТБОРКА
       if (name === S.PICKING) {
+        // Смена фильтра проекта в ячейке B1 (строка 1, колонка BOM) — разрешённая
+        // правка: пересобираем лист под выбранный проект.
+        if (e.range.getRow() === 1 && e.range.getColumn() === V12_CONFIG.PICKING_COLUMNS.BOM_NAME) {
+          v12RefreshPicking();
+          return;
+        }
         v12HandlePickingEdit(e);
         return;
       }
@@ -488,6 +494,9 @@ function v12HandlePickingRangeEdit(e) {
   let anyHandoff = false;
 
   for (let r = 0; r < numRows; r++) {
+    if (firstRow + r === 1) {
+      continue;   // строка заголовка (в т.ч. ячейка фильтра B1) не обрабатывается
+    }
     for (let c = 0; c < numCols; c++) {
       if (firstCol + c !== K.CHECKBOX) {
         continue;
