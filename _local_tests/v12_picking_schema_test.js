@@ -101,7 +101,8 @@ const files = [
 
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")
   + "\n;globalThis.__V12 = { V12_CONFIG: V12_CONFIG, v12BuildPositionRow: v12BuildPositionRow,"
-  + " v12MigratePickingSchema: v12MigratePickingSchema, v12RefreshPicking: v12RefreshPicking };";
+  + " v12MigratePickingSchema: v12MigratePickingSchema, v12RefreshPicking: v12RefreshPicking,"
+  + " v12ExtractBomProjectCode: v12ExtractBomProjectCode };";
 
 vm.runInThisContext(src, { filename: "v12-bundle.js" });
 const N = globalThis.__V12;
@@ -201,6 +202,17 @@ console.log("=== C5: проекция v12RefreshPicking пишет 13 колон
   check("кол. 11 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
   check("кол. 12 = чекбокс false", row[K.CHECKBOX - 1], false);
   check("кол. 13 (UPDATED_AT) — дата", row[K.UPDATED_AT - 1] instanceof Date, true);
+}
+
+console.log("=== C7: разбор кода проекта (до пробела/дефиса/подчёркивания) ===");
+{
+  const E = N.v12ExtractBomProjectCode;
+  check("«1234.АБВ-5678 Щит» -> «1234.АБВ»", E("1234.АБВ-5678 Щит"), "1234.АБВ");
+  check("«1234 АБВ» -> «1234»", E("1234 АБВ"), "1234");
+  check("«1234_АБВ» -> «1234»", E("1234_АБВ"), "1234");
+  check("«АБВ-100» -> «АБВ»", E("АБВ-100"), "АБВ");
+  check("«1234.АБВ» (без разделителя) -> «1234.АБВ»", E("1234.АБВ"), "1234.АБВ");
+  check("пусто -> «»", E(""), "");
 }
 
 console.log("=== C6: фильтр по проекту (B1) и порядок сортировки ===");
