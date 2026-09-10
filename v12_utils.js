@@ -88,15 +88,60 @@ function v12Norm(value) {
 }
 
 /**
+ * Единый нормализатор даты. Приводит любое значение к Date или null.
+ *
+ * Поддерживает:
+ *   - Date;
+ *   - число: 0/пусто → null; серийный номер даты Sheets (дни от 1899-12-30,
+ *     примерно 1..2958465) → дата; крупное число → миллисекунды (timestamp);
+ *   - строку: ""→null; «dd.MM.yyyy» → дата; ISO/иное → new Date, если валидна.
+ *
+ * ВАЖНО: без этого числовой серийный номер даты (например, 46 000)
+ * трактовался бы как миллисекунды и давал 01.01.1970.
+ */
+function v12ToDate(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number") {
+    if (!isFinite(value) || value === 0) {
+      return null;
+    }
+    // Серийный номер даты Google Sheets (дни от 1899-12-30).
+    if (value > 0 && value < 2958466) {
+      const d = new Date(1899, 11, 30);
+      d.setDate(d.getDate() + Math.floor(value));
+      return d;
+    }
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const s = String(value).trim();
+  if (!s) {
+    return null;
+  }
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) {
+    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Безопасное приведение к дате (для сравнения в расчётах).
+ * Возвращает timestamp (число) или исходную строку, если дата не распознана.
  */
 function v12DateValue(value) {
   if (value === "" || value === null || value === undefined) {
     return "";
   }
-  const d = new Date(value);
-  if (isNaN(d.getTime())) {
-    return String(value).trim();
+  const d = v12ToDate(value);
+  if (d) {
+    return d.getTime();
   }
-  return d.getTime();
+  return String(value).trim();
 }

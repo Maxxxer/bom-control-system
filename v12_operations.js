@@ -86,7 +86,10 @@ function v12SetExpectedDate(positionId, date) {
   }
   const P = V12_CONFIG.POSITION_COLUMNS;
   const oldDate = pos.values[P.EXPECTED_DATE - 1] || "";
-  if (v12DateValue(oldDate) === v12DateValue(date)) {
+  // Приводим входящее значение (Date / строка / числовой серийный номер Sheets)
+  // к дате, иначе серийный номер сохранился бы как число → отображение 01.01.1970.
+  const newDate = v12ToDate(date);
+  if (v12DateValue(oldDate) === v12DateValue(newDate)) {
     // Дата уже совпадает — запись не нужна, но строку сводки согласуем.
     SpreadsheetApp.flush();
     v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE");
@@ -94,7 +97,7 @@ function v12SetExpectedDate(positionId, date) {
   }
 
   v12UpdatePosition(positionId, {
-    EXPECTED_DATE: date || ""
+    EXPECTED_DATE: newDate ? newDate : ""
   }, index);
 
   v12Audit({
@@ -103,7 +106,7 @@ function v12SetExpectedDate(positionId, date) {
     positionId: positionId,
     field: "EXPECTED_DATE",
     oldValue: oldDate,
-    newValue: date || ""
+    newValue: newDate ? newDate.getTime() : ""
   });
 
   // Сводку согласуем ВСЕГДА и точечно — иначе при быстром вводе значение теряется.

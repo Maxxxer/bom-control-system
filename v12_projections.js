@@ -48,13 +48,10 @@ function v12FormatDateOnly(value) {
   if (value === "" || value === null || value === undefined) {
     return "";
   }
-  let d;
-  if (value instanceof Date) {
-    d = value;
-  } else {
-    d = new Date(value);
-  }
-  if (isNaN(d.getTime())) {
+  // Нормализуем через v12ToDate: корректно обрабатывает Date, «dd.MM.yyyy»,
+  // ISO и числовой серийный номер даты Sheets (иначе число дало бы 01.01.1970).
+  const d = v12ToDate(value);
+  if (!d) {
     return String(value);
   }
   const dd = ("0" + d.getDate()).slice(-2);
@@ -120,19 +117,8 @@ let _v12Harvesting = false;
  * Возвращает Date или null.
  */
 function v12ParseSummaryDate(value) {
-  if (value === "" || value === null || value === undefined) {
-    return null;
-  }
-  if (value instanceof Date) {
-    return value;
-  }
-  const s = String(value).trim();
-  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (m) {
-    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-  }
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
+  // Единый нормализатор: Date, «dd.MM.yyyy», ISO и числовой серийный номер Sheets.
+  return v12ToDate(value);
 }
 
 /**
