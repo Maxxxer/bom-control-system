@@ -53,7 +53,11 @@ function v12SetOrderedQty(positionId, qty) {
     newValue: newQty
   });
 
-  v12RefreshProjections();
+  // Пересчёт запускается только когда введены и количество заказа, и ожидаемая поставка.
+  if (row[P.EXPECTED_DATE - 1]) {
+    SpreadsheetApp.flush();
+    v12RefreshProjections();
+  }
   v12FlushAudit();
 }
 
@@ -85,7 +89,11 @@ function v12SetExpectedDate(positionId, date) {
     newValue: date || ""
   });
 
-  v12RefreshProjections();
+  // Пересчёт запускается только когда введены и количество заказа, и ожидаемая поставка.
+  if (toNumber(pos.values[P.ORDERED_QTY - 1]) > 0) {
+    SpreadsheetApp.flush();
+    v12RefreshProjections();
+  }
   v12FlushAudit();
 }
 
