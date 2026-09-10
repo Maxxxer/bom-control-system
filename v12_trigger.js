@@ -241,11 +241,16 @@ function v12HandleDeficitEdit(e) {
 }
 
 /**
- * DEFICIT_SUMMARY: обработка диапазона (вставка/автозаполнение) — каждая
- * ячейка в редактируемых колонках обрабатывается как отдельная правка.
+ * DEFICIT_SUMMARY: обработка диапазона (вставка/автозаполнение).
+ *
+ * Вся группа ячеек обрабатывается за ОДИН проход: POSITION_STATE читается
+ * один раз, изменения по всем строкам диапазона собираются и пишутся ОДНИМ
+ * батчем, затем делается ОДИН пересчёт проекций. Так обрабатываются ВСЕ
+ * строки (а не только первая) и выполнение не упирается в лимит времени.
  */
 function v12HandleDeficitRangeEdit(e) {
   const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const P = V12_CONFIG.POSITION_COLUMNS;
   const sheet = e.range.getSheet();
   const firstRow = e.range.getRow();
   const firstCol = e.range.getColumn();
@@ -256,28 +261,110 @@ function v12HandleDeficitRangeEdit(e) {
     ? e.values
     : e.range.getValues();
 
+  const role = v12GetCurrentUserRole();
+  const canOrdered = v12CanEditField(role, "ORDERED_QTY");
+  const canExpected = v12CanEditField(role, "EXPECTED_DATE");
+
+  const index = v12BuildPositionIndex();
+  const posSheet = v12GetSheetByKey("POSITION_STATE");
+  const touched = {};   // positionId -> { row, vals, changed, oldOrdered, oldExpected }
+  const writes = [];
+
   for (let r = 0; r < numRows; r++) {
     const sheetRow = firstRow + r;
-    const positionId = sheet.getRange(sheetRow, D.POSITION_ID).getValue();
+    const positionId = normalizeMaterialId(sheet.getRange(sheetRow, D.POSITION_ID).getValue());
     if (!positionId) {
       continue;
+    }
+    const pos = index.get(positionId);
+    if (!pos) {
+      continue;
+    }
+    let entry = touched[positionId];
+    if (!entry) {
+      entry = {
+        row: pos.row,
+        vals: pos.values.slice(),
+        changed: false,
+        oldOrdered: toNumber(pos.values[P.ORDERED_QTY - 1]),
+        oldExpected: pos.values[P.EXPECTED_DATE - 1]
+      };
+      touched[positionId] = entry;
     }
     for (let c = 0; c < numCols; c++) {
       const column = firstCol + c;
       const value = values[r][c];
-      if (column === D.ORDERED_QTY) {
-        v12SetOrderedQty(positionId, value);
-      } else if (column === D.EXPECTED_DATE) {
-        v12SetExpectedDate(positionId, value);
-      } else if (column === D.REAL_DELIVERY) {
-        try {
-          v12SetRealDeliveryQty(positionId, value === true ? v12GetDeficitRequiredQty(positionId) : 0);
-        } catch (err) {
-          // гейт поставки — пропускаем эту ячейку, остальные обрабатываем
+      if (column === D.ORDERED_QTY && canOrdered) {
+        const q = Math.max(0, toNumber(value));
+        if (q !== toNumber(entry.vals[P.ORDERED_QTY - 1])) {
+          entry.vals[P.ORDERED_QTY - 1] = q;
+          entry.changed = true;
+        }
+      } else if (column === D.EXPECTED_DATE && canExpected) {
+        const d = v12ToDate(value);
+        if (v12DateValue(d) !== v12DateValue(entry.vals[P.EXPECTED_DATE - 1])) {
+          entry.vals[P.EXPECTED_DATE - 1] = d ? d : "";
+          entry.changed = true;
         }
       }
+      // REAL_DELIVERY (чекбокс) в диапазоне не обрабатываем: это отдельное
+      // действие с гейтом и изменением склада, его делают по одной строке.
     }
   }
+
+  Object.keys(touched).forEach(function (pid) {
+    const entry = touched[pid];
+    if (!entry.changed) {
+      return;
+    }
+    const rowVals = entry.vals;
+    v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index));
+    writes.push({ row: entry.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
+    writes.push({ row: entry.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
+    writes.push({ row: entry.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
+    writes.push({ row: entry.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
+    writes.push({ row: entry.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
+    writes.push({ row: entry.row, col: P.UNCOVERED_NEED, value: rowVals[P.UNCOVERED_NEED - 1] });
+    writes.push({ row: entry.row, col: P.OVER_ORDERED_QTY, value: rowVals[P.OVER_ORDERED_QTY - 1] });
+    writes.push({ row: entry.row, col: P.SHORT_DELIVERY_QTY, value: rowVals[P.SHORT_DELIVERY_QTY - 1] });
+    writes.push({ row: entry.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
+    writes.push({ row: entry.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
+    writes.push({ row: entry.row, col: P.UPDATED_AT, value: new Date() });
+
+    const changedOrdered = (toNumber(rowVals[P.ORDERED_QTY - 1]) !== entry.oldOrdered);
+    const changedExpected = (v12DateValue(rowVals[P.EXPECTED_DATE - 1]) !== v12DateValue(entry.oldExpected));
+    if (changedOrdered) {
+      v12Audit({
+        action: V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED,
+        bomId: rowVals[P.BOM_ID - 1],
+        positionId: pid,
+        field: "ORDERED_QTY",
+        oldValue: entry.oldOrdered,
+        newValue: toNumber(rowVals[P.ORDERED_QTY - 1])
+      });
+    }
+    if (changedExpected) {
+      v12Audit({
+        action: V12_CONFIG.AUDIT_ACTIONS.EXPECTED_DATE_CHANGED,
+        bomId: rowVals[P.BOM_ID - 1],
+        positionId: pid,
+        field: "EXPECTED_DATE",
+        oldValue: entry.oldExpected,
+        newValue: rowVals[P.EXPECTED_DATE - 1]
+      });
+    }
+  });
+
+  if (writes.length) {
+    batchWrite(posSheet, writes);
+    SpreadsheetApp.flush();
+  }
+
+  // Один пересчёт на всю группу — обновляет статус по всем затронутым строкам.
+  v12RefreshDeficitSummary();
+  v12RefreshSupply();
+  v12RefreshDashboard();
+  v12FlushAudit();
 }
 
 /**
