@@ -63,7 +63,7 @@ const V12_CONFIG = {
     POSITION_STATE: 30,
     MATERIAL_STATE: 9,
     DEFICIT_SUMMARY: 14,
-    PICKING: 12,
+    PICKING: 13,
     WORKING_BOM: 14,
     SUPPLY: 13,
     DASHBOARD: 11,
@@ -172,9 +172,10 @@ const V12_CONFIG = {
   },
 
   /**
-   * ОТБОРКА (PICKING) (12) — интерфейс кладовщика/производства.
+   * ОТБОРКА (PICKING) (13) — интерфейс кладовщика/производства.
    * Колонка «Зарезервировано» убрана: кладовщику она не нужна, потребность
-   * отражена колонкой «Требуется».
+   * отражена колонкой «Требуется». Добавлена «Ожидаемая поставка» (EXPECTED_DATE)
+   * справа от ProductionState — срок планируемого прихода материала на склад.
    */
   PICKING_COLUMNS: {
     POSITION_ID: 1,
@@ -187,8 +188,9 @@ const V12_CONFIG = {
     REQUIRED_QTY: 8,
     AVAILABLE_FOR_PRODUCTION: 9,
     PRODUCTION_STATE: 10,
-    CHECKBOX: 11,
-    UPDATED_AT: 12
+    EXPECTED_DATE: 11,
+    CHECKBOX: 12,
+    UPDATED_AT: 13
   },
 
   /**
@@ -368,8 +370,8 @@ const V12_CONFIG = {
     ],
     PICKING: [
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
-      "Требуется", "Доступно для производства",
-      "ProductionState", "Отметка получено", "Обновлено"
+      "Требуется", "Доступно для производства", "ProductionState",
+      "Ожидаемая поставка", "Отметка получено", "Обновлено"
     ],
     WORKING_BOM: [
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",

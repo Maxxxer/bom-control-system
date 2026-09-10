@@ -631,7 +631,9 @@ function v12RefreshPicking() {
       .setValue(V12_CONFIG.PICKING_FILTER.ALL);
     filter = "";
   }
-  const rows = [];
+  // Каждая запись несёт строку листа и её цвет (рассчитан из POSITION_STATE,
+  // т.к. после сортировки цвета должны следовать за своими строками).
+  const records = [];
 
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
@@ -646,49 +648,56 @@ function v12RefreshPicking() {
     if (filter && v12ExtractBomProjectCode(bomName) !== filter) {
       continue;   // позиция другого проекта — скрываем
     }
-    rows.push([
-      r[P.POSITION_ID - 1],
-      bomName,
-      r[P.BOM_ROW - 1],
-      r[P.MATERIAL_CODE - 1],
-      r[P.MATERIAL_NAME - 1],
-      r[P.MODEL - 1],
-      r[P.UNIT - 1],
-      r[P.REQUIRED_QTY - 1],
-      r[P.AVAILABLE_FOR_PRODUCTION - 1],
-      v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-      false, // CHECKBOX
-      new Date()
-    ]);
+    records.push({
+      row: [
+        r[P.POSITION_ID - 1],
+        bomName,
+        r[P.BOM_ROW - 1],
+        r[P.MATERIAL_CODE - 1],
+        r[P.MATERIAL_NAME - 1],
+        r[P.MODEL - 1],
+        r[P.UNIT - 1],
+        r[P.REQUIRED_QTY - 1],
+        r[P.AVAILABLE_FOR_PRODUCTION - 1],
+        v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
+        v12FormatDateOnly(r[P.EXPECTED_DATE - 1]),   // EXPECTED_DATE (кол. 11)
+        false, // CHECKBOX
+        new Date()
+      ],
+      color: v12PickingRowColor(r)
+    });
   }
 
   // Сортировка: первично BOM, затем «На складе» сверху, затем номер строки BOM.
   const readyLabel = v12ProductionStatusDisplay(V12_CONFIG.PRODUCTION_STATE.READY_FOR_HANDOFF);
-  rows.sort(function (a, b) {
-    const byBom = String(a[K.BOM_NAME - 1] || "")
-      .localeCompare(String(b[K.BOM_NAME - 1] || ""), "ru");
+  records.sort(function (a, b) {
+    const byBom = String(a.row[K.BOM_NAME - 1] || "")
+      .localeCompare(String(b.row[K.BOM_NAME - 1] || ""), "ru");
     if (byBom !== 0) {
       return byBom;
     }
-    const aReady = a[K.PRODUCTION_STATE - 1] === readyLabel ? 0 : 1;
-    const bReady = b[K.PRODUCTION_STATE - 1] === readyLabel ? 0 : 1;
+    const aReady = a.row[K.PRODUCTION_STATE - 1] === readyLabel ? 0 : 1;
+    const bReady = b.row[K.PRODUCTION_STATE - 1] === readyLabel ? 0 : 1;
     if (aReady !== bReady) {
       return aReady - bReady;
     }
-    return toNumber(a[K.BOM_ROW - 1]) - toNumber(b[K.BOM_ROW - 1]);
+    return toNumber(a.row[K.BOM_ROW - 1]) - toNumber(b.row[K.BOM_ROW - 1]);
   });
+
+  const rows = records.map(function (rec) { return rec.row; });
+  const colors = records.map(function (rec) { return rec.color; });
 
   v12ClearBody("PICKING");
   if (rows.length) {
     v12WriteRows("PICKING", 2, rows);
   }
   v12InstallPickingCheckboxes(rows.length);
-  v12ApplyPickingColors(rows);
+  v12ApplyPickingColors(colors);
   v12InstallPickingBomFilter(codes);
 }
 
 /**
- * Чекбокс передачи в ОТБОРКЕ (кол. 11).
+ * Чекбокс передачи в ОТБОРКЕ (кол. 12).
  */
 function v12InstallPickingCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("PICKING");
@@ -706,22 +715,54 @@ function v12InstallPickingCheckboxes(rowCount) {
 }
 
 /**
- * Окраска строк ОТБОРКИ: «На складе» — голубой.
+ * Цвет строки ОТБОРКИ по состоянию обеспечения позиции.
+ *
+ *   «На складе» (READY_FOR_HANDOFF, доступно ≥ требуется) → голубой (STOCK);
+ *   материала не хватает и он НЕ заказан / заказан частично → красный (RED);
+ *   материала не хватает, заказан, ожидаемый приход ≤ крайний срок → жёлтый (YELLOW);
+ *   материала не хватает, заказан, приход позже срока / срок неизвестен → оранжевый (ORANGE);
+ *   прочее → белый (WHITE).
  */
-function v12ApplyPickingColors(rows) {
-  if (!rows.length) {
+function v12PickingRowColor(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const C = V12_CONFIG.COLORS;
+  const SS = V12_CONFIG.SUPPLY_STATE;
+  const PS = V12_CONFIG.PRODUCTION_STATE;
+
+  // Материал пришёл и готов к отборке — «На складе».
+  if (r[P.PRODUCTION_STATE - 1] === PS.READY_FOR_HANDOFF) {
+    return C.STOCK;
+  }
+  const supply = r[P.SUPPLY_STATE - 1];
+  if (supply === SS.NOT_ORDERED || supply === SS.PARTIALLY_ORDERED) {
+    return C.RED;
+  }
+  if (supply === SS.ORDERED || supply === SS.PARTIALLY_DELIVERED) {
+    const exp = v12ToDate(r[P.EXPECTED_DATE - 1]);
+    const dead = v12ToDate(r[P.DEADLINE - 1]);
+    if (exp && dead) {
+      return exp.getTime() <= dead.getTime() ? C.YELLOW : C.ORANGE;
+    }
+    // Заказан, но подтверждённого срока прихода нет — трактуем как риск (оранжевый).
+    return C.ORANGE;
+  }
+  return C.WHITE;
+}
+
+/**
+ * Окраска строк ОТБОРКИ по заранее рассчитанным цветам
+ * (ширина полосы — COLUMN_COUNT.PICKING).
+ */
+function v12ApplyPickingColors(colors) {
+  if (!colors || !colors.length) {
     return;
   }
   const sheet = v12GetSheetByKey("PICKING");
-  const K = V12_CONFIG.PICKING_COLUMNS;
-  const C = V12_CONFIG.COLORS;
-  const colors = rows.map(function (r) {
-    return r[K.PRODUCTION_STATE - 1] === "На складе" ? C.STOCK : C.WHITE;
-  });
+  const cols = V12_CONFIG.COLUMN_COUNT.PICKING;
   const background = colors.map(function (c) {
-    return new Array(V12_CONFIG.COLUMN_COUNT.PICKING).fill(c);
+    return new Array(cols).fill(c || V12_CONFIG.COLORS.WHITE);
   });
-  sheet.getRange(2, 1, rows.length, V12_CONFIG.COLUMN_COUNT.PICKING).setBackgrounds(background);
+  sheet.getRange(2, 1, colors.length, cols).setBackgrounds(background);
 }
 
 /**

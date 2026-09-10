@@ -454,7 +454,7 @@ function v12HandleDeficitRangeEdit(e) {
 }
 
 /**
- * ОТБОРКА (PICKING): чекбокс передачи производству (кол. 11).
+ * ОТБОРКА (PICKING): чекбокс передачи производству (кол. 12).
  */
 function v12HandlePickingEdit(e) {
   const K = V12_CONFIG.PICKING_COLUMNS;
