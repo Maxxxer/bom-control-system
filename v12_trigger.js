@@ -186,13 +186,13 @@ function v12HandleDashboardEdit(e) {
   }
   const bomId = sheet.getRange(row, D.BOM_ID).getValue();
   const status = sheet.getRange(row, D.STATUS).getValue();
-  const checked = e.range.getValue();
-  if (checked === true && status !== V12_CONFIG.BOM_STATUS.READY) {
+  const bomChecked = v12IsChecked(e.range.getValue());
+  if (bomChecked && status !== V12_CONFIG.BOM_STATUS.READY) {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "«Выполнено» можно отметить только при «Готов к производству»: " + bomId, "WARNING");
     return;
   }
-  v12SetBomDone(bomId, checked === true);
+  v12SetBomDone(bomId, bomChecked);
 }
 
 /**
@@ -227,9 +227,12 @@ function v12HandleDeficitEdit(e) {
   } else if (column === D.EXPECTED_DATE) {
     v12SetExpectedDate(positionId, newValue);
   } else if (column === D.REAL_DELIVERY) {
-    const checked = newValue;
+    // Значение чекбокса из события onEdit приходит и как boolean (true/false),
+    // и как строка ("TRUE"/"FALSE"). Нормализуем — иначе отметка не применяется,
+    // поставка не убирается из сводки, а состояние чекбокса сбрасывается.
+    const checked = v12IsChecked(newValue);
     try {
-      v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
+      v12SetRealDeliveryQty(positionId, checked ? v12GetDeficitRequiredQty(positionId) : 0);
     } catch (err) {
       v12RevertEdit(e);
       try { SpreadsheetApp.getUi().alert("Не удалось отметить поставку: " + err.message); } catch (e2) {}
@@ -261,14 +264,17 @@ function v12HandleDeficitRangeEdit(e) {
     ? e.values
     : e.range.getValues();
 
+  const M = V12_CONFIG.MATERIAL_COLUMNS;
   const role = v12GetCurrentUserRole();
   const canOrdered = v12CanEditField(role, "ORDERED_QTY");
   const canExpected = v12CanEditField(role, "EXPECTED_DATE");
+  const canDelivery = v12CanEditField(role, "REAL_DELIVERY");
 
   const index = v12BuildPositionIndex();
   const posSheet = v12GetSheetByKey("POSITION_STATE");
-  const touched = {};   // positionId -> { row, vals, changed, oldOrdered, oldExpected }
+  const touched = {};   // positionId -> { row, vals, changed, oldOrdered, oldExpected, oldReal, desiredReal }
   const writes = [];
+  const warehouseDelta = {};   // materialKey -> суммарная дельта склада
 
   for (let r = 0; r < numRows; r++) {
     const sheetRow = firstRow + r;
@@ -287,7 +293,9 @@ function v12HandleDeficitRangeEdit(e) {
         vals: pos.values.slice(),
         changed: false,
         oldOrdered: toNumber(pos.values[P.ORDERED_QTY - 1]),
-        oldExpected: pos.values[P.EXPECTED_DATE - 1]
+        oldExpected: pos.values[P.EXPECTED_DATE - 1],
+        oldReal: toNumber(pos.values[P.REAL_DELIVERY_QTY - 1]),
+        desiredReal: undefined
       };
       touched[positionId] = entry;
     }
@@ -306,18 +314,28 @@ function v12HandleDeficitRangeEdit(e) {
           entry.vals[P.EXPECTED_DATE - 1] = d ? d : "";
           entry.changed = true;
         }
+      } else if (column === D.REAL_DELIVERY && canDelivery) {
+        // Чекбокс «Реальная поставка»: отмечаем/снимаем полную поставку.
+        // Значение может прийти boolean или строкой ("TRUE"/"FALSE") — нормализуем.
+        const required = toNumber(entry.vals[P.REQUIRED_QTY - 1]);
+        entry.desiredReal = (v12IsChecked(value) && required > 0) ? required : 0;
       }
-      // REAL_DELIVERY (чекбокс) в диапазоне не обрабатываем: это отдельное
-      // действие с гейтом и изменением склада, его делают по одной строке.
     }
   }
 
   Object.keys(touched).forEach(function (pid) {
     const entry = touched[pid];
+    const rowVals = entry.vals;
+    // Реальная поставка (чекбокс) — применить до расчёта количеств.
+    let deltaReal = 0;
+    if (entry.desiredReal !== undefined && entry.desiredReal !== entry.oldReal) {
+      rowVals[P.REAL_DELIVERY_QTY - 1] = entry.desiredReal;
+      deltaReal = entry.desiredReal - entry.oldReal;
+      entry.changed = true;
+    }
     if (!entry.changed) {
       return;
     }
-    const rowVals = entry.vals;
     v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index));
     writes.push({ row: entry.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
     writes.push({ row: entry.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
@@ -329,7 +347,18 @@ function v12HandleDeficitRangeEdit(e) {
     writes.push({ row: entry.row, col: P.SHORT_DELIVERY_QTY, value: rowVals[P.SHORT_DELIVERY_QTY - 1] });
     writes.push({ row: entry.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
     writes.push({ row: entry.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
+    writes.push({ row: entry.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
     writes.push({ row: entry.row, col: P.UPDATED_AT, value: new Date() });
+
+    if (deltaReal !== 0) {
+      const matKey = v12BuildMaterialKey({
+        code: rowVals[P.MATERIAL_CODE - 1],
+        name: rowVals[P.MATERIAL_NAME - 1],
+        model: rowVals[P.MODEL - 1],
+        unit: rowVals[P.UNIT - 1]
+      });
+      warehouseDelta[matKey] = (warehouseDelta[matKey] || 0) + deltaReal;
+    }
 
     const changedOrdered = (toNumber(rowVals[P.ORDERED_QTY - 1]) !== entry.oldOrdered);
     const changedExpected = (v12DateValue(rowVals[P.EXPECTED_DATE - 1]) !== v12DateValue(entry.oldExpected));
@@ -353,6 +382,16 @@ function v12HandleDeficitRangeEdit(e) {
         newValue: rowVals[P.EXPECTED_DATE - 1]
       });
     }
+    if (entry.desiredReal !== undefined && entry.desiredReal !== entry.oldReal) {
+      v12Audit({
+        action: V12_CONFIG.AUDIT_ACTIONS.REAL_DELIVERY_CHANGED,
+        bomId: rowVals[P.BOM_ID - 1],
+        positionId: pid,
+        field: "REAL_DELIVERY_QTY",
+        oldValue: entry.oldReal,
+        newValue: entry.desiredReal
+      });
+    }
   });
 
   if (writes.length) {
@@ -360,8 +399,42 @@ function v12HandleDeficitRangeEdit(e) {
     SpreadsheetApp.flush();
   }
 
-  // Один пересчёт на всю группу — обновляет статус по всем затронутым строкам.
+  // Складские остатки: применить суммарные дельты по materialKey одним батчем.
+  const matKeys = Object.keys(warehouseDelta);
+  if (matKeys.length) {
+    const materialSheet = v12GetSheetByKey("MATERIAL_STATE");
+    const mIdx = v12BuildMaterialIndex();
+    const mWrites = [];
+    matKeys.forEach(function (mk) {
+      const delta = warehouseDelta[mk];
+      if (!delta) {
+        return;
+      }
+      const m = mIdx.get(mk);
+      if (m) {
+        const next = Math.max(0, toNumber(m.values[M.WAREHOUSE_QTY - 1]) + delta);
+        mWrites.push({ row: m.row, col: M.WAREHOUSE_QTY, value: next });
+        mWrites.push({ row: m.row, col: M.UPDATED_AT, value: new Date() });
+      } else {
+        const row = new Array(V12_CONFIG.COLUMN_COUNT.MATERIAL_STATE).fill("");
+        row[M.MATERIAL_KEY - 1] = mk;
+        row[M.MATERIAL_CODE - 1] = mk;
+        row[M.WAREHOUSE_QTY - 1] = Math.max(0, delta);
+        row[M.UPDATED_AT - 1] = new Date();
+        appendRow(materialSheet, row);
+      }
+    });
+    if (mWrites.length) {
+      batchWrite(materialSheet, mWrites);
+    }
+  }
+
+  // Один пересчёт на всю группу — обновляет статус по всем затронутым строкам
+  // и синхронизирует ВСЕ проекции (в т.ч. ОТБОРКА/WORKING BOM, где отражаются
+  // переданные количества и складской остаток), как и одиночная операция.
   v12RefreshDeficitSummary();
+  v12RefreshPicking();
+  v12RefreshWorkingBOM();
   v12RefreshSupply();
   v12RefreshDashboard();
   v12FlushAudit();
@@ -381,7 +454,7 @@ function v12HandlePickingEdit(e) {
   }
   const positionId = sheet.getRange(row, K.POSITION_ID).getValue();
   const checked = e.range.getValue();
-  if (checked === true) {
+  if (v12IsChecked(checked)) {
     const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING);
     if (result.status === "blocked") {
       v12RevertEdit(e);
@@ -409,7 +482,7 @@ function v12HandleWorkingBomEdit(e) {
   }
   const positionId = sheet.getRange(row, W.POSITION_ID).getValue();
   const checked = e.range.getValue();
-  if (checked === true) {
+  if (v12IsChecked(checked)) {
     v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.WORKING_BOM);
   }
 }

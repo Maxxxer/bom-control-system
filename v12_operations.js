@@ -136,12 +136,9 @@ function v12SetRealDeliveryQty(positionId, qty) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const row = pos.values;
   const oldQty = toNumber(row[P.REAL_DELIVERY_QTY - 1]);
-  // Гейт «полное удовлетворение заказа»: отметить поставку можно, только если заказ покрывает дефицит.
-  const ordered = toNumber(row[P.ORDERED_QTY - 1]);
-  const deficit = toNumber(row[P.DEFICIT_QTY - 1]);
-  if (newQty > 0 && ordered < deficit) {
-    throw new Error("Нельзя отметить полную поставку: заказ не покрывает дефицит");
-  }
+  // «Реальная поставка» фиксирует факт физического прихода материала.
+  // Заказ и поставка — независимые величины, поэтому отметка поставки не
+  // требует предварительного оформления заказа (гейт по «заказу» не применяется).
   const materialKey = v12BuildMaterialKey({
     code: row[P.MATERIAL_CODE - 1],
     name: row[P.MATERIAL_NAME - 1],

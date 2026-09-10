@@ -156,3 +156,27 @@ function v12DateValue(value) {
   }
   return String(value).trim();
 }
+
+/**
+ * Привести значение ячейки-чекбокса к boolean.
+ *
+ * onEdit может отдать значение чекбокса как boolean (true/false), так и
+ * строкой ("TRUE"/"FALSE", "true"/"false", "1"/"0" и локализованные формы).
+ * Строгое сравнение `=== true` в этом случае ложно, из-за чего отметка
+ * «Реальная поставка»/«Получено» не применяется, а состояние чекбокса
+ * «сбрасывается» при пересборке проекции (сводка дефицитов остаётся).
+ */
+function v12IsChecked(value) {
+  if (value === true) {
+    return true;
+  }
+  if (value === false || value === null || value === undefined || value === "") {
+    return false;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  const s = String(value).trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" ||
+    s === "истина" || s === "да";
+}
