@@ -19,7 +19,7 @@
  * sourceUI: из V12_CONFIG.SOURCE_UI (PICKING / WORKING_BOM).
  * Возвращает { status: "handoff" | "already" | "blocked", reason? }.
  */
-function v12MarkReceivedByProduction(positionId, sourceUI) {
+function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh) {
   const lock = acquireScriptLock();
   try {
     const role = v12GetCurrentUserRole();
@@ -92,7 +92,12 @@ function v12MarkReceivedByProduction(positionId, sourceUI) {
       reason: "Передано производству из " + sourceUI
     });
 
-    v12RefreshProjections();
+    // При массовой передаче (диапазон) пересчёт проекций делается один раз
+    // вызывающей стороной — здесь пропускаем, чтобы не пересобирать лист на
+    // каждую строку и не терять ещё не обработанные отметки.
+    if (!skipRefresh) {
+      v12RefreshProjections();
+    }
     return { status: "handoff" };
   } catch (error) {
     v12Audit({

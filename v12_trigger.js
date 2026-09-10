@@ -66,10 +66,11 @@ function v12OnEdit(e) {
     }
 
     const isSingleCell = e.range.getNumRows() === 1 && e.range.getNumColumns() === 1;
-    // В сводке дефицитов поддерживаем вставку/автозаполнение диапазона —
-    // обрабатываем каждую ячейку. Прочие листы — только одиночные правки.
+    // В «Сводке дефицитов» и «Отборке» поддерживаем вставку/автозаполнение
+    // диапазона — обрабатываем каждую ячейку. Прочие листы — только одиночные правки.
     const isSummaryRange = !isSingleCell && name === S.DEFICIT_SUMMARY;
-    if (!isSingleCell && !isSummaryRange) {
+    const isPickingRange = !isSingleCell && name === S.PICKING;
+    if (!isSingleCell && !isSummaryRange && !isPickingRange) {
       return;
     }
 
@@ -83,6 +84,12 @@ function v12OnEdit(e) {
       // DEFICIT_SUMMARY — вставка/заполнение диапазона (несколько ячеек)
       if (isSummaryRange) {
         v12HandleDeficitRangeEdit(e);
+        return;
+      }
+
+      // ОТБОРКА — вставка/заполнение диапазона чекбоксов передачи
+      if (isPickingRange) {
+        v12HandlePickingRangeEdit(e);
         return;
       }
 
@@ -460,6 +467,50 @@ function v12HandlePickingEdit(e) {
       v12RevertEdit(e);
       SpreadsheetApp.getUi().alert("Не удалось передать: " + result.reason);
     }
+  }
+}
+
+/**
+ * ОТБОРКА (PICKING): обработка диапазона чекбоксов передачи (вставка/автозаполнение).
+ *
+ * Обрабатываются ВСЕ отмеченные строки диапазона; передача выполняется для
+ * каждой (проекции пересчитываются один раз в конце — см. skipRefresh).
+ * Если строка не может быть передана ("blocked") — её отметка снимается.
+ */
+function v12HandlePickingRangeEdit(e) {
+  const K = V12_CONFIG.PICKING_COLUMNS;
+  const sheet = e.range.getSheet();
+  const firstRow = e.range.getRow();
+  const firstCol = e.range.getColumn();
+  const numRows = e.range.getNumRows();
+  const numCols = e.range.getNumColumns();
+  const values = (e.values && e.values.length === numRows) ? e.values : e.range.getValues();
+  let anyHandoff = false;
+
+  for (let r = 0; r < numRows; r++) {
+    for (let c = 0; c < numCols; c++) {
+      if (firstCol + c !== K.CHECKBOX) {
+        continue;
+      }
+      if (!v12IsChecked(values[r][c])) {
+        continue;
+      }
+      const positionId = normalizeMaterialId(sheet.getRange(firstRow + r, K.POSITION_ID).getValue());
+      if (!positionId) {
+        continue;
+      }
+      // Пересчёт проекций — один раз после обработки всей группы.
+      const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true);
+      if (result && result.status === "blocked") {
+        // передать не удалось — снимаем отметку в этой строке
+        sheet.getRange(firstRow + r, K.CHECKBOX).setValue(false);
+      }
+      anyHandoff = true;
+    }
+  }
+
+  if (anyHandoff) {
+    v12RefreshProjections();
   }
 }
 

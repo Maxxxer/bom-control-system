@@ -1,6 +1,11 @@
 /**
- * Диагностика цепочки «Реальная поставка» (чекбокс в сводке дефицитов).
- * Запуск: node _tmp_v12_delivery_test.js
+ * ЛОКАЛЬНЫЙ диагностический тест цепочки «Реальная поставка»
+ * (чекбокс в сводке дефицитов).
+ *
+ * ВАЖНО: этот файл — Node-скрипт (require/vm) и НЕ должен выгружаться
+ * в Apps Script. Он лежит в _local_tests/ и исключён через .claspignore.
+ *
+ * Запуск из корня проекта: node _local_tests/v12_delivery_test.js
  */
 
 const fs = require("fs");
@@ -89,6 +94,14 @@ vm.runInThisContext(src, { filename: "v12-bundle.js" });
 const N = globalThis.__V12;
 const C = N.V12_CONFIG;
 
+// Перехватываем передачу производству (записываем вызовы) — чтобы проверить
+// обход ВСЕХ строк в массовом обработчике ОТБОРКИ без реальной архивации.
+globalThis.__handoffCalls = [];
+globalThis.v12MarkReceivedByProduction = function (positionId, sourceUI, skipRefresh) {
+  globalThis.__handoffCalls.push({ positionId: positionId, sourceUI: sourceUI, skipRefresh: skipRefresh });
+  return { status: "ok" };
+};
+
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "PICKING", "WORKING_BOM"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
@@ -174,10 +187,7 @@ IDS.forEach(function (id) {
   check("S3: " + id + " ушла из сводки", dsHas(id), false);
 });
 
-console.log("");
-if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }
-// === строковые значения чекбокса (реальный onEdit может отдавать "TRUE"/"FALSE") ===
-console.log("=== S4: одиночная отметка строковым \"TRUE\" ===");
+console.log("=== S4: одиночная отметка строковым \"TRUE\" (реальный формат чекбокса) ===");
 reset(10);
 {
   const r = dsRowNum("BOM1:C1");
@@ -200,8 +210,6 @@ IDS.forEach(function (id) {
   check("S5: " + id + " ушла из сводки", dsHas(id), false);
 });
 
-if (failures === 0) { console.log("ALL TESTS PASSED (final)"); } else { console.log("FAILURES(final): " + failures); process.exitCode = 1; }
-// === дополнительные проверки цепочки движения позиции ===
 console.log("=== S6: снятие поставки возвращает позицию в сводку (round-trip) ===");
 reset(10);
 {
@@ -234,4 +242,59 @@ check("S7: ORDERED_QTY=7", psCell("BOM1:C1", P.ORDERED_QTY), 7);
 check("S7: REAL_DELIVERY_QTY=10", psCell("BOM1:C1", P.REAL_DELIVERY_QTY), 10);
 check("S7: позиция ушла из сводки", dsHas("BOM1:C1"), false);
 
-if (failures === 0) { console.log("ALL TESTS PASSED (extended)"); } else { console.log("FAILURES(extended): " + failures); process.exitCode = 1; }
+console.log("");
+if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }
+// === S8: реальный сценарий — несколько отмеченных чекбоксов, событие по первой строке ===
+// (проверяет страховку harvest: pending-отметки не теряются при пересборке сводки)
+console.log("=== S8: серия одиночных отметок (страховка harvest) ===");
+reset(10);
+{
+  const rowNums = IDS.map(function (id) { return dsRowNum(id); });
+  // Пользователь проставил отметки во всех трёх строках листа...
+  rowNums.forEach(function (rowNum) { DS._setCell(rowNum, D.REAL_DELIVERY, "TRUE"); });
+  // ...но onEdit пришёл только по первой строке (остальные ещё не обработаны).
+  N.v12OnEdit(checkEvent(D.REAL_DELIVERY, "TRUE", rowNums[0]));
+}
+IDS.forEach(function (id) {
+  check("S8: " + id + " REAL_DELIVERY_QTY=10", psCell(id, P.REAL_DELIVERY_QTY), 10);
+  check("S8: " + id + " ушла из сводки", dsHas(id), false);
+});
+check("S8: склад C1 = 10", whQty("C1"), 10);
+check("S8: склад C2 = 10", whQty("C2"), 10);
+check("S8: склад C3 = 10", whQty("C3"), 10);
+
+if (failures === 0) { console.log("ALL TESTS PASSED (final-2)"); } else { console.log("FAILURES(final-2): " + failures); process.exitCode = 1; }
+// === S9: массовая отметка чекбоксов передачи в ОТБОРКЕ (диапазон) ===
+console.log("=== S9: массовая отметка чекбоксов передачи (ОТБОРКА) ===");
+{
+  const PK = sheets[C.SHEETS.PICKING];
+  const KC = C.PICKING_COLUMNS;
+  // Три строки отборки с идентификаторами позиций.
+  PK._data = [C.HEADERS.PICKING.slice()];
+  IDS.forEach(function (id) {
+    const row = new Array(C.COLUMN_COUNT.PICKING).fill("");
+    row[KC.POSITION_ID - 1] = id;
+    PK._data.push(row);
+  });
+
+  globalThis.__handoffCalls = [];
+  const values = IDS.map(function () { return ["TRUE"]; });
+  const ev = {
+    range: {
+      getSheet() { return PK; }, getRow() { return 2; }, getColumn() { return KC.CHECKBOX; },
+      getNumRows() { return values.length; }, getNumColumns() { return 1; },
+      getValues() { return values; }, setValue() {}
+    },
+    values: values
+  };
+  N.v12OnEdit(ev);
+
+  const unique = {};
+  globalThis.__handoffCalls.forEach(function (c) { unique[c.positionId] = true; });
+  IDS.forEach(function (id) {
+    check("S9: передача вызвана для " + id, unique[id] === true, true);
+  });
+  check("S9: всего уникальных позиций = 3", Object.keys(unique).length, 3);
+}
+
+if (failures === 0) { console.log("ALL TESTS PASSED (final-3)"); } else { console.log("FAILURES(final-3): " + failures); process.exitCode = 1; }

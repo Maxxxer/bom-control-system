@@ -141,6 +141,7 @@ function v12HarvestDeficitInput(skip) {
     }
     const D = V12_CONFIG.DEFICIT_COLUMNS;
     const P = V12_CONFIG.POSITION_COLUMNS;
+    const M = V12_CONFIG.MATERIAL_COLUMNS;
     const data = readSheetValues(sheet);
     if (data.length < 2) {
       return;
@@ -148,6 +149,8 @@ function v12HarvestDeficitInput(skip) {
     const index = v12BuildPositionIndex();
     const posSheet = v12GetSheetByKey("POSITION_STATE");
     const writes = [];
+    // Складские дельты от «реальной поставки», подобранной из чекбоксов.
+    const warehouseDelta = {};
     // Колонка, которая только что зафиксирована этой правкой, не подбирается
     // из листа (иначе сотрёт её же значение, т.к. лист перезаписывается позже).
     const skipPid = skip && skip.positionId ? normalizeMaterialId(skip.positionId) : "";
@@ -164,6 +167,7 @@ function v12HarvestDeficitInput(skip) {
       }
       const rowVals = pos.values.slice();
       let changed = false;
+      let realDelta = 0;
 
       const orderedSheet = toNumber(data[i][D.ORDERED_QTY - 1]);
       const skipOrdered = (pid === skipPid && skipKey === "ORDERED_QTY");
@@ -177,13 +181,30 @@ function v12HarvestDeficitInput(skip) {
         rowVals[P.EXPECTED_DATE - 1] = expDate;
         changed = true;
       }
+
+      // Чекбокс «Реальная поставка» — страховка от потери массовых отметок:
+      // если строка отмечена в листе, но поставка ещё не зафиксирована в
+      // POSITION_STATE — фиксируем её. Только положительное направление, чтобы
+      // не сбрасывать уже сохранённые (в т.ч. частичные) поставки.
+      const skipReal = (pid === skipPid && skipKey === "REAL_DELIVERY");
+      if (!skipReal && v12IsChecked(data[i][D.REAL_DELIVERY - 1])) {
+        const required = toNumber(rowVals[P.REQUIRED_QTY - 1]);
+        const currentReal = toNumber(rowVals[P.REAL_DELIVERY_QTY - 1]);
+        if (required > 0 && currentReal < required) {
+          rowVals[P.REAL_DELIVERY_QTY - 1] = required;
+          realDelta = required - currentReal;
+          changed = true;
+        }
+      }
+
       if (!changed) {
         continue;
       }
 
-      v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index));
+      v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index) + realDelta);
       writes.push({ row: pos.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
       writes.push({ row: pos.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
+      writes.push({ row: pos.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
       writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
       writes.push({ row: pos.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
       writes.push({ row: pos.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
@@ -193,11 +214,51 @@ function v12HarvestDeficitInput(skip) {
       writes.push({ row: pos.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
       writes.push({ row: pos.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
       writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
+
+      if (realDelta !== 0) {
+        const matKey = v12BuildMaterialKey({
+          code: rowVals[P.MATERIAL_CODE - 1],
+          name: rowVals[P.MATERIAL_NAME - 1],
+          model: rowVals[P.MODEL - 1],
+          unit: rowVals[P.UNIT - 1]
+        });
+        warehouseDelta[matKey] = (warehouseDelta[matKey] || 0) + realDelta;
+      }
     }
 
     if (writes.length) {
       batchWrite(posSheet, writes);
       SpreadsheetApp.flush();
+    }
+
+    // Складские остатки: применить суммарные дельты по materialKey одним батчем.
+    const matKeys = Object.keys(warehouseDelta);
+    if (matKeys.length) {
+      const materialSheet = v12GetSheetByKey("MATERIAL_STATE");
+      const mIdx = v12BuildMaterialIndex();
+      const mWrites = [];
+      matKeys.forEach(function (mk) {
+        const delta = warehouseDelta[mk];
+        if (!delta) {
+          return;
+        }
+        const m = mIdx.get(mk);
+        if (m) {
+          const next = Math.max(0, toNumber(m.values[M.WAREHOUSE_QTY - 1]) + delta);
+          mWrites.push({ row: m.row, col: M.WAREHOUSE_QTY, value: next });
+          mWrites.push({ row: m.row, col: M.UPDATED_AT, value: new Date() });
+        } else {
+          const rowVals2 = new Array(V12_CONFIG.COLUMN_COUNT.MATERIAL_STATE).fill("");
+          rowVals2[M.MATERIAL_KEY - 1] = mk;
+          rowVals2[M.MATERIAL_CODE - 1] = mk;
+          rowVals2[M.WAREHOUSE_QTY - 1] = Math.max(0, delta);
+          rowVals2[M.UPDATED_AT - 1] = new Date();
+          appendRow(materialSheet, rowVals2);
+        }
+      });
+      if (mWrites.length) {
+        batchWrite(materialSheet, mWrites);
+      }
     }
   } finally {
     _v12Harvesting = false;
@@ -431,9 +492,59 @@ function v12InstallDeficitCheckboxes(rowCount) {
 }
 
 /**
+ * Флаг: идёт подбор необработанных отметок передачи из «Отборки» (защита от рекурсии).
+ */
+let _v12HarvestingPicking = false;
+
+/**
+ * Подобрать необработанные отметки передачи из «Отборки» (ОТБОРКА).
+ *
+ * Страховка от потери массовых отметок чекбоксов передачи: если строка отмечена
+ * в листе, но передача ещё не зафиксирована — выполняем передачу идемпотентно,
+ * без пересчёта проекций (skipRefresh=true); пересчёт делает вызывающая сторона
+ * (v12RefreshPicking). Вызывается в начале v12RefreshPicking ДО перезаписи листа.
+ */
+function v12HarvestPickingInput() {
+  if (_v12HarvestingPicking) {
+    return;
+  }
+  _v12HarvestingPicking = true;
+  try {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS.PICKING);
+    if (!sheet) {
+      return;
+    }
+    const K = V12_CONFIG.PICKING_COLUMNS;
+    const data = readSheetValues(sheet);
+    if (data.length < 2) {
+      return;
+    }
+    let handedAny = false;
+    for (let i = 1; i < data.length; i++) {
+      if (!v12IsChecked(data[i][K.CHECKBOX - 1])) {
+        continue;
+      }
+      const positionId = normalizeMaterialId(data[i][K.POSITION_ID - 1]);
+      if (!positionId) {
+        continue;
+      }
+      // skipRefresh=true — проекции пересчитает вызывающая сторона.
+      v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true);
+      handedAny = true;
+    }
+    if (handedAny) {
+      SpreadsheetApp.flush();
+    }
+  } finally {
+    _v12HarvestingPicking = false;
+  }
+}
+
+/**
  * ОТБОРКА (PICKING): активные позиции, готовые/частично готовые к передаче.
  */
 function v12RefreshPicking() {
+  v12HarvestPickingInput();
   const P = V12_CONFIG.POSITION_COLUMNS;
   const K = V12_CONFIG.PICKING_COLUMNS;
   const data = v12ReadSheet("POSITION_STATE");
