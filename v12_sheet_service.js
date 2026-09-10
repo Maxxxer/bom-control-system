@@ -40,13 +40,19 @@ function v12EnsureAllSheets() {
 }
 
 /**
- * Миграция листа ОТБОРКА под новую схему (без колонки «Передано (кол-во)»).
+ * Устаревшие заголовки ОТБОРКИ, которые удаляются миграцией (обе колонки
+ * не читаются кодом ОТБОРКИ и не влияют на логику передачи).
+ */
+const V12_PICKING_LEGACY_HEADERS = ["Передано (кол-во)", "Складской остаток"];
+
+/**
+ * Миграция листа ОТБОРКА под новую схему.
  *
- * В прежней схеме ОТБОРКА содержала 15 колонок: кол. 14 — «Передано (кол-во)»,
- * кол. 15 — «Обновлено». Колонка «Передано (кол-во)» не читается кодом и всегда
- * равна 0 для видимых строк (переданные позиции из проекции исключаются), поэтому
- * она удаляется. Тело листа не трогаем — оно пересобирается v12RefreshPicking;
- * приводим к канону только строку заголовков.
+ * В прежних схемах ОТБОРКА содержала до 15 колонок, в т.ч. «Передано (кол-во)»
+ * и «Складской остаток». Обе не читаются кодом (передача завязана на чекбокс и
+ * Position ID), поэтому в каноне (13 колонок) они отсутствуют. Миграция удаляет
+ * любые устаревшие колонки из заголовка и приводит строку заголовков к канону.
+ * Тело листа не трогаем — оно пересобирается v12RefreshPicking.
  */
 function v12MigratePickingSchema() {
   const sheet = getSheetByName(V12_CONFIG.SHEETS.PICKING);
@@ -54,15 +60,29 @@ function v12MigratePickingSchema() {
     return;
   }
   const expected = V12_CONFIG.HEADERS.PICKING.length;
-  const lastCol = sheet.getLastColumn();
-  if (lastCol > 0) {
-    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    const legacyIndex = header.indexOf("Передано (кол-во)");
-    if (legacyIndex !== -1) {
-      sheet.deleteColumn(legacyIndex + 1);
+  // Порядок колонок меняется после каждого удаления — ищем заголовки заново
+  // и всегда удаляем самый левый устаревший столбец.
+  let safety = 0;
+  while (safety < 10) {
+    safety++;
+    const lastCol = sheet.getLastColumn();
+    if (lastCol <= 0) {
+      break;
     }
+    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    let legacyIndex = -1;
+    V12_PICKING_LEGACY_HEADERS.forEach(function (name) {
+      const i = header.indexOf(name);
+      if (i !== -1 && (legacyIndex === -1 || i < legacyIndex)) {
+        legacyIndex = i;
+      }
+    });
+    if (legacyIndex === -1) {
+      break;
+    }
+    sheet.deleteColumn(legacyIndex + 1);
   }
-  // Канонический заголовок (после удаления смещённой колонки).
+  // Канонический заголовок (после удаления всех устаревших колонок).
   sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.PICKING]);
   sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
 }

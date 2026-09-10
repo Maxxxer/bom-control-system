@@ -559,13 +559,6 @@ function v12RefreshPicking() {
     if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
       continue;
     }
-    const materialKey = v12BuildMaterialKey({
-      code: r[P.MATERIAL_CODE - 1],
-      name: r[P.MATERIAL_NAME - 1],
-      model: r[P.MODEL - 1],
-      unit: r[P.UNIT - 1]
-    });
-    const warehouse = v12GetWarehouseQty(materialKey);
     rows.push([
       r[P.POSITION_ID - 1],
       r[P.BOM_NAME - 1],
@@ -577,7 +570,6 @@ function v12RefreshPicking() {
       r[P.REQUIRED_QTY - 1],
       r[P.RESERVED_QTY - 1],
       r[P.AVAILABLE_FOR_PRODUCTION - 1],
-      warehouse,
       v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
       false, // CHECKBOX
       new Date()
