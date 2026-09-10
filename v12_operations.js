@@ -31,7 +31,7 @@ function v12SetOrderedQty(positionId, qty) {
     // Значение уже совпадает с состоянием — запись и агрегаты не нужны,
     // но строку сводки всё равно согласуем (на случай расхождения листа).
     SpreadsheetApp.flush();
-    v12RefreshDeficitSummaryRow(positionId);
+    v12RefreshDeficitSummaryRow(positionId, "ORDERED_QTY");
     return;
   }
 
@@ -63,7 +63,7 @@ function v12SetOrderedQty(positionId, qty) {
   // Сводку согласуем ВСЕГДА и точечно (по строке позиции) — это устраняет
   // потерю «Заказано»/«Ожидаемой поставки» при быстром вводе.
   SpreadsheetApp.flush();
-  v12RefreshDeficitSummaryRow(positionId);
+  v12RefreshDeficitSummaryRow(positionId, "ORDERED_QTY");
   // Агрегаты (СНАБЖЕНИЕ/Dashboard) обновляем, когда введены оба поля — как раньше.
   if (row[P.EXPECTED_DATE - 1]) {
     v12RefreshSupply();
@@ -89,7 +89,7 @@ function v12SetExpectedDate(positionId, date) {
   if (v12DateValue(oldDate) === v12DateValue(date)) {
     // Дата уже совпадает — запись не нужна, но строку сводки согласуем.
     SpreadsheetApp.flush();
-    v12RefreshDeficitSummaryRow(positionId);
+    v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE");
     return;
   }
 
@@ -108,7 +108,7 @@ function v12SetExpectedDate(positionId, date) {
 
   // Сводку согласуем ВСЕГДА и точечно — иначе при быстром вводе значение теряется.
   SpreadsheetApp.flush();
-  v12RefreshDeficitSummaryRow(positionId);
+  v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE");
   if (toNumber(pos.values[P.ORDERED_QTY - 1]) > 0) {
     v12RefreshSupply();
     v12RefreshDashboard();

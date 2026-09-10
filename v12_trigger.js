@@ -49,10 +49,6 @@ function v12OnEdit(e) {
     if (!sheet) {
       return;
     }
-    if (e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) {
-      return;
-    }
-
     const name = sheet.getName();
     const S = V12_CONFIG.SHEETS;
 
@@ -69,6 +65,14 @@ function v12OnEdit(e) {
       return;
     }
 
+    const isSingleCell = e.range.getNumRows() === 1 && e.range.getNumColumns() === 1;
+    // В сводке дефицитов поддерживаем вставку/автозаполнение диапазона —
+    // обрабатываем каждую ячейку. Прочие листы — только одиночные правки.
+    const isSummaryRange = !isSingleCell && name === S.DEFICIT_SUMMARY;
+    if (!isSingleCell && !isSummaryRange) {
+      return;
+    }
+
     // Сериализация правок: одна правка обрабатывается целиком до начала
     // следующей, чтобы чтение-изменение-запись POSITION_STATE и пересчёт
     // проекций не накладывались при быстром вводе (иначе значения затираются).
@@ -76,6 +80,12 @@ function v12OnEdit(e) {
     // обновлении она дождётся освобождения блокировки и будет обработана.
     const lock = acquireScriptLock();
     try {
+      // DEFICIT_SUMMARY — вставка/заполнение диапазона (несколько ячеек)
+      if (isSummaryRange) {
+        v12HandleDeficitRangeEdit(e);
+        return;
+      }
+
       // POSITION_STATE и MATERIAL_STATE (физ. склад) — ручное редактирование частично запрещено
       if (name === S.POSITION_STATE) {
         v12HandlePositionStateEdit(e);
@@ -227,6 +237,46 @@ function v12HandleDeficitEdit(e) {
   } else {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка", "WARNING");
+  }
+}
+
+/**
+ * DEFICIT_SUMMARY: обработка диапазона (вставка/автозаполнение) — каждая
+ * ячейка в редактируемых колонках обрабатывается как отдельная правка.
+ */
+function v12HandleDeficitRangeEdit(e) {
+  const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const sheet = e.range.getSheet();
+  const firstRow = e.range.getRow();
+  const firstCol = e.range.getColumn();
+  const numRows = e.range.getNumRows();
+  const numCols = e.range.getNumColumns();
+  // Снимок значений из события (если доступен) — надёжнее живого чтения.
+  const values = (e.values && e.values.length === numRows)
+    ? e.values
+    : e.range.getValues();
+
+  for (let r = 0; r < numRows; r++) {
+    const sheetRow = firstRow + r;
+    const positionId = sheet.getRange(sheetRow, D.POSITION_ID).getValue();
+    if (!positionId) {
+      continue;
+    }
+    for (let c = 0; c < numCols; c++) {
+      const column = firstCol + c;
+      const value = values[r][c];
+      if (column === D.ORDERED_QTY) {
+        v12SetOrderedQty(positionId, value);
+      } else if (column === D.EXPECTED_DATE) {
+        v12SetExpectedDate(positionId, value);
+      } else if (column === D.REAL_DELIVERY) {
+        try {
+          v12SetRealDeliveryQty(positionId, value === true ? v12GetDeficitRequiredQty(positionId) : 0);
+        } catch (err) {
+          // гейт поставки — пропускаем эту ячейку, остальные обрабатываем
+        }
+      }
+    }
   }
 }
 

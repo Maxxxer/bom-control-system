@@ -110,10 +110,120 @@ function v12BuildDeficitRow(r) {
 }
 
 /**
+ * Флаг: идёт подбор необработанных правок из листа сводки (защита от рекурсии).
+ */
+let _v12Harvesting = false;
+
+/**
+ * Разобрать дату из ячейки сводки. Поддерживает Date и формат dd.MM.yyyy
+ * (в сводке даты отображаются как «dd.MM.yyyy», JavaScript их так не парсит).
+ * Возвращает Date или null.
+ */
+function v12ParseSummaryDate(value) {
+  if (value === "" || value === null || value === undefined) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  const s = String(value).trim();
+  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (m) {
+    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Подобрать необработанные правки из «Сводки дефицитов» в POSITION_STATE.
+ *
+ * Страховка от пропущенных/задержанных onEdit: значение, введённое в сводку,
+ * уже есть в листе — здесь оно переносится в POSITION_STATE ДО перезаписи
+ * сводки, поэтому не теряется (и не затирает соседнюю ячейку строки).
+ * В обычном состоянии значения совпадают и функция ничего не меняет.
+ */
+function v12HarvestDeficitInput(skip) {
+  if (_v12Harvesting) {
+    return;
+  }
+  _v12Harvesting = true;
+  try {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS.DEFICIT_SUMMARY);
+    if (!sheet) {
+      return;
+    }
+    const D = V12_CONFIG.DEFICIT_COLUMNS;
+    const P = V12_CONFIG.POSITION_COLUMNS;
+    const data = readSheetValues(sheet);
+    if (data.length < 2) {
+      return;
+    }
+    const index = v12BuildPositionIndex();
+    const posSheet = v12GetSheetByKey("POSITION_STATE");
+    const writes = [];
+    // Колонка, которая только что зафиксирована этой правкой, не подбирается
+    // из листа (иначе сотрёт её же значение, т.к. лист перезаписывается позже).
+    const skipPid = skip && skip.positionId ? normalizeMaterialId(skip.positionId) : "";
+    const skipKey = skip && skip.key ? skip.key : "";
+
+    for (let i = 1; i < data.length; i++) {
+      const pid = normalizeMaterialId(data[i][D.POSITION_ID - 1]);
+      if (!pid) {
+        continue;
+      }
+      const pos = index.get(pid);
+      if (!pos) {
+        continue;
+      }
+      const rowVals = pos.values.slice();
+      let changed = false;
+
+      const orderedSheet = toNumber(data[i][D.ORDERED_QTY - 1]);
+      const skipOrdered = (pid === skipPid && skipKey === "ORDERED_QTY");
+      if (!skipOrdered && orderedSheet !== toNumber(pos.values[P.ORDERED_QTY - 1])) {
+        rowVals[P.ORDERED_QTY - 1] = orderedSheet;
+        changed = true;
+      }
+      const expDate = v12ParseSummaryDate(data[i][D.EXPECTED_DATE - 1]);
+      const skipExpected = (pid === skipPid && skipKey === "EXPECTED_DATE");
+      if (!skipExpected && expDate && expDate.getTime() !== v12DateValue(pos.values[P.EXPECTED_DATE - 1])) {
+        rowVals[P.EXPECTED_DATE - 1] = expDate;
+        changed = true;
+      }
+      if (!changed) {
+        continue;
+      }
+
+      v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index));
+      writes.push({ row: pos.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
+      writes.push({ row: pos.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
+      writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
+      writes.push({ row: pos.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
+      writes.push({ row: pos.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
+      writes.push({ row: pos.row, col: P.UNCOVERED_NEED, value: rowVals[P.UNCOVERED_NEED - 1] });
+      writes.push({ row: pos.row, col: P.OVER_ORDERED_QTY, value: rowVals[P.OVER_ORDERED_QTY - 1] });
+      writes.push({ row: pos.row, col: P.SHORT_DELIVERY_QTY, value: rowVals[P.SHORT_DELIVERY_QTY - 1] });
+      writes.push({ row: pos.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
+      writes.push({ row: pos.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
+      writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
+    }
+
+    if (writes.length) {
+      batchWrite(posSheet, writes);
+      SpreadsheetApp.flush();
+    }
+  } finally {
+    _v12Harvesting = false;
+  }
+}
+
+/**
  * DEFICIT_SUMMARY: активные (не архив/не удалённые, не переданные производству)
  * позиции для снабжения. Колонки из V12_CONFIG.DEFICIT_COLUMNS.
  */
 function v12RefreshDeficitSummary() {
+  v12HarvestDeficitInput();
   const data = v12ReadSheet("POSITION_STATE");
   const rows = [];
 
@@ -141,7 +251,11 @@ function v12RefreshDeficitSummary() {
  * сводки или порядок строк на листе разошёлся с POSITION_STATE — выполняется
  * безопасный полный пересчёт.
  */
-function v12RefreshDeficitSummaryRow(positionId) {
+function v12RefreshDeficitSummaryRow(positionId, committedKey) {
+  // Переносим в POSITION_STATE всё, что уже введено в строку сводки (кроме
+  // только что зафиксированной колонки), чтобы перезапись строки не затёрла
+  // соседнюю ячейку (например, «Заказано», введённое раньше своего onEdit).
+  v12HarvestDeficitInput(committedKey ? { positionId: positionId, key: committedKey } : null);
   const id = normalizeMaterialId(positionId);
   if (!id) {
     v12RefreshDeficitSummary();
@@ -241,8 +355,11 @@ function v12DeficitStatusDisplay(row) {
   if (!expected) {
     return "Заказано";
   }
-  const exp = new Date(expected).getTime();
-  const dead = new Date(deadline).getTime();
+  // Толерантный разбор дат: ячейка может содержать Date, ISO-строку или «dd.MM.yyyy».
+  const expDate = v12ParseSummaryDate(expected);
+  const deadDate = v12ParseSummaryDate(deadline);
+  const exp = expDate ? expDate.getTime() : NaN;
+  const dead = deadDate ? deadDate.getTime() : NaN;
   if (ordered < deficit) {
     return "Заказано частично";
   }
