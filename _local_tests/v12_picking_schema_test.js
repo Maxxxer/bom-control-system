@@ -2,14 +2,15 @@
  * ЛОКАЛЬНЫЙ тест схемы листа ОТБОРКА (PICKING).
  *
  * Проверяет:
- *   - конфиг: COLUMN_COUNT.PICKING = 13; PICKING_COLUMNS без RECEIVED_QTY и
- *     WAREHOUSE_QTY; HEADERS.PICKING без «Передано (кол-во)» и «Складской остаток»;
+ *   - конфиг: COLUMN_COUNT.PICKING = 12; PICKING_COLUMNS без RECEIVED_QTY,
+ *     WAREHOUSE_QTY и RESERVED_QTY; HEADERS.PICKING без «Передано (кол-во)»,
+ *     «Складской остаток» и «Зарезервировано»;
  *   - миграцию v12MigratePickingSchema(): удаление устаревших колонок
- *     «Передано (кол-во)» и «Складской остаток» (из схем 15 и 14 колонок)
- *     и канонический заголовок (UPDATED_AT на кол. 13);
+ *     «Передано (кол-во)», «Складской остаток» и «Зарезервировано»
+ *     (из схем 15 и 14 колонок) и канонический заголовок (UPDATED_AT на кол. 12);
  *   - идемпотентность миграции (повторный запуск на корректном листе — no-op);
- *   - запись проекции v12RefreshPicking(): тело строки содержит ровно 13 ячеек,
- *     кол. 11 = статус, кол. 12 = чекбокс false, кол. 13 = дата обновления.
+ *   - запись проекции v12RefreshPicking(): тело строки содержит ровно 12 ячеек,
+ *     кол. 10 = статус, кол. 11 = чекбокс false, кол. 12 = дата обновления.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script
  * (лежит в _local_tests/ и исключён через .claspignore).
@@ -127,13 +128,15 @@ const LEGACY_14 = ["Position ID", "BOM", "Строка", "Код", "Наимен
   "ProductionState", "Отметка получено", "Обновлено"];
 
 console.log("=== C1: конфиг колонок ОТБОРКИ ===");
-check("COLUMN_COUNT.PICKING = 13", C.COLUMN_COUNT.PICKING, 13);
-check("HEADERS.PICKING.length = 13", CANON.length, 13);
-check("PICKING_COLUMNS.UPDATED_AT = 13", C.PICKING_COLUMNS.UPDATED_AT, 13);
+check("COLUMN_COUNT.PICKING = 12", C.COLUMN_COUNT.PICKING, 12);
+check("HEADERS.PICKING.length = 12", CANON.length, 12);
+check("PICKING_COLUMNS.UPDATED_AT = 12", C.PICKING_COLUMNS.UPDATED_AT, 12);
 check("PICKING_COLUMNS.RECEIVED_QTY отсутствует", C.PICKING_COLUMNS.RECEIVED_QTY, undefined);
 check("PICKING_COLUMNS.WAREHOUSE_QTY отсутствует", C.PICKING_COLUMNS.WAREHOUSE_QTY, undefined);
+check("PICKING_COLUMNS.RESERVED_QTY отсутствует", C.PICKING_COLUMNS.RESERVED_QTY, undefined);
 check("HEADERS.PICKING без «Передано (кол-во)»", CANON.indexOf("Передано (кол-во)"), -1);
 check("HEADERS.PICKING без «Складской остаток»", CANON.indexOf("Складской остаток"), -1);
+check("HEADERS.PICKING без «Зарезервировано»", CANON.indexOf("Зарезервировано"), -1);
 check("Legacy-15 = 15 колонок (setup sanity)", LEGACY_15.length, 15);
 check("Legacy-14 = 14 колонок (setup sanity)", LEGACY_14.length, 14);
 
@@ -141,11 +144,12 @@ check("Legacy-14 = 14 колонок (setup sanity)", LEGACY_14.length, 14);
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "WORKING_BOM"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
-console.log("=== C2: миграция схемы 15 -> 13 ===");
+console.log("=== C2: миграция схемы 15 -> 12 ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, LEGACY_15);
   const bodyRow = new Array(15).fill("");
   bodyRow[0] = "BOM1:C1";
+  bodyRow[8] = 3;               // «Зарезервировано» — удаляется
   bodyRow[10] = 100;            // «Складской остаток» — удаляется
   bodyRow[12] = false;          // чекбокс
   bodyRow[13] = 0;              // «Передано (кол-во)» — удаляется
@@ -155,33 +159,35 @@ console.log("=== C2: миграция схемы 15 -> 13 ===");
   N.v12MigratePickingSchema();
 
   const header = PK._data[0];
-  check("заголовок = 13 колонок", header.length, 13);
+  check("заголовок = 12 колонок", header.length, 12);
+  check("«Зарезервировано» удалён", header.indexOf("Зарезервировано"), -1);
   check("«Передано (кол-во)» удалён", header.indexOf("Передано (кол-во)"), -1);
   check("«Складской остаток» удалён", header.indexOf("Складской остаток"), -1);
-  check("кол. 13 = «Обновлено»", header[12], "Обновлено");
+  check("кол. 12 = «Обновлено»", header[11], "Обновлено");
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
-  check("физически последняя колонка = 13", PK.getLastColumn(), 13);
+  check("физически последняя колонка = 12", PK.getLastColumn(), 12);
 }
 
-console.log("=== C3: миграция схемы 14 -> 13 (остался только «Складской остаток») ===");
+console.log("=== C3: миграция схемы 14 -> 12 (остались «Зарезервировано» и «Складской остаток») ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, LEGACY_14);
   N.v12MigratePickingSchema();
   const header = PK._data[0];
-  check("заголовок = 13 колонок", header.length, 13);
+  check("заголовок = 12 колонок", header.length, 12);
+  check("«Зарезервировано» удалён", header.indexOf("Зарезервировано"), -1);
   check("«Складской остаток» удалён", header.indexOf("Складской остаток"), -1);
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
 }
 
-console.log("=== C4: миграция идемпотентна (13 -> 13, no-op) ===");
+console.log("=== C4: миграция идемпотентна (12 -> 12, no-op) ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, CANON);
   N.v12MigratePickingSchema();
-  check("заголовок не изменился (13 колонок)", PK._data[0].length, 13);
+  check("заголовок не изменился (12 колонок)", PK._data[0].length, 12);
   check("заголовок совпал с каноном", JSON.stringify(PK._data[0]), JSON.stringify(CANON));
 }
 
-console.log("=== C5: проекция v12RefreshPicking пишет 13 колонок ===");
+console.log("=== C5: проекция v12RefreshPicking пишет 12 колонок ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, CANON);
   const PS = sheets[C.SHEETS.POSITION_STATE];
@@ -197,11 +203,11 @@ console.log("=== C5: проекция v12RefreshPicking пишет 13 колон
   const K = C.PICKING_COLUMNS;
   check("в ОТБОРКЕ 1 строка данных", PK._data.length, 2);
   const row = PK._data[1];
-  check("тело строки = 13 колонок", row.length, 13);
+  check("тело строки = 12 колонок", row.length, 12);
   check("кол. 1 = Position ID", row[K.POSITION_ID - 1], "BOM1:C1");
-  check("кол. 11 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
-  check("кол. 12 = чекбокс false", row[K.CHECKBOX - 1], false);
-  check("кол. 13 (UPDATED_AT) — дата", row[K.UPDATED_AT - 1] instanceof Date, true);
+  check("кол. 10 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
+  check("кол. 11 = чекбокс false", row[K.CHECKBOX - 1], false);
+  check("кол. 12 (UPDATED_AT) — дата", row[K.UPDATED_AT - 1] instanceof Date, true);
 }
 
 console.log("=== C7: разбор кода проекта (до пробела/дефиса/подчёркивания) ===");

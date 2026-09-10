@@ -655,7 +655,6 @@ function v12RefreshPicking() {
       r[P.MODEL - 1],
       r[P.UNIT - 1],
       r[P.REQUIRED_QTY - 1],
-      r[P.RESERVED_QTY - 1],
       r[P.AVAILABLE_FOR_PRODUCTION - 1],
       v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
       false, // CHECKBOX
@@ -689,7 +688,7 @@ function v12RefreshPicking() {
 }
 
 /**
- * Чекбокс передачи в ОТБОРКЕ (кол. 13).
+ * Чекбокс передачи в ОТБОРКЕ (кол. 11).
  */
 function v12InstallPickingCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("PICKING");
