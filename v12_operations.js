@@ -27,6 +27,13 @@ function v12SetOrderedQty(positionId, qty) {
   }
   const P = V12_CONFIG.POSITION_COLUMNS;
   const oldQty = toNumber(pos.values[P.ORDERED_QTY - 1]);
+  if (oldQty === newQty) {
+    // Значение уже совпадает с состоянием — запись и агрегаты не нужны,
+    // но строку сводки всё равно согласуем (на случай расхождения листа).
+    SpreadsheetApp.flush();
+    v12RefreshDeficitSummaryRow(positionId);
+    return;
+  }
 
   const row = pos.values.slice();
   row[P.ORDERED_QTY - 1] = newQty;
@@ -53,10 +60,14 @@ function v12SetOrderedQty(positionId, qty) {
     newValue: newQty
   });
 
-  // Пересчёт запускается только когда введены и количество заказа, и ожидаемая поставка.
+  // Сводку согласуем ВСЕГДА и точечно (по строке позиции) — это устраняет
+  // потерю «Заказано»/«Ожидаемой поставки» при быстром вводе.
+  SpreadsheetApp.flush();
+  v12RefreshDeficitSummaryRow(positionId);
+  // Агрегаты (СНАБЖЕНИЕ/Dashboard) обновляем, когда введены оба поля — как раньше.
   if (row[P.EXPECTED_DATE - 1]) {
-    SpreadsheetApp.flush();
-    v12RefreshProjections();
+    v12RefreshSupply();
+    v12RefreshDashboard();
   }
   v12FlushAudit();
 }
@@ -75,6 +86,12 @@ function v12SetExpectedDate(positionId, date) {
   }
   const P = V12_CONFIG.POSITION_COLUMNS;
   const oldDate = pos.values[P.EXPECTED_DATE - 1] || "";
+  if (v12DateValue(oldDate) === v12DateValue(date)) {
+    // Дата уже совпадает — запись не нужна, но строку сводки согласуем.
+    SpreadsheetApp.flush();
+    v12RefreshDeficitSummaryRow(positionId);
+    return;
+  }
 
   v12UpdatePosition(positionId, {
     EXPECTED_DATE: date || ""
@@ -89,10 +106,12 @@ function v12SetExpectedDate(positionId, date) {
     newValue: date || ""
   });
 
-  // Пересчёт запускается только когда введены и количество заказа, и ожидаемая поставка.
+  // Сводку согласуем ВСЕГДА и точечно — иначе при быстром вводе значение теряется.
+  SpreadsheetApp.flush();
+  v12RefreshDeficitSummaryRow(positionId);
   if (toNumber(pos.values[P.ORDERED_QTY - 1]) > 0) {
-    SpreadsheetApp.flush();
-    v12RefreshProjections();
+    v12RefreshSupply();
+    v12RefreshDashboard();
   }
   v12FlushAudit();
 }

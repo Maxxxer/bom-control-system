@@ -52,50 +52,67 @@ function v12OnEdit(e) {
     if (e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) {
       return;
     }
-    if (v12IsBusy()) {
-      return;
-    }
 
     const name = sheet.getName();
-    const column = e.range.getColumn();
-    const row = e.range.getRow();
-    const value = e.range.getValue();
+    const S = V12_CONFIG.SHEETS;
 
-    // POSITION_STATE и MATERIAL_STATE (физ. склад) — ручное редактирование частично запрещено
-    if (name === V12_CONFIG.SHEETS.POSITION_STATE) {
-      v12HandlePositionStateEdit(e);
-      return;
-    }
-    if (name === V12_CONFIG.SHEETS.MATERIAL_STATE) {
-      v12HandleMaterialStateEdit(e);
-      return;
-    }
-
-    // DASHBOARD — только чекбокс «Выполнено», только при «Готов к производству»
-    if (name === V12_CONFIG.SHEETS.DASHBOARD) {
-      v12HandleDashboardEdit(e);
+    // Обрабатываем только листы с разрешёнными правками. Ранний выход для
+    // остальных листов — до захвата блокировки, чтобы её не занимать зря.
+    const isActionable =
+      name === S.POSITION_STATE ||
+      name === S.MATERIAL_STATE ||
+      name === S.DASHBOARD ||
+      name === S.DEFICIT_SUMMARY ||
+      name === S.PICKING ||
+      name === S.WORKING_BOM;
+    if (!isActionable) {
       return;
     }
 
-    // DEFICIT_SUMMARY
-    if (name === V12_CONFIG.SHEETS.DEFICIT_SUMMARY) {
-      v12HandleDeficitEdit(e);
-      return;
-    }
+    // Сериализация правок: одна правка обрабатывается целиком до начала
+    // следующей, чтобы чтение-изменение-запись POSITION_STATE и пересчёт
+    // проекций не накладывались при быстром вводе (иначе значения затираются).
+    // ВАЖНО: правка не отбрасывается по флагу занятости — при плановом
+    // обновлении она дождётся освобождения блокировки и будет обработана.
+    const lock = acquireScriptLock();
+    try {
+      // POSITION_STATE и MATERIAL_STATE (физ. склад) — ручное редактирование частично запрещено
+      if (name === S.POSITION_STATE) {
+        v12HandlePositionStateEdit(e);
+        return;
+      }
+      if (name === S.MATERIAL_STATE) {
+        v12HandleMaterialStateEdit(e);
+        return;
+      }
 
-    // ОТБОРКА
-    if (name === V12_CONFIG.SHEETS.PICKING) {
-      v12HandlePickingEdit(e);
-      return;
-    }
+      // DASHBOARD — только чекбокс «Выполнено», только при «Готов к производству»
+      if (name === S.DASHBOARD) {
+        v12HandleDashboardEdit(e);
+        return;
+      }
 
-    // WORKING BOM — только чекбокс передачи
-    if (name === V12_CONFIG.SHEETS.WORKING_BOM) {
-      v12HandleWorkingBomEdit(e);
-      return;
-    }
+      // DEFICIT_SUMMARY
+      if (name === S.DEFICIT_SUMMARY) {
+        v12HandleDeficitEdit(e);
+        return;
+      }
 
-    // MATERIAL_STATE (физический) — отдельно обработан выше
+      // ОТБОРКА
+      if (name === S.PICKING) {
+        v12HandlePickingEdit(e);
+        return;
+      }
+
+      // WORKING BOM — только чекбокс передачи
+      if (name === S.WORKING_BOM) {
+        v12HandleWorkingBomEdit(e);
+        return;
+      }
+    } finally {
+      lock.releaseLock();
+      v12FlushAudit();
+    }
   } catch (error) {
     logSystem("v12OnEdit", error.message, error, "ERROR");
   }
@@ -191,12 +208,16 @@ function v12HandleDeficitEdit(e) {
   if (!positionId) {
     return;
   }
+  // Значение берём из события (снимок на момент правки), а не из e.range.getValue():
+  // при быстром вводе предыдущий пересчёт мог успеть откатить ячейку, и «живое»
+  // чтение вернуло бы уже затёртое значение — тогда правка теряется.
+  const newValue = (e.value !== undefined) ? e.value : e.range.getValue();
   if (column === D.ORDERED_QTY) {
-    v12SetOrderedQty(positionId, e.range.getValue());
+    v12SetOrderedQty(positionId, newValue);
   } else if (column === D.EXPECTED_DATE) {
-    v12SetExpectedDate(positionId, e.range.getValue());
+    v12SetExpectedDate(positionId, newValue);
   } else if (column === D.REAL_DELIVERY) {
-    const checked = e.range.getValue();
+    const checked = newValue;
     try {
       v12SetRealDeliveryQty(positionId, checked === true ? v12GetDeficitRequiredQty(positionId) : 0);
     } catch (err) {

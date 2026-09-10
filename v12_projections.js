@@ -64,45 +64,65 @@ function v12FormatDateOnly(value) {
 }
 
 /**
+ * Активна ли позиция для «Сводки дефицитов» (проходит фильтр проекции).
+ * Фильтр НЕ зависит от «Заказано»/«Ожидаемой поставки», поэтому правки
+ * этих полей не меняют состав строк сводки — это позволяет обновлять
+ * сводку построчно, не пересобирая весь лист.
+ */
+function v12IsDeficitRowActive(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const lc = r[P.LIFECYCLE_STATE - 1];
+  if (lc === V12_CONFIG.LIFECYCLE_STATE.ARCHIVED || lc === V12_CONFIG.LIFECYCLE_STATE.REMOVED) {
+    return false;
+  }
+  if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
+    return false;
+  }
+  const requiredQty = toNumber(r[P.REQUIRED_QTY - 1]);
+  const availableQty = toNumber(r[P.RESERVED_QTY - 1]) + toNumber(r[P.REAL_DELIVERY_QTY - 1]);
+  if (availableQty >= requiredQty || toNumber(r[P.DEFICIT_QTY - 1]) <= 0) {
+    return false;   // материал на складе или нет дефицита — в сводку не берём
+  }
+  return true;
+}
+
+/**
+ * Собрать строку «Сводки дефицитов» из строки POSITION_STATE.
+ */
+function v12BuildDeficitRow(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  return [
+    r[P.POSITION_ID - 1],
+    r[P.BOM_NAME - 1],
+    r[P.BOM_ROW - 1],
+    r[P.MATERIAL_CODE - 1],
+    r[P.MATERIAL_NAME - 1],
+    r[P.MODEL - 1],
+    r[P.UNIT - 1],
+    r[P.DEFICIT_QTY - 1],
+    r[P.ORDERED_QTY - 1],
+    v12FormatDateOnly(r[P.EXPECTED_DATE - 1]),
+    v12FormatDateOnly(r[P.DEADLINE - 1]),
+    false, // REAL_DELIVERY checkbox
+    r[P.UNCOVERED_NEED - 1],
+    v12DeficitStatusDisplay(r)
+  ];
+}
+
+/**
  * DEFICIT_SUMMARY: активные (не архив/не удалённые, не переданные производству)
  * позиции для снабжения. Колонки из V12_CONFIG.DEFICIT_COLUMNS.
  */
 function v12RefreshDeficitSummary() {
-  const P = V12_CONFIG.POSITION_COLUMNS;
-  const D = V12_CONFIG.DEFICIT_COLUMNS;
   const data = v12ReadSheet("POSITION_STATE");
   const rows = [];
 
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
-    const lc = r[P.LIFECYCLE_STATE - 1];
-    if (lc === V12_CONFIG.LIFECYCLE_STATE.ARCHIVED || lc === V12_CONFIG.LIFECYCLE_STATE.REMOVED) {
+    if (!v12IsDeficitRowActive(r)) {
       continue;
     }
-    if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
-      continue;
-    }
-    const requiredQty = toNumber(r[P.REQUIRED_QTY - 1]);
-    const availableQty = toNumber(r[P.RESERVED_QTY - 1]) + toNumber(r[P.REAL_DELIVERY_QTY - 1]);
-    if (availableQty >= requiredQty || toNumber(r[P.DEFICIT_QTY - 1]) <= 0) {
-      continue;   // материал на складе или нет дефицита — в сводку не берём
-    }
-    rows.push([
-      r[P.POSITION_ID - 1],
-      r[P.BOM_NAME - 1],
-      r[P.BOM_ROW - 1],
-      r[P.MATERIAL_CODE - 1],
-      r[P.MATERIAL_NAME - 1],
-      r[P.MODEL - 1],
-      r[P.UNIT - 1],
-      r[P.DEFICIT_QTY - 1],
-      r[P.ORDERED_QTY - 1],
-      v12FormatDateOnly(r[P.EXPECTED_DATE - 1]),
-      v12FormatDateOnly(r[P.DEADLINE - 1]),
-      false, // REAL_DELIVERY checkbox
-      r[P.UNCOVERED_NEED - 1],
-      v12DeficitStatusDisplay(r)
-    ]);
+    rows.push(v12BuildDeficitRow(r));
   }
 
   v12ClearBody("DEFICIT_SUMMARY");
@@ -111,6 +131,91 @@ function v12RefreshDeficitSummary() {
   }
   v12InstallDeficitCheckboxes(rows.length);
   v12ApplyDeficitColors(rows);
+}
+
+/**
+ * Точечно обновить одну строку «Сводки дефицитов» (по positionId).
+ *
+ * Не очищает тело листа — пишет только затронутую строку, поэтому быстрый
+ * ввод не затирает значения в остальных строках. Если позиция выпала из
+ * сводки или порядок строк на листе разошёлся с POSITION_STATE — выполняется
+ * безопасный полный пересчёт.
+ */
+function v12RefreshDeficitSummaryRow(positionId) {
+  const id = normalizeMaterialId(positionId);
+  if (!id) {
+    v12RefreshDeficitSummary();
+    return;
+  }
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const data = v12ReadSheet("POSITION_STATE");
+  const rows = [];
+  let targetIndex = -1;
+
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!v12IsDeficitRowActive(r)) {
+      continue;
+    }
+    rows.push(v12BuildDeficitRow(r));
+    if (targetIndex === -1 && normalizeMaterialId(r[P.POSITION_ID - 1]) === id) {
+      targetIndex = rows.length - 1;
+    }
+  }
+
+  if (targetIndex === -1) {
+    // позиция больше не в сводке (например, поставлена) — полный пересчёт
+    v12RefreshDeficitSummary();
+    return;
+  }
+
+  const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
+  const sheetRow = targetIndex + 2;
+  const currentId = normalizeMaterialId(sheet.getRange(sheetRow, D.POSITION_ID).getValue());
+  if (currentId !== id) {
+    // порядок строк на листе разошёлся с POSITION_STATE — безопасный полный пересчёт
+    v12RefreshDeficitSummary();
+    return;
+  }
+
+  const row = rows[targetIndex];
+  sheet.getRange(sheetRow, 1, 1, row.length).setValues([row]);
+  v12InstallDeficitCheckboxForRow(sheetRow, true);
+  v12ApplyDeficitColorForRow(sheetRow, row[D.STATUS - 1]);
+}
+
+/**
+ * Чекбокс «Реальная поставка» для одной строки сводки.
+ */
+function v12InstallDeficitCheckboxForRow(sheetRow, enabled) {
+  const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
+  const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const cell = sheet.getRange(sheetRow, D.REAL_DELIVERY);
+  cell.clearDataValidations();
+  if (enabled) {
+    cell.setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  }
+}
+
+/**
+ * Цвет строки сводки по статусу (та же палитра, что и в полном пересчёте).
+ */
+function v12ApplyDeficitColorForRow(sheetRow, status) {
+  const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
+  const C = V12_CONFIG.COLORS;
+  let color = C.WHITE;
+  if (status === "Ожидание поставки (в Срок)") {
+    color = C.YELLOW;
+  } else if (status === "Ожидание поставки (Опаздывает)") {
+    color = C.ORANGE;
+  } else if (status === "Заказано частично") {
+    color = C.RED;
+  } else if (status === "Ошибка данных") {
+    color = C.GRAY;
+  }
+  const cols = V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY;
+  sheet.getRange(sheetRow, 1, 1, cols).setBackgrounds([new Array(cols).fill(color)]);
 }
 
 /**
