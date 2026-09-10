@@ -149,10 +149,17 @@ function v12SetRealDeliveryQty(positionId, qty) {
 
   const newRow = row.slice();
   newRow[P.REAL_DELIVERY_QTY - 1] = newQty;
+  // Дата фактической поставки: фиксируем дату первой положительной отметки,
+  // при обнулении поставки — сбрасываем.
+  const newDeliveryDate = newQty > 0
+    ? (row[P.REAL_DELIVERY_DATE - 1] || new Date())
+    : "";
+  newRow[P.REAL_DELIVERY_DATE - 1] = newDeliveryDate;
   v12ApplyComputedToRow(newRow, v12GetWarehouseQty(materialKey) + delta);
 
   v12UpdatePosition(positionId, {
     REAL_DELIVERY_QTY: newQty,
+    REAL_DELIVERY_DATE: newDeliveryDate,
     SUPPLY_STATE: newRow[P.SUPPLY_STATE - 1],
     PRODUCTION_STATE: newRow[P.PRODUCTION_STATE - 1],
     DEFICIT_QTY: newRow[P.DEFICIT_QTY - 1],

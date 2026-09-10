@@ -2,17 +2,18 @@
  * ЛОКАЛЬНЫЙ тест схемы листа ОТБОРКА (PICKING).
  *
  * Проверяет:
- *   - конфиг: COLUMN_COUNT.PICKING = 13; PICKING_COLUMNS без RECEIVED_QTY,
- *     WAREHOUSE_QTY и RESERVED_QTY, но с EXPECTED_DATE (=11); HEADERS.PICKING без
- *     «Передано (кол-во)», «Складской остаток» и «Зарезервировано», но с
- *     «Ожидаемая поставка»;
+ *   - конфиг: COLUMN_COUNT.PICKING = 12; PICKING_COLUMNS без UPDATED_AT,
+ *     но с EXPECTED_DATE (=11), CHECKBOX (=12); HEADERS.PICKING с
+ *     «Состояние поставки» (кол. 10) и «Дата поставки» (кол. 11), без
+ *     «ProductionState», «Ожидаемая поставка» и «Обновлено»;
  *   - миграцию v12MigratePickingSchema(): удаление устаревших колонок
- *     «Передано (кол-во)», «Складской остаток» и «Зарезервировано»
- *     (из схем 15 и 14 колонок) и канонический заголовок (UPDATED_AT на кол. 13);
+ *     «Передано (кол-во)», «Складской остаток», «Зарезервировано» и
+ *     «Обновлено» (из схем 15, 14 и 13 колонок) и канонический заголовок;
  *   - идемпотентность миграции (повторный запуск на корректном листе — no-op);
- *   - запись проекции v12RefreshPicking(): тело строки содержит ровно 13 ячеек,
- *     кол. 10 = статус, кол. 11 = ожидаемая поставка, кол. 12 = чекбокс,
- *     кол. 13 = дата обновления;
+ *   - запись проекции v12RefreshPicking(): тело строки содержит ровно 12 ячеек,
+ *     кол. 10 = статус, кол. 11 = «Дата поставки», кол. 12 = чекбокс;
+ *   - «Дата поставки»: у товара на складе — дата реальной поставки, иначе —
+ *     ожидаемая дата;
  *   - окраску строк v12PickingRowColor(): голубой/красный/жёлтый/оранжевый.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script
@@ -106,7 +107,7 @@ const files = [
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")
   + "\n;globalThis.__V12 = { V12_CONFIG: V12_CONFIG, v12BuildPositionRow: v12BuildPositionRow,"
   + " v12MigratePickingSchema: v12MigratePickingSchema, v12RefreshPicking: v12RefreshPicking,"
-  + " v12PickingRowColor: v12PickingRowColor,"
+  + " v12PickingRowColor: v12PickingRowColor, v12PickingDeliveryDate: v12PickingDeliveryDate,"
   + " v12ExtractBomProjectCode: v12ExtractBomProjectCode };";
 
 vm.runInThisContext(src, { filename: "v12-bundle.js" });
@@ -130,28 +131,42 @@ const LEGACY_15 = ["Position ID", "BOM", "Строка", "Код", "Наимен
 const LEGACY_14 = ["Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
   "Требуется", "Зарезервировано", "Доступно для производства", "Складской остаток",
   "ProductionState", "Отметка получено", "Обновлено"];
+// Схема 13 колонок: канон предыдущей версии (с «Ожидаемая поставка» и «Обновлено»).
+const LEGACY_13 = ["Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
+  "Требуется", "Доступно для производства", "ProductionState",
+  "Ожидаемая поставка", "Отметка получено", "Обновлено"];
 
 console.log("=== C1: конфиг колонок ОТБОРКИ ===");
-check("COLUMN_COUNT.PICKING = 13", C.COLUMN_COUNT.PICKING, 13);
-check("HEADERS.PICKING.length = 13", CANON.length, 13);
+check("COLUMN_COUNT.PICKING = 12", C.COLUMN_COUNT.PICKING, 12);
+check("HEADERS.PICKING.length = 12", CANON.length, 12);
 check("PICKING_COLUMNS.EXPECTED_DATE = 11", C.PICKING_COLUMNS.EXPECTED_DATE, 11);
 check("PICKING_COLUMNS.CHECKBOX = 12", C.PICKING_COLUMNS.CHECKBOX, 12);
-check("PICKING_COLUMNS.UPDATED_AT = 13", C.PICKING_COLUMNS.UPDATED_AT, 13);
-check("PICKING_COLUMNS.RECEIVED_QTY отсутствует", C.PICKING_COLUMNS.RECEIVED_QTY, undefined);
-check("PICKING_COLUMNS.WAREHOUSE_QTY отсутствует", C.PICKING_COLUMNS.WAREHOUSE_QTY, undefined);
-check("PICKING_COLUMNS.RESERVED_QTY отсутствует", C.PICKING_COLUMNS.RESERVED_QTY, undefined);
-check("HEADERS.PICKING с «Ожидаемая поставка»", CANON.indexOf("Ожидаемая поставка"), 10);
+check("PICKING_COLUMNS.UPDATED_AT отсутствует", C.PICKING_COLUMNS.UPDATED_AT, undefined);
+check("HEADERS.PICKING[9] = «Состояние поставки»", CANON[9], "Состояние поставки");
+check("HEADERS.PICKING[10] = «Дата поставки»", CANON[10], "Дата поставки");
+check("HEADERS.PICKING[11] = «Отметка получено»", CANON[11], "Отметка получено");
+check("HEADERS.PICKING без «ProductionState»", CANON.indexOf("ProductionState"), -1);
+check("HEADERS.PICKING без «Ожидаемая поставка»", CANON.indexOf("Ожидаемая поставка"), -1);
+check("HEADERS.PICKING без «Обновлено»", CANON.indexOf("Обновлено"), -1);
 check("HEADERS.PICKING без «Передано (кол-во)»", CANON.indexOf("Передано (кол-во)"), -1);
 check("HEADERS.PICKING без «Складской остаток»", CANON.indexOf("Складской остаток"), -1);
 check("HEADERS.PICKING без «Зарезервировано»", CANON.indexOf("Зарезервировано"), -1);
 check("Legacy-15 = 15 колонок (setup sanity)", LEGACY_15.length, 15);
 check("Legacy-14 = 14 колонок (setup sanity)", LEGACY_14.length, 14);
+check("Legacy-13 = 13 колонок (setup sanity)", LEGACY_13.length, 13);
+
+// КОНФИГ POSITION_STATE: добавлена колонка «Дата поставки» (REAL_DELIVERY_DATE).
+console.log("=== C1b: конфиг POSITION_STATE (REAL_DELIVERY_DATE) ===");
+check("COLUMN_COUNT.POSITION_STATE = 31", C.COLUMN_COUNT.POSITION_STATE, 31);
+check("POSITION_COLUMNS.REAL_DELIVERY_DATE = 31", C.POSITION_COLUMNS.REAL_DELIVERY_DATE, 31);
+check("HEADERS.POSITION_STATE.length = 31", C.HEADERS.POSITION_STATE.length, 31);
+check("HEADERS.POSITION_STATE[30] = «Дата поставки»", C.HEADERS.POSITION_STATE[30], "Дата поставки");
 
 // Остальные листы пустые (по заголовку), чтобы refresh не падал.
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "WORKING_BOM"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
-console.log("=== C2: миграция схемы 15 -> 13 ===");
+console.log("=== C2: миграция схемы 15 -> 12 ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, LEGACY_15);
   const bodyRow = new Array(15).fill("");
@@ -160,41 +175,56 @@ console.log("=== C2: миграция схемы 15 -> 13 ===");
   bodyRow[10] = 100;            // «Складской остаток» — удаляется
   bodyRow[12] = false;          // чекбокс
   bodyRow[13] = 0;              // «Передано (кол-во)» — удаляется
-  bodyRow[14] = new Date();     // «Обновлено»
+  bodyRow[14] = new Date();     // «Обновлено» — удаляется
   PK._data.push(bodyRow);
 
   N.v12MigratePickingSchema();
 
   const header = PK._data[0];
-  check("заголовок = 13 колонок", header.length, 13);
+  check("заголовок = 12 колонок", header.length, 12);
   check("«Зарезервировано» удалён", header.indexOf("Зарезервировано"), -1);
   check("«Передано (кол-во)» удалён", header.indexOf("Передано (кол-во)"), -1);
   check("«Складской остаток» удалён", header.indexOf("Складской остаток"), -1);
-  check("кол. 13 = «Обновлено»", header[12], "Обновлено");
+  check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
+  check("кол. 12 = «Отметка получено»", header[11], "Отметка получено");
+  check("кол. 11 = «Дата поставки»", header[10], "Дата поставки");
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
-  check("физически последняя колонка = 13", PK.getLastColumn(), 13);
+  check("физически последняя колонка = 12", PK.getLastColumn(), 12);
 }
 
-console.log("=== C3: миграция схемы 14 -> 13 (остались «Зарезервировано» и «Складской остаток») ===");
+console.log("=== C3: миграция схемы 14 -> 12 ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, LEGACY_14);
   N.v12MigratePickingSchema();
   const header = PK._data[0];
-  check("заголовок = 13 колонок", header.length, 13);
+  check("заголовок = 12 колонок", header.length, 12);
   check("«Зарезервировано» удалён", header.indexOf("Зарезервировано"), -1);
   check("«Складской остаток» удалён", header.indexOf("Складской остаток"), -1);
+  check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
 }
 
-console.log("=== C4: миграция идемпотентна (13 -> 13, no-op) ===");
+console.log("=== C3b: миграция схемы 13 -> 12 (канон прошлой версии) ===");
+{
+  const PK = makeSheet(C.SHEETS.PICKING, LEGACY_13);
+  N.v12MigratePickingSchema();
+  const header = PK._data[0];
+  check("заголовок = 12 колонок", header.length, 12);
+  check("«Ожидаемая поставка» заменена на «Дата поставки»", header.indexOf("Ожидаемая поставка"), -1);
+  check("«ProductionState» заменён на «Состояние поставки»", header.indexOf("ProductionState"), -1);
+  check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
+  check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
+}
+
+console.log("=== C4: миграция идемпотентна (12 -> 12, no-op) ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, CANON);
   N.v12MigratePickingSchema();
-  check("заголовок не изменился (13 колонок)", PK._data[0].length, 13);
+  check("заголовок не изменился (12 колонок)", PK._data[0].length, 12);
   check("заголовок совпал с каноном", JSON.stringify(PK._data[0]), JSON.stringify(CANON));
 }
 
-console.log("=== C5: проекция v12RefreshPicking пишет 13 колонок ===");
+console.log("=== C5: проекция v12RefreshPicking пишет 12 колонок ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, CANON);
   const PS = sheets[C.SHEETS.POSITION_STATE];
@@ -210,12 +240,49 @@ console.log("=== C5: проекция v12RefreshPicking пишет 13 колон
   const K = C.PICKING_COLUMNS;
   check("в ОТБОРКЕ 1 строка данных", PK._data.length, 2);
   const row = PK._data[1];
-  check("тело строки = 13 колонок", row.length, 13);
+  check("тело строки = 12 колонок", row.length, 12);
   check("кол. 1 = Position ID", row[K.POSITION_ID - 1], "BOM1:C1");
   check("кол. 10 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
-  check("кол. 11 = «05.09.2026»", row[K.EXPECTED_DATE - 1], "05.09.2026");
+  check("кол. 11 = «05.09.2026» (ожидаемая, факт. нет)", row[K.EXPECTED_DATE - 1], "05.09.2026");
   check("кол. 12 = чекбокс false", row[K.CHECKBOX - 1], false);
-  check("кол. 13 (UPDATED_AT) — дата", row[K.UPDATED_AT - 1] instanceof Date, true);
+}
+
+console.log("=== C5b: у товара на складе «Дата поставки» = дата реальной поставки ===");
+{
+  const PK = makeSheet(C.SHEETS.PICKING, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  const P = C.POSITION_COLUMNS;
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  // realDelivery=10, reserved=0 -> available=10 >= required=10 -> «На складе».
+  const r = N.v12BuildPositionRow("BOM1", {
+    bomName: "BOM1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-01"
+  }, "BOM1:C1", 1, { realDeliveryQty: 10, expectedDate: "2026-09-05" });
+  r[P.REAL_DELIVERY_DATE - 1] = new Date(2026, 7, 20);   // 20.08.2026
+  PS._data.push(r);
+
+  N.v12RefreshPicking();
+
+  const K = C.PICKING_COLUMNS;
+  check("кол. 10 = «На складе»", PK._data[1][K.PRODUCTION_STATE - 1], "На складе");
+  check("кол. 11 = «20.08.2026» (дата реальной поставки)", PK._data[1][K.EXPECTED_DATE - 1], "20.08.2026");
+}
+
+console.log("=== C5c: у товара НЕ на складе «Дата поставки» = ожидаемая дата ===");
+{
+  const PK = makeSheet(C.SHEETS.PICKING, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  // ordered=10, real=0 -> available=0 < required -> ждём поставку; дата = ожидаемая.
+  PS._data.push(N.v12BuildPositionRow("BOM1", {
+    bomName: "BOM1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-01"
+  }, "BOM1:C1", 1, { orderedQty: 10, expectedDate: "2026-09-05" }));
+
+  N.v12RefreshPicking();
+
+  const K = C.PICKING_COLUMNS;
+  check("кол. 11 = «05.09.2026» (ожидаемая)", PK._data[1][K.EXPECTED_DATE - 1], "05.09.2026");
 }
 
 console.log("=== C7: разбор кода проекта (до пробела/дефиса/подчёркивания) ===");

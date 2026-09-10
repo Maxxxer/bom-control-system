@@ -343,6 +343,10 @@ function v12HandleDeficitRangeEdit(e) {
     let deltaReal = 0;
     if (entry.desiredReal !== undefined && entry.desiredReal !== entry.oldReal) {
       rowVals[P.REAL_DELIVERY_QTY - 1] = entry.desiredReal;
+      // Дата фактической поставки: первая положительная отметка, сброс при 0.
+      rowVals[P.REAL_DELIVERY_DATE - 1] = entry.desiredReal > 0
+        ? (rowVals[P.REAL_DELIVERY_DATE - 1] || new Date())
+        : "";
       deltaReal = entry.desiredReal - entry.oldReal;
       entry.changed = true;
     }
@@ -361,6 +365,7 @@ function v12HandleDeficitRangeEdit(e) {
     writes.push({ row: entry.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
     writes.push({ row: entry.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
     writes.push({ row: entry.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
+    writes.push({ row: entry.row, col: P.REAL_DELIVERY_DATE, value: rowVals[P.REAL_DELIVERY_DATE - 1] });
     writes.push({ row: entry.row, col: P.UPDATED_AT, value: new Date() });
 
     if (deltaReal !== 0) {

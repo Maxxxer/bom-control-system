@@ -192,6 +192,10 @@ function v12HarvestDeficitInput(skip) {
         const currentReal = toNumber(rowVals[P.REAL_DELIVERY_QTY - 1]);
         if (required > 0 && currentReal < required) {
           rowVals[P.REAL_DELIVERY_QTY - 1] = required;
+          // Фиксируем дату первой отметки реальной поставки.
+          if (!rowVals[P.REAL_DELIVERY_DATE - 1]) {
+            rowVals[P.REAL_DELIVERY_DATE - 1] = new Date();
+          }
           realDelta = required - currentReal;
           changed = true;
         }
@@ -205,6 +209,7 @@ function v12HarvestDeficitInput(skip) {
       writes.push({ row: pos.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
       writes.push({ row: pos.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
       writes.push({ row: pos.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
+      writes.push({ row: pos.row, col: P.REAL_DELIVERY_DATE, value: rowVals[P.REAL_DELIVERY_DATE - 1] });
       writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
       writes.push({ row: pos.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
       writes.push({ row: pos.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
@@ -660,9 +665,8 @@ function v12RefreshPicking() {
         r[P.REQUIRED_QTY - 1],
         r[P.AVAILABLE_FOR_PRODUCTION - 1],
         v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-        v12FormatDateOnly(r[P.EXPECTED_DATE - 1]),   // EXPECTED_DATE (кол. 11)
-        false, // CHECKBOX
-        new Date()
+        v12PickingDeliveryDate(r),                   // «Дата поставки» (кол. 11)
+        false // CHECKBOX
       ],
       color: v12PickingRowColor(r)
     });
@@ -694,6 +698,25 @@ function v12RefreshPicking() {
   v12InstallPickingCheckboxes(rows.length);
   v12ApplyPickingColors(colors);
   v12InstallPickingBomFilter(codes);
+}
+
+/**
+ * Значение колонки «Дата поставки» ОТБОРКИ (кол. 11).
+ *
+ * Для материала, который уже на складе (READY_FOR_HANDOFF), показываем дату, в
+ * которую поставка была отмечена как реальная (REAL_DELIVERY_DATE). Если фактической
+ * даты нет (материал закрыт резервом BOM) — показываем ожидаемую дату прихода.
+ * Для остальных позиций — ожидаемую дату поставки.
+ */
+function v12PickingDeliveryDate(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  if (r[P.PRODUCTION_STATE - 1] === V12_CONFIG.PRODUCTION_STATE.READY_FOR_HANDOFF) {
+    const realDate = r[P.REAL_DELIVERY_DATE - 1];
+    if (realDate !== "" && realDate !== null && realDate !== undefined) {
+      return v12FormatDateOnly(realDate);
+    }
+  }
+  return v12FormatDateOnly(r[P.EXPECTED_DATE - 1]);
 }
 
 /**

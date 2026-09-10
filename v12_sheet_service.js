@@ -36,6 +36,7 @@ function v12EnsureAllSheets() {
     ensureSheet(name, header);
   });
   v12MigratePickingSchema();
+  v12MigratePositionSchema();
   v12FormatAllSheets();
   // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
   // строку заголовков (в т.ч. ячейку B1).
@@ -45,15 +46,16 @@ function v12EnsureAllSheets() {
 /**
  * Устаревшие заголовки ОТБОРКИ, которые удаляются миграцией (эти колонки
  * не читаются кодом ОТБОРКИ и не влияют на логику передачи).
+ * «Обновлено» добавлен в список устаревших — из канона ОТБОРКИ колонка убрана.
  */
-const V12_PICKING_LEGACY_HEADERS = ["Передано (кол-во)", "Складской остаток", "Зарезервировано"];
+const V12_PICKING_LEGACY_HEADERS = ["Передано (кол-во)", "Складской остаток", "Зарезервировано", "Обновлено"];
 
 /**
  * Миграция листа ОТБОРКА под новую схему.
  *
  * В прежних схемах ОТБОРКА содержала до 15 колонок, в т.ч. «Передано (кол-во)»,
  * «Складской остаток» и «Зарезервировано». Они не читаются кодом ОТБОРКИ
- * (передача завязана на чекбокс и Position ID), поэтому в каноне (13 колонок)
+ * (передача завязана на чекбокс и Position ID), поэтому в каноне (12 колонок)
  * они отсутствуют. Миграция удаляет любые устаревшие колонки из заголовка и
  * приводит строку заголовков к канону.
  * Тело листа не трогаем — оно пересобирается v12RefreshPicking.
@@ -89,6 +91,37 @@ function v12MigratePickingSchema() {
   // Канонический заголовок (после удаления всех устаревших колонок).
   sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.PICKING]);
   sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
+}
+
+/**
+ * Миграция листа POSITION_STATE под новую схему.
+ *
+ * В схеме добавлена колонка REAL_DELIVERY_DATE («Дата поставки», кол. 31) —
+ * дата, которой позиция была отмечена как реальная поставка. Исторические
+ * листы имеют 30 колонок: миграция приводит строку заголовка к канону (не
+ * трогая данные строк).
+ */
+function v12MigratePositionSchema() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.POSITION_STATE);
+  if (!sheet || sheet.getLastRow() === 0) {
+    return;
+  }
+  const canonical = V12_CONFIG.HEADERS.POSITION_STATE;
+  const lastCol = Math.max(sheet.getLastColumn(), canonical.length);
+  const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  let same = true;
+  for (let i = 0; i < canonical.length; i++) {
+    const cell = (header[i] === undefined || header[i] === null) ? "" : String(header[i]);
+    if (cell !== canonical[i]) {
+      same = false;
+      break;
+    }
+  }
+  if (same) {
+    return;
+  }
+  sheet.getRange(1, 1, 1, canonical.length).setValues([canonical]);
+  sheet.getRange(1, 1, 1, canonical.length).setFontWeight("bold");
 }
 
 /**

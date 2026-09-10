@@ -56,6 +56,7 @@ function v12BuildPositionRow(bomId, sourceMaterial, positionId, sourceRevision, 
   row[P.RESERVED_QTY - 1] = toNumber(sourceMaterial.reservedQty);
   row[P.ORDERED_QTY - 1] = ordered;
   row[P.REAL_DELIVERY_QTY - 1] = realDelivery;
+  row[P.REAL_DELIVERY_DATE - 1] = "";
   row[P.EXPECTED_DATE - 1] = expected;
   row[P.DEADLINE - 1] = sourceMaterial.deadline || "";
   row[P.RECEIVED_BY_PRODUCTION_QTY - 1] = receivedQty;
