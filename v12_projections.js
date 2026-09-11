@@ -409,23 +409,15 @@ function v12InstallDeficitCheckboxForRow(sheetRow, enabled) {
  */
 function v12ApplyDeficitColorForRow(sheetRow, status) {
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
-  const C = V12_CONFIG.COLORS;
-  let color = C.WHITE;
-  if (status === "Ожидание поставки (в Срок)") {
-    color = C.YELLOW;
-  } else if (status === "Ожидание поставки (Опаздывает)") {
-    color = C.ORANGE;
-  } else if (status === "Заказано частично") {
-    color = C.RED;
-  } else if (status === "Ошибка данных") {
-    color = C.GRAY;
-  }
+  const color = v12DeficitStatusColor(status);
   const cols = V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY;
   sheet.getRange(sheetRow, 1, 1, cols).setBackgrounds([new Array(cols).fill(color)]);
 }
 
 /**
- * Статус «Сводки дефицитов» — обновляется только при введённых «Заказано» и «Ожидаемая поставка».
+ * Статус «Сводки дефицитов». Заказ считается оформленным только когда введены
+ * И количество заказа, И ожидаемая дата поставки; иначе позиция «Не заказано».
+ *   нет заказа или нет ожидаемой даты → «Не заказано»;
  *   ordered < дефицит → «Заказано частично»;
  *   ordered >= дефицит и ожидаемая <= крайний срок → «Ожидание поставки (в Срок)»;
  *   ordered >= дефицит и ожидаемая > крайний срок → «Ожидание поставки (Опаздывает)».
@@ -440,29 +432,56 @@ function v12DeficitStatusDisplay(row) {
   const expected = row[P.EXPECTED_DATE - 1];
   const deadline = row[P.DEADLINE - 1];
 
-  if (ordered <= 0) {
+  // Заказ не оформлен или не указана ожидаемая дата поставки — «Не заказано».
+  if (ordered <= 0 || !expected) {
     return "Не заказано";
-  }
-  // Статус обновляется только когда введены и количество заказа, и ожидаемая поставка.
-  if (!expected) {
-    return "Заказано";
   }
   // Толерантный разбор дат: ячейка может содержать Date, ISO-строку или «dd.MM.yyyy».
   const expDate = v12ParseSummaryDate(expected);
   const deadDate = v12ParseSummaryDate(deadline);
   const exp = expDate ? expDate.getTime() : NaN;
   const dead = deadDate ? deadDate.getTime() : NaN;
+  // Даты не распознаны (нет валидного срока поставки) — «Не заказано».
+  if (isNaN(exp) || isNaN(dead)) {
+    return "Не заказано";
+  }
   if (ordered < deficit) {
     return "Заказано частично";
-  }
-  if (isNaN(exp) || isNaN(dead)) {
-    return "Заказано";
   }
   return exp <= dead ? "Ожидание поставки (в Срок)" : "Ожидание поставки (Опаздывает)";
 }
 
 /**
- * Окраска строк «Сводки дефицитов» по статусу: жёлтый/оранжевый/красный/серый.
+ * Цвет строки «Сводки дефицитов» по статусу (ключ из V12_CONFIG.COLORS).
+ * Единый источник правды для раскраски — используется и полным пересчётом
+ * (v12ApplyDeficitColors), и точечным обновлением строки
+ * (v12ApplyDeficitColorForRow), чтобы логика не расходилась.
+ *
+ *   «Не заказано» / «Заказано частично» → красный (дефицит не покрыт заказом);
+ *   «Ожидание поставки (в Срок)» → жёлтый; «(Опаздывает)» → оранжевый;
+ *   «Ошибка данных» → серый; иначе → белый.
+ */
+function v12DeficitStatusColor(status) {
+  const C = V12_CONFIG.COLORS;
+  if (status === "Ошибка данных") {
+    return C.GRAY;
+  }
+  if (status === "Не заказано" || status === "Заказано частично") {
+    return C.RED;
+  }
+  if (status === "Ожидание поставки (в Срок)") {
+    return C.YELLOW;
+  }
+  if (status === "Ожидание поставки (Опаздывает)") {
+    return C.ORANGE;
+  }
+  return C.WHITE;
+}
+
+/**
+ * Окраска строк «Сводки дефицитов» по статусу: красный (не заказано / заказано
+ * частично), жёлтый (в срок), оранжевый (опаздывает), серый (ошибка данных).
+ * Цвет берётся из v12DeficitStatusColor — единого источника правды.
  */
 function v12ApplyDeficitColors(rows) {
   if (!rows.length) {
@@ -470,17 +489,9 @@ function v12ApplyDeficitColors(rows) {
   }
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
   const D = V12_CONFIG.DEFICIT_COLUMNS;
-  const C = V12_CONFIG.COLORS;
-  const colors = rows.map(function (r) {
-    const status = r[D.STATUS - 1];
-    if (status === "Ожидание поставки (в Срок)") return C.YELLOW;
-    if (status === "Ожидание поставки (Опаздывает)") return C.ORANGE;
-    if (status === "Заказано частично") return C.RED;
-    if (status === "Ошибка данных") return C.GRAY;
-    return C.WHITE;
-  });
-  const background = colors.map(function (c) {
-    return new Array(V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY).fill(c);
+  const background = rows.map(function (r) {
+    const color = v12DeficitStatusColor(r[D.STATUS - 1]);
+    return new Array(V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY).fill(color);
   });
   sheet.getRange(2, 1, rows.length, V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY).setBackgrounds(background);
 }
