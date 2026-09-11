@@ -74,6 +74,8 @@ function makeSheet(name, header) {
         clearDataValidations() { return this; }, setDataValidation() { return this; },
         setBackgrounds() { return this; }, setBackground() { return this; }, setFontWeight() { return this; }, setNotes() { return this; },
         setWrapStrategy() { globalThis.__wrapCalls = (globalThis.__wrapCalls || 0) + 1; return this; },
+        setHorizontalAlignment(a) { (globalThis.__alignCalls = globalThis.__alignCalls || []).push({ sheet: self._name, col: col, value: a }); return this; },
+        setVerticalAlignment(a) { (globalThis.__vAlignCalls = globalThis.__vAlignCalls || []).push({ sheet: self._name, value: a }); return this; },
         createFilter() {
           const filter = {
             getRange() {
@@ -129,7 +131,8 @@ const files = [
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")
   + "\n;globalThis.__V12 = { V12_CONFIG: V12_CONFIG, v12BuildPositionRow: v12BuildPositionRow,"
   + " v12MigrateSupplySchema: v12MigrateSupplySchema, v12RefreshSupply: v12RefreshSupply,"
-  + " v12BuildSupplyProjectsText: v12BuildSupplyProjectsText, v12FormatSupplySheet: v12FormatSupplySheet };";
+  + " v12BuildSupplyProjectsText: v12BuildSupplyProjectsText, v12FormatSupplySheet: v12FormatSupplySheet,"
+  + " v12ApplyTableAlignment: v12ApplyTableAlignment };";
 
 vm.runInThisContext(src, { filename: "v12-bundle.js" });
 const N = globalThis.__V12;
@@ -380,6 +383,30 @@ console.log("=== S10: автофильтр на СНАБЖЕНИЕ (сортир
   check("фильтр пересоздан под новый диапазон", globalThis.__filterCreateCalls, 2);
   check("старый фильтр удалён", globalThis.__filterRemoveCalls, 1);
   check("новая последняя строка = 3", SP.getFilter().getRange().getLastRow(), 3);
+}
+
+console.log("=== S11: выравнивание (центр для количеств/ед.изм./дат, слева для наименований) ===");
+{
+  makeSheet(C.SHEETS.SUPPLY, CANON);
+  globalThis.__alignCalls = [];
+  globalThis.__vAlignCalls = [];
+  N.v12ApplyTableAlignment();
+  const name = C.SHEETS.SUPPLY;
+  const sup = globalThis.__alignCalls.filter(function (a) { return a.sheet === name; });
+  function alignOf(col) { const e = sup.find(function (a) { return a.col === col; }); return e ? e.value : null; }
+  // Количества и ед.изм. — по центру.
+  check("Ед.изм (5) — center", alignOf(5), "center");
+  check("Всего дефицит (6) — center", alignOf(6), "center");
+  check("BOM (кол-во) (10) — center", alignOf(10), "center");
+  check("Обновлено/дата (12) — center", alignOf(12), "center");
+  // Наименования, модели, проекты — слева.
+  check("Наименование (3) — left", alignOf(3), "left");
+  check("Модель (4) — left", alignOf(4), "left");
+  check("Проекты (11) — left", alignOf(11), "left");
+  // По вертикали — по центру.
+  const vSup = globalThis.__vAlignCalls.filter(function (v) { return v.sheet === name; });
+  check("вертикальное выравнивание = middle",
+    vSup.length > 0 && vSup.every(function (v) { return v.value === "middle"; }), true);
 }
 
 console.log("");

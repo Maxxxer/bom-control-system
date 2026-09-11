@@ -40,6 +40,7 @@ function v12EnsureAllSheets() {
   v12MigrateSupplySchema();
   v12FormatSupplySheet();
   v12FormatAllSheets();
+  v12ApplyTableAlignment();
   // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
   // строку заголовков (в т.ч. ячейку B1).
   v12InstallPickingBomFilter();
@@ -200,6 +201,62 @@ function v12FormatSupplySheet() {
   }
   // Автофильтр (сортировка/фильтр по любому столбцу) — удобство работы снабжения.
   v12EnsureSupplyFilter(Math.max(sheet.getLastRow() - 1, 0));
+}
+
+/**
+ * Колонки таблиц, содержимое которых выравнивается ПО ЦЕНТРУ (количества,
+ * ед.изм., даты, служебные статусы/чекбоксы). Остальные колонки листа
+ * (наименования, модели, проекты, коды) выравниваются СЛЕВА. По вертикали
+ * всё содержимое — по центру.
+ *
+ * Ключ — ключ листа из V12_CONFIG.SHEETS; значение — номера колонок (1-based).
+ */
+const V12_ALIGN_CENTER_COLUMNS = {
+  SUPPLY: [5, 6, 7, 8, 9, 10, 12],
+  DEFICIT_SUMMARY: [3, 7, 8, 9, 10, 11, 12, 13, 14],
+  PICKING: [3, 7, 8, 9, 10, 11, 12],
+  WORKING_BOM: [3, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  DASHBOARD: [1, 4, 5, 6, 7, 8, 9, 11],
+  MATERIAL_STATE: [5, 6, 7, 8, 9],
+  ARCHIVE: [1, 4, 8, 9, 10, 12]
+};
+
+/**
+ * Единое выравнивание таблиц V12:
+ *   - количества и ед.изм. — по центру (по горизонтали и вертикали);
+ *   - наименования, модели, проекты — слева, по центру по вертикали;
+ *   - даты — по центру (по горизонтали и вертикали).
+ *
+ * Применяется при инициализации (v12EnsureAllSheets) на всю высоту листа —
+ * форматирование сохраняется при перезаписи значений (clearContent не сбрасывает
+ * выравнивание), поэтому повторный вызов на каждом пересчёте не нужен.
+ */
+function v12ApplyTableAlignment() {
+  Object.keys(V12_ALIGN_CENTER_COLUMNS).forEach(function (key) {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS[key]);
+    if (!sheet) {
+      return;
+    }
+    const cols = V12_CONFIG.COLUMN_COUNT[key];
+    const dataRows = Math.max(sheet.getMaxRows() - 1, 1);
+    const centerCols = V12_ALIGN_CENTER_COLUMNS[key];
+    for (let c = 1; c <= cols; c++) {
+      const align = centerCols.indexOf(c) !== -1 ? "center" : "left";
+      const range = sheet.getRange(2, c, dataRows, 1);
+      if (typeof range.setHorizontalAlignment === "function") {
+        range.setHorizontalAlignment(align);
+      }
+    }
+    const body = sheet.getRange(2, 1, dataRows, cols);
+    if (typeof body.setVerticalAlignment === "function") {
+      body.setVerticalAlignment("middle");
+    }
+    // Заголовок — по центру по вертикали.
+    const header = sheet.getRange(1, 1, 1, cols);
+    if (typeof header.setVerticalAlignment === "function") {
+      header.setVerticalAlignment("middle");
+    }
+  });
 }
 
 /**
