@@ -909,8 +909,7 @@ function v12RefreshSupply(posData, revDates) {
 
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
-    const lc = r[P.LIFECYCLE_STATE - 1];
-    if (lc === V12_CONFIG.LIFECYCLE_STATE.ARCHIVED || lc === V12_CONFIG.LIFECYCLE_STATE.REMOVED) {
+    if (!v12IsSupplyRowActive(r)) {
       continue;
     }
     const key = v12BuildMaterialKey({
@@ -950,6 +949,30 @@ function v12RefreshSupply(posData, revDates) {
   if (rows.length) {
     v12WriteRows("SUPPLY", 2, rows);
   }
+}
+
+/**
+ * Включена ли позиция в лист СНАБЖЕНИЕ.
+ *
+ * В снабжение попадают только позиции с непокрытым дефицитом. Позиция
+ * «закрыта» (выпадает из листа), когда снабжение отметило «Реальную поставку» —
+ * её обработчик проставляет realDeliveryQty = required, т.е. материал
+ * обеспечен (reserved + realDelivery >= required), либо когда дефицита нет.
+ */
+function v12IsSupplyRowActive(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const lc = r[P.LIFECYCLE_STATE - 1];
+  if (lc === V12_CONFIG.LIFECYCLE_STATE.ARCHIVED || lc === V12_CONFIG.LIFECYCLE_STATE.REMOVED) {
+    return false;
+  }
+  if (toNumber(r[P.DEFICIT_QTY - 1]) <= 0) {
+    return false;
+  }
+  const available = toNumber(r[P.RESERVED_QTY - 1]) + toNumber(r[P.REAL_DELIVERY_QTY - 1]);
+  if (available >= toNumber(r[P.REQUIRED_QTY - 1])) {
+    return false;   // материал обеспечен (отмечена «Реальная поставка»)
+  }
+  return true;
 }
 
 /**

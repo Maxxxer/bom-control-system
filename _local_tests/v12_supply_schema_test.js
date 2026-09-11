@@ -14,7 +14,10 @@
  *     по строке на проект «<дефицит> - <номер> - <крайняя дата поставки>»,
  *     отсортировано по дате по возрастанию (самый ранний сверху); при
  *     нескольких BOM одного проекта дефицит суммируется, дата — самая поздняя;
- *   - v12FormatSupplySheet() не падает и настраивает wrap/ширину колонки.
+ *   - v12FormatSupplySheet() не падает и настраивает wrap/ширину колонки;
+ *   - закрытие позиций: в СНАБЖЕНИЕ попадают только позиции с непокрытым
+ *     дефицитом; после полной поставки (чекбокс «Реальная поставка» →
+ *     realDelivery = required) позиция и весь материал выпадают из листа.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script
  * (лежит в _local_tests/ и исключён через .claspignore).
@@ -270,6 +273,59 @@ console.log("=== S7: v12FormatSupplySheet настраивает wrap/ширин
   N.v12FormatSupplySheet();
   check("wrap применён (>=1)", globalThis.__wrapCalls >= 1, true);
   check("ширина колонки применена (>=1)", globalThis.__colWidthCalls >= 1, true);
+}
+
+console.log("=== S8: закрытие по поставке (только позиции с непокрытым дефицитом) ===");
+{
+  const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  // C-A: дефицита нет (reserved == required) — не попадает.
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 1, code: "C-A", name: "M-A", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 10, deadline: "2026-09-30"
+  }, "AAA-100:C-A", 1, {}));
+  // C-B: частичная поставка (4 < дефицита 10) — остаётся.
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 2, code: "C-B", name: "M-B", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-30"
+  }, "AAA-100:C-B", 1, { realDeliveryQty: 4 }));
+  // C-C: полная поставка (10 == required) — «Реальная поставка» отмечена — выпадает.
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 3, code: "C-C", name: "M-C", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-30"
+  }, "AAA-100:C-C", 1, { realDeliveryQty: 10 }));
+
+  N.v12RefreshSupply();
+
+  const S = C.SUPPLY_COLUMNS;
+  check("в СНАБЖЕНИИ 1 материал (только частично обеспеченный)", SP.getLastRow() - 1, 1);
+  check("материал = C-B", SP._data[1][S.MATERIAL_KEY - 1], "C-B");
+  check("«Всего дефицит» = 10 (C-B)", SP._data[1][S.TOTAL_DEFICIT - 1], 10);
+}
+
+console.log("=== S9: закрытый проект выпадает из колонки «Проекты» ===");
+{
+  const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  // Проект AAA: поставка закрыта (realDelivery = required) — выпадает.
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-30"
+  }, "AAA-100:C1", 1, { realDeliveryQty: 10 }));
+  // Проект BBB: дефицит 5, поставки нет — остаётся.
+  PS._data.push(N.v12BuildPositionRow("BBB-200", {
+    bomName: "BBB-200", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-30"
+  }, "BBB-200:C1", 1, { expectedDate: "2026-09-05" }));
+
+  N.v12RefreshSupply();
+  const S = C.SUPPLY_COLUMNS;
+  check("материал C1 остаётся (есть незакрытый проект)", SP._data.length, 2);
+  check("в «Проекты» только незакрытый проект",
+    SP._data[1][S.PROJECTS - 1], "5 - BBB - 05.09.2026");
+  check("«Всего дефицит» = 5", SP._data[1][S.TOTAL_DEFICIT - 1], 5);
 }
 
 console.log("");
