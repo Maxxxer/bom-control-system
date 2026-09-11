@@ -64,7 +64,7 @@ function v12RefreshProjections() {
   v12RefreshDeficitSummary(posData);
   v12RefreshPicking(posData, revDates);
   v12RefreshWorkingBOM(posData);
-  v12RefreshSupply(posData, revDates);
+  v12RefreshSupply(posData);
   v12RefreshDashboard(posData, revDates, excluded);
 }
 
@@ -895,16 +895,13 @@ function v12InstallWorkingBomCheckboxes(rowCount) {
  * СНАБЖЕНИЕ (SUPPLY): агрегация по materialKey (ТЗ №68–71).
  *
  * Колонка «Проекты» перечисляет проекты, использующие материал, в формате
- * «<номер проекта> - <крайняя дата поставки>» (по строке на проект),
- * отсортированные по дате поставки по возрастанию (самый ранний сверху).
- *
- * revDates (опц.) — карта дат создания BOM (v12BuildRevisionDateMap),
- * передаётся из v12RefreshProjections, чтобы не читать BOM_REVISION повторно.
+ * «<дефицит> - <номер проекта> - <крайний срок>» (по строке на проект),
+ * отсортированные по крайнему сроку по возрастанию (самый ранний сверху).
+ * Для проекта берётся самый РАННИЙ крайний срок его позиций.
  */
-function v12RefreshSupply(posData, revDates) {
+function v12RefreshSupply(posData) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const data = posData || v12ReadSheet("POSITION_STATE");
-  const bomCreatedDates = revDates || v12BuildRevisionDateMap();
   const agg = {};
 
   for (let i = 1; i < data.length; i++) {
@@ -935,7 +932,7 @@ function v12RefreshSupply(posData, revDates) {
     a.realDelivery += toNumber(r[P.REAL_DELIVERY_QTY - 1]);
     a.uncovered += toNumber(r[P.UNCOVERED_NEED - 1]);
     a.bomCount += 1;
-    v12AccumulateSupplyProject(a.projects, r, bomCreatedDates);
+    v12AccumulateSupplyProject(a.projects, r);
   }
 
   const rows = Object.keys(agg).map(function (key) {
@@ -1008,12 +1005,12 @@ function v12IsSupplyRowActive(r) {
 /**
  * Учесть проект позиции в карте проектов материала (колонка «Проекты»).
  *
- * projectsMap: { <код проекта>: { project, date, deficit } }. Для каждого
- * проекта суммируется дефицит его позиций и хранится «крайняя» (самая поздняя)
- * дата поставки — по ней затем идёт сортировка проектов. Проекты без кода
- * (пустое имя BOM) не учитываются.
+ * projectsMap: { <код проекта>: { project, deadline, deficit } }. Для каждого
+ * проекта суммируется дефицит его позиций и хранится САМЫЙ РАННИЙ крайний срок
+ * (самое жёсткое ограничение проекта) — по нему затем идёт сортировка проектов.
+ * Проекты без кода (пустое имя BOM) не учитываются.
  */
-function v12AccumulateSupplyProject(projectsMap, r, bomCreatedDates) {
+function v12AccumulateSupplyProject(projectsMap, r) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const project = v12ExtractBomProjectCode(r[P.BOM_NAME - 1]);
   if (!project) {
@@ -1021,24 +1018,21 @@ function v12AccumulateSupplyProject(projectsMap, r, bomCreatedDates) {
   }
   let entry = projectsMap[project];
   if (!entry) {
-    entry = { project: project, date: "", deficit: 0 };
+    entry = { project: project, deadline: "", deficit: 0 };
     projectsMap[project] = entry;
   }
   entry.deficit += toNumber(r[P.DEFICIT_QTY - 1]);
-  const date = v12PickingDeliveryDate(
-    r,
-    bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]
-  );
-  if (v12IsLaterDate(date, entry.date)) {
-    entry.date = date;
+  const deadline = v12FormatDateOnly(r[P.DEADLINE - 1]);
+  if (v12IsEarlierDate(deadline, entry.deadline)) {
+    entry.deadline = deadline;
   }
 }
 
 /**
- * true, если date строго позже than. Пустая/нераспознанная date не считается
- * «позже» (не затирает уже сохранённую дату), пустая than — считается.
+ * true, если date строго раньше than. Пустая/нераспознанная date не считается
+ * «раньше» (не затирает уже сохранённый срок), пустая than — считается.
  */
-function v12IsLaterDate(date, than) {
+function v12IsEarlierDate(date, than) {
   const d = v12ToDate(date);
   if (!d) {
     return false;
@@ -1047,22 +1041,23 @@ function v12IsLaterDate(date, than) {
   if (!t) {
     return true;
   }
-  return d.getTime() > t.getTime();
+  return d.getTime() < t.getTime();
 }
 
 /**
  * Текст колонки «Проекты»: по строке на проект в формате
- * «<дефицит> - <номер проекта> - <дата>» (пример: «4 - 1234.АБВ - 05.09.2026»).
+ * «<дефицит> - <номер проекта> - <крайний срок>»
+ * (пример: «4 - 1234.АБВ - 20.09.2026»).
  *
- * Сортировка по дате поставки по возрастанию (самый ранний проект сверху);
- * проекты без распознанной даты — в конце (в порядке кода проекта), без даты.
+ * Сортировка по крайнему сроку по возрастанию (самый ранний проект сверху);
+ * проекты без распознанного срока — в конце (в порядке кода проекта).
  * Формат даты — dd.MM.yyyy.
  */
 function v12BuildSupplyProjectsText(projectsMap) {
   const list = Object.keys(projectsMap).map(function (k) { return projectsMap[k]; });
   list.sort(function (a, b) {
-    const da = v12ToDate(a.date);
-    const db = v12ToDate(b.date);
+    const da = v12ToDate(a.deadline);
+    const db = v12ToDate(b.deadline);
     const ta = da ? da.getTime() : Infinity;
     const tb = db ? db.getTime() : Infinity;
     if (ta !== tb) {
@@ -1071,9 +1066,9 @@ function v12BuildSupplyProjectsText(projectsMap) {
     return String(a.project).localeCompare(String(b.project), "ru");
   });
   return list.map(function (p) {
-    const d = v12ToDate(p.date);
-    return d
-      ? (p.deficit + " - " + p.project + " - " + v12FormatDateOnly(d))
+    const dl = v12FormatDateOnly(p.deadline);
+    return dl
+      ? (p.deficit + " - " + p.project + " - " + dl)
       : (p.deficit + " - " + p.project);
   }).join("\n");
 }

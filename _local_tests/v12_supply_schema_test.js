@@ -11,9 +11,10 @@
  *     схемы (до появления «Проекты»);
  *   - идемпотентность миграции (повторный запуск на корректном листе — no-op);
  *   - запись проекции v12RefreshSupply(): 12 колонок; кол. 11 = «Проекты» —
- *     по строке на проект «<дефицит> - <номер> - <крайняя дата поставки>»,
- *     отсортировано по дате по возрастанию (самый ранний сверху); при
- *     нескольких BOM одного проекта дефицит суммируется, дата — самая поздняя;
+ *     по строке на проект «<дефицит> - <номер> - <крайний срок>»,
+ *     отсортировано по крайнему сроку по возрастанию (самый ранний сверху);
+ *     при нескольких BOM одного проекта дефицит суммируется, а срок берётся
+ *     САМЫЙ РАННИЙ (самое жёсткое ограничение проекта);
  *   - v12FormatSupplySheet() не падает и настраивает wrap/ширину колонки;
  *   - закрытие позиций: в СНАБЖЕНИЕ попадают только позиции с непокрытым
  *     дефицитом; после полной поставки (чекбокс «Реальная поставка» →
@@ -227,15 +228,15 @@ console.log("=== S4: v12RefreshSupply пишет 12 колонок + «Прое�
   const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
   const PS = sheets[C.SHEETS.POSITION_STATE];
   PS._data = [C.HEADERS.POSITION_STATE.slice()];
-  // Один материал (код C1) в двух проектах. Даты поставки = EXPECTED_DATE (нет резерва/поставки):
-  // BBB-200 -> 05.09.2026, AAA-100 -> 10.09.2026.
+  // Один материал (код C1) в двух проектах. Крайние сроки: BBB -> 20.09.2026,
+  // AAA -> 25.09.2026 (строки проектов сортируются по сроку, самый ранний сверху).
   PS._data.push(N.v12BuildPositionRow("BBB-200", {
     bomName: "BBB-200", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
     requiredQty: 5, reservedQty: 0, deadline: "2026-09-20"
   }, "BBB-200:C1", 1, { expectedDate: "2026-09-05" }));
   PS._data.push(N.v12BuildPositionRow("AAA-100", {
     bomName: "AAA-100", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
-    requiredQty: 10, reservedQty: 0, deadline: "2026-09-20"
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-25"
   }, "AAA-100:C1", 1, { expectedDate: "2026-09-10" }));
 
   N.v12RefreshSupply();
@@ -247,41 +248,42 @@ console.log("=== S4: v12RefreshSupply пишет 12 колонок + «Прое�
   check("кол. 1 = Material Key", row[S.MATERIAL_KEY - 1], "C1");
   check("кол. 6 = «Всего дефицит» = 15", row[S.TOTAL_DEFICIT - 1], 15);
   check("кол. 10 = BOM (кол-во) = 2", row[S.BOM_COUNT - 1], 2);
-  check("кол. 11 = «Проекты»: <дефицит> - <проект> - <дата>, ранний сверху",
-    row[S.PROJECTS - 1], "5 - BBB - 05.09.2026\n10 - AAA - 10.09.2026");
+  check("кол. 11 = «Проекты»: <дефицит> - <проект> - <крайний срок>, ранний сверху",
+    row[S.PROJECTS - 1], "5 - BBB - 20.09.2026\n10 - AAA - 25.09.2026");
   check("кол. 12 = «Обновлено» (Date)", row[S.UPDATED_AT - 1] instanceof Date, true);
 }
 
-console.log("=== S5: несколько BOM одного проекта -> берётся самая поздняя дата ===");
+console.log("=== S5: несколько BOM одного проекта -> берётся САМЫЙ РАННИЙ срок ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
   const PS = sheets[C.SHEETS.POSITION_STATE];
   PS._data = [C.HEADERS.POSITION_STATE.slice()];
-  // Проект AAA в двух BOM: сроки 10.09 и 25.09 -> «крайняя» = 25.09.
+  // Проект AAA в двух BOM: сроки 25.09 и 10.09 -> берётся САМЫЙ РАННИЙ = 10.09
+  // (самое жёсткое ограничение проекта).
   PS._data.push(N.v12BuildPositionRow("AAA-100", {
     bomName: "AAA-100", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
-    requiredQty: 5, reservedQty: 0, deadline: "2026-09-30"
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-25"
   }, "AAA-100:C1", 1, { expectedDate: "2026-09-10" }));
   PS._data.push(N.v12BuildPositionRow("AAA-200", {
     bomName: "AAA-200", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
-    requiredQty: 5, reservedQty: 0, deadline: "2026-09-30"
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-10"
   }, "AAA-200:C1", 1, { expectedDate: "2026-09-25" }));
 
   N.v12RefreshSupply();
   const S = C.SUPPLY_COLUMNS;
-  check("один проект, дефицит суммирован, крайняя дата",
-    SP._data[1][S.PROJECTS - 1], "10 - AAA - 25.09.2026");
+  check("один проект, дефицит суммирован, самый ранний срок",
+    SP._data[1][S.PROJECTS - 1], "10 - AAA - 10.09.2026");
 }
 
 console.log("=== S6: v12BuildSupplyProjectsText сортирует и форматирует ===");
 {
   const txt = N.v12BuildSupplyProjectsText({
-    "BBB": { project: "BBB", date: "2026-09-05", deficit: 5 },
-    "AAA": { project: "AAA", date: "2026-09-10", deficit: 10 },
-    "CCC": { project: "CCC", date: "", deficit: 7 }
+    "BBB": { project: "BBB", deadline: "2026-09-20", deficit: 5 },
+    "AAA": { project: "AAA", deadline: "2026-09-10", deficit: 10 },
+    "CCC": { project: "CCC", deadline: "", deficit: 7 }
   });
-  check("«<дефицит> - <проект> - <дата>», сортировка, без-даты в конец",
-    txt, "5 - BBB - 05.09.2026\n10 - AAA - 10.09.2026\n7 - CCC");
+  check("«<дефицит> - <проект> - <крайний срок>», сортировка, без-срока в конец",
+    txt, "10 - AAA - 10.09.2026\n5 - BBB - 20.09.2026\n7 - CCC");
 }
 
 console.log("=== S7: v12FormatSupplySheet настраивает wrap/ширину ===");
@@ -342,8 +344,8 @@ console.log("=== S9: закрытый проект выпадает из кол�
   N.v12RefreshSupply();
   const S = C.SUPPLY_COLUMNS;
   check("материал C1 остаётся (есть незакрытый проект)", SP._data.length, 2);
-  check("в «Проекты» только незакрытый проект",
-    SP._data[1][S.PROJECTS - 1], "5 - BBB - 05.09.2026");
+  check("в «Проекты» только незакрытый проект (крайний срок 30.09)",
+    SP._data[1][S.PROJECTS - 1], "5 - BBB - 30.09.2026");
   check("«Всего дефицит» = 5", SP._data[1][S.TOTAL_DEFICIT - 1], 5);
 }
 
