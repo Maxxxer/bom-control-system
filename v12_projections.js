@@ -922,7 +922,7 @@ function v12RefreshSupply(posData) {
         model: r[P.MODEL - 1],
         unit: r[P.UNIT - 1],
         deficit: 0, ordered: 0,
-        realDelivery: 0, uncovered: 0, bomCount: 0,
+        realDelivery: 0, uncovered: 0,
         projects: {}
       };
     }
@@ -931,7 +931,6 @@ function v12RefreshSupply(posData) {
     a.ordered += toNumber(r[P.ORDERED_QTY - 1]);
     a.realDelivery += toNumber(r[P.REAL_DELIVERY_QTY - 1]);
     a.uncovered += toNumber(r[P.UNCOVERED_NEED - 1]);
-    a.bomCount += 1;
     v12AccumulateSupplyProject(a.projects, r);
   }
 
@@ -939,7 +938,7 @@ function v12RefreshSupply(posData) {
     const a = agg[key];
     return [key, a.code, a.name, a.model, a.unit,
       a.deficit, a.ordered, a.realDelivery,
-      a.uncovered, a.bomCount, v12BuildSupplyProjectsText(a.projects), new Date()];
+      a.uncovered, v12BuildSupplyProjectsText(a.projects)];
   });
 
   v12ClearBody("SUPPLY");
