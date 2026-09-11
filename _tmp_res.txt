@@ -1,5 +1,6 @@
-node --check: файлов=20 ошибок=0
+node --check: файлов=21 ошибок=0
 _local_tests/v12_delivery_test.js exit=0 fails=0 last=ALL TESTS PASSED (final-3)
 _local_tests/v12_picking_schema_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_audit_fixes_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_audit_fixes2_test.js exit=0 fails=0 last=ALL TESTS PASSED
+_local_tests/v12_queue_test.js exit=0 fails=0 last=ALL TESTS PASSED

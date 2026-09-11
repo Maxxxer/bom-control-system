@@ -24,6 +24,7 @@ function v12OnOpen() {
     .createMenu("BOM CONTROL V12")
     .addItem("🔄 Полная синхронизация", "v12RunFullSync")
     .addItem("📊 Обновить проекции", "v12RefreshAllProjections")
+    .addItem("⏱ Обработать очередь правок", "v12ScheduledQueueDrain")
     .addSeparator()
     .addItem("↩ Вернуть из архива", "v12PromptReturnFromArchive")
     .addSeparator()
@@ -79,6 +80,8 @@ function v12Diagnostic() {
     if (bomSheet) {
       result.boms = Math.max(0, bomSheet.getLastRow() - 1);
     }
+    // Очередь правок (Вариант D): число необработанных намерений.
+    result.pendingEdits = v12CountPendingEdits();
   } catch (e) {
     result.errors.push(e.message);
   }

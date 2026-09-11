@@ -31,7 +31,7 @@ function v12LogHistory(positionId, event, oldValue, newValue, comment) {
   row[H.EVENT - 1] = event || "";
   row[H.OLD_VALUE - 1] = (oldValue === undefined || oldValue === null) ? "" : oldValue;
   row[H.NEW_VALUE - 1] = (newValue === undefined || newValue === null) ? "" : newValue;
-  row[H.USER - 1] = getCurrentUser();
+  row[H.USER - 1] = v12CurrentActor();
   row[H.COMMENT - 1] = comment || "";
   appendRow(sheet, row);
 }
@@ -51,7 +51,7 @@ function v12LogEvent(eventType, positionId, bom, data) {
   row[E.EVENT_TYPE - 1] = eventType || "";
   row[E.POSITION_ID - 1] = positionId || "";
   row[E.BOM - 1] = bom || "";
-  row[E.USER - 1] = getCurrentUser();
+  row[E.USER - 1] = v12CurrentActor();
   row[E.DATA - 1] = (data === undefined || data === null) ? "" : (typeof data === "string" ? data : JSON.stringify(data));
   appendRow(sheet, row);
 }

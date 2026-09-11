@@ -90,7 +90,8 @@ const files = [
   "v12_config.js", "utils.js", "sheet_service.js", "v12_utils.js", "v12_calculate.js",
   "v12_position_state.js", "v12_material_state.js", "v12_audit.js", "v12_roles.js",
   "v12_source.js", "v12_sheet_service.js", "v12_projections.js", "v12_operations.js",
-  "v12_handoff.js", "v12_change_engine.js", "v12_events.js", "lock.js", "v12_trigger.js"
+  "v12_handoff.js", "v12_change_engine.js", "v12_events.js", "lock.js", "v12_trigger.js",
+  "v12_queue.js"
 ];
 
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")

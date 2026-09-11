@@ -74,7 +74,7 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
       RECEIVED_BY_PRODUCTION: true,
       RECEIVED_BY_PRODUCTION_QTY: required,
       RECEIVED_BY_PRODUCTION_AT: new Date(),
-      RECEIVED_BY_PRODUCTION_USER: getCurrentUser()
+      RECEIVED_BY_PRODUCTION_USER: v12CurrentActor()
     }, index);
 
     // Архивация позиции

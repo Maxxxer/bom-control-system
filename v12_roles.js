@@ -35,7 +35,7 @@ function v12GetCurrentUserRole() {
   if (Object.keys(V12_ROLE_MAP).length === 0) {
     return V12_CONFIG.ROLES.ADMIN;
   }
-  return v12GetUserRole(getCurrentUser());
+  return v12GetUserRole(v12CurrentActor());
 }
 
 /**
@@ -61,7 +61,7 @@ function v12CanEditField(role, action) {
  */
 function v12RequireRole(role, action) {
   if (!v12CanEditField(role, action)) {
-    const user = getCurrentUser();
+    const user = v12CurrentActor();
     throw new Error("Недостаточно прав для роли '" + role + "' на действие '" + action + "' (пользователь: " + user + ")");
   }
 }

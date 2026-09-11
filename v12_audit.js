@@ -55,7 +55,7 @@ function v12Audit(entry) {
   _v12AuditBuffer.push([
     new Date(),
     e.operationId || generateEventId(),
-    e.actor || getCurrentUser(),
+    e.actor || v12CurrentActor(),
     e.action || "",
     e.bomId || "",
     e.positionId || "",

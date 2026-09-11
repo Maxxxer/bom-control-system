@@ -82,7 +82,8 @@ const files = [
   "v12_config.js", "utils.js", "sheet_service.js", "v12_utils.js", "v12_calculate.js",
   "v12_position_state.js", "v12_material_state.js", "v12_audit.js", "v12_roles.js",
   "v12_source.js", "v12_sheet_service.js", "v12_projections.js", "v12_operations.js",
-  "v12_handoff.js", "v12_change_engine.js", "v12_events.js", "lock.js", "v12_trigger.js"
+  "v12_handoff.js", "v12_change_engine.js", "v12_events.js", "lock.js", "v12_trigger.js",
+  "v12_queue.js"
 ];
 
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")
@@ -103,7 +104,7 @@ globalThis.v12MarkReceivedByProduction = function (positionId, sourceUI, skipRef
   return { status: "ok" };
 };
 
-["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "PICKING", "WORKING_BOM", "EVENT_LOG"]
+["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "PICKING", "WORKING_BOM", "EVENT_LOG", "PENDING_EDITS"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
 const PS = sheets[C.SHEETS.POSITION_STATE];

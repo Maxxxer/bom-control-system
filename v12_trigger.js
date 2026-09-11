@@ -19,7 +19,7 @@
  * и сторонние триггеры. Теперь удаляются только обработчики V12.
  */
 function removeV11Triggers() {
-  const ours = { v12OnEdit: true, v12ScheduledUpdate: true };
+  const ours = { v12OnEdit: true, v12ScheduledUpdate: true, v12ScheduledQueueDrain: true };
   ScriptApp.getProjectTriggers().forEach((trigger) => {
     if (ours[trigger.getHandlerFunction()]) {
       ScriptApp.deleteTrigger(trigger);
@@ -40,6 +40,11 @@ function v12InstallTriggers() {
   ScriptApp.newTrigger("v12ScheduledUpdate")
     .timeBased()
     .everyHours(1)
+    .create();
+  // Слив очереди правок чекбоксов (Вариант D): раз в минуту.
+  ScriptApp.newTrigger("v12ScheduledQueueDrain")
+    .timeBased()
+    .everyMinutes(V12_CONFIG.SETTINGS.QUEUE_DRAIN_MINUTES)
     .create();
 }
 
@@ -71,6 +76,17 @@ function v12OnEdit(e) {
       return;
     }
 
+    // === Быстрый путь для чекбоксов (очередь правок, Вариант D) ==========
+    // onEdit для чекбоксов ОТБОРКИ / WORKING BOM / Сводки только ФИКСИРУЕТ
+    // намерение в PENDING_EDITS и выходит — без лока и без тяжёлой работы.
+    // Применение делает фоновый триггер v12ScheduledQueueDrain (раз в минуту)
+    // либо немедленный слив (v12TryInlineDrain), если лок свободен. Это
+    // устраняет окно «Система занята обновлением» и сброс галочки.
+    if (v12CaptureCheckboxEdit(e, name)) {
+      v12TryInlineDrain();
+      return;
+    }
+
     const isSingleCell = e.range.getNumRows() === 1 && e.range.getNumColumns() === 1;
     // В «Сводке дефицитов» и «Отборке» поддерживаем вставку/автозаполнение
     // диапазона — обрабатываем каждую ячейку. Прочие листы — только одиночные правки.
@@ -87,14 +103,14 @@ function v12OnEdit(e) {
     // обновлении она дождётся освобождения блокировки и будет обработана.
     const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
     if (!lock) {
-      // Блокировку не удалось взять за 10 с — вероятно идёт полная синхронизация.
-      // Уведомляем пользователя и (для одиночной ячейки) откатываем правку,
-      // чтобы не осталось «применённое-но-не-записанное» состояние.
-      try {
-        SpreadsheetApp.getUi().alert("Система занята обновлением. Повторите ввод через несколько секунд.");
-      } catch (e2) {
-        // нет UI (вызов из триггера) — просто выходим
-      }
+      // Блокировку не удалось взять за 10 с — вероятно идёт полная синхронизация
+      // или слив очереди. НИКАКИХ модальных окон: тихо логируем, а для одиночной
+      // ячейки возвращаем прежнее значение, чтобы не осталось «применённое-но-
+      // не-записанное» состояние. (Чекбоксы ОТБОРКИ / WORKING BOM / Сводки этот
+      // путь больше не используют — они идут через очередь, см. выше.)
+      logSystem("v12OnEdit",
+        "Лок занят, правка отложена/откатана: " + name +
+        (e.range.getA1Notation ? " " + e.range.getA1Notation() : ""), "WARNING");
       if (isSingleCell) {
         v12RevertEdit(e);
       }

@@ -50,7 +50,8 @@ const V12_CONFIG = {
     SYSTEM_LOG: "SYSTEM_LOG",
     MATERIAL_HISTORY: "MATERIAL_HISTORY",
     BOM_REVISION: "BOM_REVISION",
-    EXCLUDED_BOMS: "EXCLUDED_BOMS"
+    EXCLUDED_BOMS: "EXCLUDED_BOMS",
+    PENDING_EDITS: "PENDING_EDITS"
   },
 
   /**
@@ -71,7 +72,8 @@ const V12_CONFIG = {
     SYSTEM_LOG: 5,
     MATERIAL_HISTORY: 7,
     BOM_REVISION: 4,
-    EXCLUDED_BOMS: 3
+    EXCLUDED_BOMS: 3,
+    PENDING_EDITS: 10
   },
 
   /**
@@ -345,6 +347,45 @@ const V12_CONFIG = {
   },
 
   /**
+   * PENDING_EDITS (10) — очередь правок чекбоксов (Вариант D).
+   *
+   * onEdit для чекбоксов ОТБОРКИ / WORKING BOM / Сводки только фиксирует
+   * намерение строкой здесь (без лока и без тяжёлой работы), а минутный
+   * триггер v12ScheduledQueueDrain применяет всё пакетно, одним пересчётом
+   * проекций. Очередь — первичный источник истины: отметка не теряется,
+   * даже если колонку чекбоксов перезапишет пересборка проекции.
+   */
+  PENDING_EDIT_COLUMNS: {
+    DATE: 1,
+    EDIT_ID: 2,
+    SOURCE: 3,
+    POSITION_ID: 4,
+    FIELD: 5,
+    VALUE: 6,
+    USER: 7,
+    STATUS: 8,
+    PROCESSED_AT: 9,
+    ERROR: 10
+  },
+
+  /**
+   * Статусы строк очереди PENDING_EDITS.
+   */
+  PENDING_STATUS: {
+    PENDING: "PENDING",
+    DONE: "DONE",
+    FAILED: "FAILED"
+  },
+
+  /**
+   * Поле намерения (FIELD) в очереди.
+   */
+  PENDING_FIELD: {
+    HANDOFF: "HANDOFF",
+    REAL_DELIVERY: "REAL_DELIVERY"
+  },
+
+  /**
    * Заголовки листов (канон: русские).
    */
   HEADERS: {
@@ -408,7 +449,11 @@ const V12_CONFIG = {
       "Пользователь", "Комментарий"
     ],
     BOM_REVISION: ["Дата создания", "BOM ID", "Ревизия", "Создал"],
-    EXCLUDED_BOMS: ["BOM ID", "Выполнено", "Дата"]
+    EXCLUDED_BOMS: ["BOM ID", "Выполнено", "Дата"],
+    PENDING_EDITS: [
+      "Дата", "Edit ID", "Источник", "Position ID", "Поле",
+      "Значение", "Пользователь", "Статус", "Обработано", "Ошибка"
+    ]
   },
 
   /**
@@ -545,14 +590,19 @@ const V12_CONFIG = {
    */
   SOURCE_UI: {
     PICKING: "PICKING",
-    WORKING_BOM: "WORKING_BOM"
+    WORKING_BOM: "WORKING_BOM",
+    DEFICIT_SUMMARY: "DEFICIT_SUMMARY"
   },
 
   SETTINGS: {
     DATE_FORMAT: "dd.MM.yyyy HH:mm",
     ENABLE_LOGGING: true,
     ENABLE_AUDIT: true,
-    LOCK_TIMEOUT: 30000
+    LOCK_TIMEOUT: 30000,
+    // Очередь правок чекбоксов (Вариант D).
+    QUEUE_DRAIN_MINUTES: 1,      // периодичность фонового слива (мин)
+    QUEUE_INLINE_DRAIN: true,    // пытаться слить сразу из onEdit, если лок свободен
+    QUEUE_PURGE_DONE_DAYS: 30    // сколько дней хранить обработанные строки (аудит)
   },
 
   /**
