@@ -1,10 +1,10 @@
 /**
  * =====================================================
- * BOM CONTROL SYSTEM V11
+ * BOM CONTROL SYSTEM V12
  *
  * FILE: utils.js
  *
- * Общие утилиты: числа, ID, пользователь, даты.
+ * Общие утилиты: числа, ID, пользователь.
  * =====================================================
  */
 
@@ -53,49 +53,4 @@ function getCurrentUser() {
   } catch (e) {
     return "unknown";
   }
-}
-
-function getCurrentUserSafe() {
-  return getCurrentUser();
-}
-
-/**
- * Является ли значение датой (Date или парсибельная строка)
- */
-function isValidDate(value) {
-  if (value === null || value === undefined || value === "") {
-    return false;
-  }
-  const d = new Date(value);
-  return !isNaN(d.getTime());
-}
-
-function toDate(value) {
-  if (!isValidDate(value)) {
-    return null;
-  }
-  return new Date(value);
-}
-
-/**
- * Нормализация значения даты для сравнения.
- * Возвращает timestamp (число) или "" — чтобы Date/строка/пусто
- * сравнивались единообразно без ложных срабатываний из-за таймзоны.
- */
-function normalizeDateValue(value) {
-  if (value === null || value === undefined || value === "") {
-    return "";
-  }
-  const d = new Date(value);
-  if (isNaN(d.getTime())) {
-    return String(value).trim();
-  }
-  return d.getTime();
-}
-
-/**
- * Пустая строка-заглушка для диапазона
- */
-function emptyArray(length) {
-  return new Array(length).fill("");
 }

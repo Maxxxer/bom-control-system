@@ -26,12 +26,10 @@
 const V12_CONFIG = {
 
   VERSION: "12.0.0",
-  SCHEMA_VERSION: "1.0.0",
 
   SYSTEM: {
     NAME: "BOM CONTROL SYSTEM V12",
-    BUILD_DATE: "2026-09-09",
-    ENVIRONMENT: "DEVELOPMENT"
+    BUILD_DATE: "2026-09-09"
   },
 
   /**
@@ -64,7 +62,7 @@ const V12_CONFIG = {
     MATERIAL_STATE: 9,
     DEFICIT_SUMMARY: 14,
     PICKING: 12,
-    WORKING_BOM: 14,
+    WORKING_BOM: 15,
     SUPPLY: 13,
     DASHBOARD: 11,
     ARCHIVE: 13,
@@ -154,8 +152,6 @@ const V12_CONFIG = {
    * DEFICIT_SUMMARY (14) — проекция для снабжения (заказ, даты, поставка).
    * Только позиции, материал которых ещё не приехал (availableForProduction < required).
    * Дефицит (кол. DEFICIT_QTY) = max(0, required − reserved).
-   * Порядок: Дефицит, Заказано, Ожидаемая поставка, Крайний срок, Реальная поставка,
-   * Непокрытая потребность, Статус. Колонки «Получено» и «Поставлено» убраны — их отмечают кладовщики/снабжение в ОТБОРКЕ.
    */
   DEFICIT_COLUMNS: {
     POSITION_ID: 1,
@@ -176,11 +172,9 @@ const V12_CONFIG = {
 
   /**
    * ОТБОРКА (PICKING) (12) — интерфейс кладовщика/производства.
-   * Колонка «Зарезервировано» убрана: кладовщику она не нужна, потребность
-   * отражена колонкой «Требуется». Колонка «Дата поставки» (EXPECTED_DATE)
-   * справа от «Состояние поставки» показывает дату поставки: для материала
-   * на складе — дату фактической поставки (REAL_DELIVERY_DATE), иначе —
-   * ожидаемую дату прихода. Колонка «Обновлено» (UPDATED_AT) убрана.
+   * Колонка «Дата поставки» (EXPECTED_DATE) справа от «Состояние поставки»
+   * показывает дату поставки: для материала на складе — дату фактической
+   * поставки (REAL_DELIVERY_DATE), иначе — ожидаемую дату прихода.
    */
   PICKING_COLUMNS: {
     POSITION_ID: 1,
@@ -198,7 +192,8 @@ const V12_CONFIG = {
   },
 
   /**
-   * WORKING BOM (14) — периодический документ на BOM (для производства).
+   * WORKING BOM (15) — периодический документ на BOM (для производства).
+   * Колонка CHECKBOX (14) — передача производству (как в ОТБОРКЕ).
    */
   WORKING_BOM_COLUMNS: {
     POSITION_ID: 1,
@@ -214,7 +209,8 @@ const V12_CONFIG = {
     AVAILABLE_FOR_PRODUCTION: 11,
     RECEIVED_BY_PRODUCTION_QTY: 12,
     PRODUCTION_STATE: 13,
-    UPDATED_AT: 14
+    CHECKBOX: 14,
+    UPDATED_AT: 15
   },
 
   /**
@@ -380,7 +376,7 @@ const V12_CONFIG = {
     WORKING_BOM: [
       "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
       "Требуется", "Зарезервировано", "Поставлено", "Доступно для производства",
-      "Передано производству", "ProductionState", "Обновлено"
+      "Передано производству", "ProductionState", "Отметка получено", "Обновлено"
     ],
     SUPPLY: [
       "Material Key", "Код", "Наименование", "Модель", "Ед.изм",
@@ -442,7 +438,6 @@ const V12_CONFIG = {
   LIFECYCLE_STATE: {
     ACTIVE: "ACTIVE",
     ARCHIVED: "ARCHIVED",
-    RETURNED: "RETURNED",
     REMOVED: "REMOVED"
   },
 
@@ -457,21 +452,12 @@ const V12_CONFIG = {
   },
 
   /**
-   * Флаги позиции (из ТЗ №15–23, №113).
+   * Флаги позиции (используются в расчётном движке).
    */
   FLAGS: {
-    NORMAL: "NORMAL",
     CHANGED: "CHANGED",
-    QUANTITY_CHANGED: "QUANTITY_CHANGED",
-    RESERVE_CHANGED: "RESERVE_CHANGED",
-    DEADLINE_CHANGED: "DEADLINE_CHANGED",
-    MATERIAL_CHANGED: "MATERIAL_CHANGED",
-    MATERIAL_REPLACED: "MATERIAL_REPLACED",
-    POSITION_ADDED: "POSITION_ADDED",
-    POSITION_DELETED: "POSITION_DELETED",
     OVER_ORDERED: "OVER_ORDERED",
-    SHORT_DELIVERY: "SHORT_DELIVERY",
-    RESERVATION_PHYSICAL_INCONSISTENCY: "RESERVATION_PHYSICAL_INCONSISTENCY"
+    SHORT_DELIVERY: "SHORT_DELIVERY"
   },
 
   /**
@@ -515,29 +501,6 @@ const V12_CONFIG = {
   },
 
   /**
-   * Цвет supplyState.
-   */
-  SUPPLY_COLOR: {
-    "NO_REQUIREMENT": "NO_REQUIREMENT",
-    "RESERVED": "GREEN",
-    "NOT_ORDERED": "RED",
-    "PARTIALLY_ORDERED": "ORANGE",
-    "ORDERED": "YELLOW",
-    "PARTIALLY_DELIVERED": "STOCK",
-    "DELIVERED": "RECEIVED"
-  },
-
-  /**
-   * Цвет productionState.
-   */
-  PRODUCTION_COLOR: {
-    "NOT_AVAILABLE": "RED",
-    "PARTIALLY_AVAILABLE": "ORANGE",
-    "READY_FOR_HANDOFF": "GREEN",
-    "RECEIVED": "RECEIVED"
-  },
-
-  /**
    * Цвет BOM-статуса дашборда.
    */
   BOM_STATUS_COLOR: {
@@ -550,24 +513,15 @@ const V12_CONFIG = {
   },
 
   /**
-   * События (V12).
+   * События (V12) — используются детектором изменений источника.
    */
   EVENTS: {
-    BOM_SYNCED: "BOM_SYNCED",
     POSITION_ADDED: "POSITION_ADDED",
     POSITION_DELETED: "POSITION_DELETED",
     QUANTITY_CHANGED: "QUANTITY_CHANGED",
     RESERVE_CHANGED: "RESERVE_CHANGED",
     DEADLINE_CHANGED: "DEADLINE_CHANGED",
-    MATERIAL_CHANGED: "MATERIAL_CHANGED",
-    MATERIAL_REPLACED: "MATERIAL_REPLACED",
-    ORDERED_CHANGED: "ORDERED_CHANGED",
-    EXPECTED_DATE_CHANGED: "EXPECTED_DATE_CHANGED",
-    REAL_DELIVERY_CHANGED: "REAL_DELIVERY_CHANGED",
-    PRODUCTION_HANDOFF: "PRODUCTION_HANDOFF",
-    RETURN_FROM_ARCHIVE: "RETURN_FROM_ARCHIVE",
-    WAREHOUSE_QTY_CHANGED: "WAREHOUSE_QTY_CHANGED",
-    SYSTEM_ERROR: "SYSTEM_ERROR"
+    MATERIAL_CHANGED: "MATERIAL_CHANGED"
   },
 
   /**
@@ -592,24 +546,11 @@ const V12_CONFIG = {
     WORKING_BOM: "WORKING_BOM"
   },
 
-  /**
-   * Пределы и настройки.
-   */
-  LIMITS: {
-    MAX_POSITIONS: 100000,
-    MAX_BOMS: 2000
-  },
-
   SETTINGS: {
     DATE_FORMAT: "dd.MM.yyyy HH:mm",
     ENABLE_LOGGING: true,
     ENABLE_AUDIT: true,
-    ENABLE_HISTORY: true,
-    ENABLE_AUTO_WORKING_BOM: true,
-    LOCK_TIMEOUT: 30000,
-    AUTO_RESIZE_DASHBOARD: false,
-    AUTO_RESIZE_MAX_ROWS: 100,
-    LOG_BUFFER_THRESHOLD: 50
+    LOCK_TIMEOUT: 30000
   },
 
   /**

@@ -13,11 +13,17 @@
  */
 
 /**
- * Удалить все проектные триггеры (в т.ч. оставшиеся от V11).
+ * Удалить проектные триггеры V12 (только наши: v12OnEdit, v12ScheduledUpdate).
+ *
+ * Раньше функция удаляла ВСЕ триггеры проекта, что уничтожало пользовательские
+ * и сторонние триггеры. Теперь удаляются только обработчики V12.
  */
 function removeV11Triggers() {
+  const ours = { v12OnEdit: true, v12ScheduledUpdate: true };
   ScriptApp.getProjectTriggers().forEach((trigger) => {
-    ScriptApp.deleteTrigger(trigger);
+    if (ours[trigger.getHandlerFunction()]) {
+      ScriptApp.deleteTrigger(trigger);
+    }
   });
 }
 
@@ -353,7 +359,7 @@ function v12HandleDeficitRangeEdit(e) {
     if (!entry.changed) {
       return;
     }
-    v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index));
+    v12ApplyComputedToRow(rowVals);
     writes.push({ row: entry.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
     writes.push({ row: entry.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
     writes.push({ row: entry.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
@@ -450,11 +456,7 @@ function v12HandleDeficitRangeEdit(e) {
   // Один пересчёт на всю группу — обновляет статус по всем затронутым строкам
   // и синхронизирует ВСЕ проекции (в т.ч. ОТБОРКА/WORKING BOM, где отражаются
   // переданные количества и складской остаток), как и одиночная операция.
-  v12RefreshDeficitSummary();
-  v12RefreshPicking();
-  v12RefreshWorkingBOM();
-  v12RefreshSupply();
-  v12RefreshDashboard();
+  v12RefreshProjections();
   v12FlushAudit();
 }
 
@@ -529,26 +531,30 @@ function v12HandlePickingRangeEdit(e) {
 }
 
 /**
- * WORKING BOM: чекбокс передачи производству (кол. 13).
+ * WORKING BOM: чекбокс передачи производству (кол. 14).
  */
 function v12HandleWorkingBomEdit(e) {
   const W = V12_CONFIG.WORKING_BOM_COLUMNS;
   const sheet = e.range.getSheet();
   const column = e.range.getColumn();
   const row = e.range.getRow();
-  if (column !== W.PRODUCTION_STATE) {
-    // В WORKING BOM нет чекбокса передачи; обрабатываем только через производство
-    // (поле отображается readonly). Допускаем только Admin.
+  // В WORKING BOM разрешён только чекбокс передачи (кол. 14). Остальные
+  // колонки read-only для всех, кроме Admin.
+  if (column !== W.CHECKBOX || row <= 1) {
     const role = v12GetCurrentUserRole();
-    if (role !== V12_CONFIG.ROLES.ADMIN) {
+    if (column !== W.CHECKBOX && role !== V12_CONFIG.ROLES.ADMIN) {
       v12RevertEdit(e);
     }
     return;
   }
   const positionId = sheet.getRange(row, W.POSITION_ID).getValue();
-  const checked = e.range.getValue();
-  if (v12IsChecked(checked)) {
-    v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.WORKING_BOM);
+  const checked = v12IsChecked(e.range.getValue());
+  if (checked) {
+    const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.WORKING_BOM);
+    if (result && result.status === "blocked") {
+      v12RevertEdit(e);
+      try { SpreadsheetApp.getUi().alert("Не удалось передать: " + result.reason); } catch (e2) {}
+    }
   }
 }
 
@@ -566,29 +572,15 @@ function v12RevertEdit(e) {
 }
 
 /**
- * Флаг занятости (защита от рекурсии). V12 использует свою пару ключей.
- */
-function v12IsBusy() {
-  const props = PropertiesService.getScriptProperties();
-  return props.getProperty("V12_RECALCULATING") === "true";
-}
-
-function v12SetBusy(flag) {
-  PropertiesService.getScriptProperties().setProperty("V12_RECALCULATING", String(flag));
-}
-
-/**
  * Плановое обновление: полная синхронизация всех BOM + пересчёт + проекции.
  */
 function v12ScheduledUpdate() {
   const lock = acquireScriptLock();
   try {
-    v12SetBusy(true);
     v12RunFullSync();
   } catch (error) {
     logSystem("v12ScheduledUpdate", error.message, error, "ERROR");
   } finally {
-    v12SetBusy(false);
     lock.releaseLock();
     v12FlushAudit();
     flushSystemLog();
@@ -641,10 +633,14 @@ function v12SetBomDone(bomId, done) {
 function v12RunFullSync() {
   const lock = acquireScriptLock();
   try {
-    v12SetBusy(true);
     logSystem("v12RunFullSync", "Старт синхронизации V12", "INFO");
 
     const files = v12ListSourceBOMFiles();
+    // Индексы строятся ОДИН раз на весь прогон (а не на каждый BOM) — это снимает
+    // тысячи полных чтений POSITION_STATE/BOM_REGISTRY при массовой синхронизации.
+    // Новые позиции дописываются в этот же индекс внутри v12PersistNewPositions.
+    const positionIndex = v12BuildPositionIndex();
+    const registryIndex = v12BuildBomRegistryIndex();
     let totalAdded = 0;
     let totalRemoved = 0;
     let totalChanged = 0;
@@ -652,7 +648,7 @@ function v12RunFullSync() {
     files.forEach(function (file) {
       const source = v12ReadSourceBOM(file);
       if (source) {
-        const result = v12SyncBOM(source);
+        const result = v12SyncBOM(source, positionIndex, registryIndex);
         totalAdded += result.added;
         totalRemoved += result.removed;
         if (result.changed) {
@@ -670,7 +666,6 @@ function v12RunFullSync() {
     logSystem("v12RunFullSync", error.message, error, "ERROR");
     throw error;
   } finally {
-    v12SetBusy(false);
     lock.releaseLock();
     v12FlushAudit();
     flushSystemLog();

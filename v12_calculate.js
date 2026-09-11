@@ -21,21 +21,20 @@
  *
  * input: {
  *   requiredQty, reservedQty, orderedQty, realDeliveryQty,
- *   expectedDate, deadline, receivedByProduction (bool),
- *   receivedByProductionQty, warehouseQty,
+ *   receivedByProduction (bool/строка),
  *   row (сырая строка POSITION_STATE для валидации по №8)
  * }
+ *
+ * ПРИМЕЧАНИЕ: потребность/резерв/заказ/поставка — единственные входы расчёта.
+ * Параметры склада, ожидаемой даты и крайнего срока в вычислениях не
+ * участвуют (склад — контрольный, даты — только для отображения проекций).
  */
 function v12CalculatePositionState(input) {
   const required = toNumber(input.requiredQty);
   const reserved = toNumber(input.reservedQty);
   const ordered = toNumber(input.orderedQty);
   const realDelivery = toNumber(input.realDeliveryQty);
-  const warehouse = toNumber(input.warehouseQty);
-  const received = input.receivedByProduction === true;
-  const receivedQty = toNumber(input.receivedByProductionQty);
-  const expected = input.expectedDate;
-  const deadline = input.deadline;
+  const received = v12IsChecked(input.receivedByProduction);
 
   const P = V12_CONFIG.POSITION_COLUMNS;
   const row = input.row || [];
@@ -119,19 +118,4 @@ function v12CalculatePositionState(input) {
     valid: validation.valid,
     missing: validation.missing
   };
-}
-
-/**
- * Проверка готовности к передаче (ТЗ №24/№106, К3).
- */
-function v12IsReadyForHandoff(position) {
-  return Boolean(position && position.readyForHandoff === true);
-}
-
-/**
- * Проверка физического несоответствия резерва и склада (ТЗ №30).
- * raised: res = Σ резервов по materialKey, warehouse = остаток.
- */
-function v12IsReservationPhysicalInconsistent(totalReserved, warehouseQty) {
-  return totalReserved > warehouseQty;
 }

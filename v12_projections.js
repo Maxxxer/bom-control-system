@@ -18,27 +18,36 @@
  */
 
 /**
+ * Кэш «уже применённого UI» по проекциям (число строк). Позволяет не
+ * пересоздавать data-validation и conditional-formatting правила на каждом
+ * пересчёте — это дорогие вызовы уровня листа.
+ */
+const _v12ProjectionUiState = {};
+
+/**
  * Пересчитать и записать ВСЕ проекции (после массовых операций).
  */
 function v12RefreshAllProjections() {
-  v12RefreshDeficitSummary();
-  v12RefreshPicking();
-  v12RefreshWorkingBOM();
-  v12RefreshSupply();
-  v12RefreshDashboard();
+  v12RefreshProjections();
 }
 
 /**
- * Обновить только затронутые проекции после единичной операции (dirty).
+ * Пересобрать все проекции.
+ *
+ * ПРОИЗВОДИТЕЛЬНОСТЬ: подбор необработанных правок (harvest) выполняется ДО
+ * чтения POSITION_STATE, затем лист читается ОДИН раз и передаётся во все
+ * проекции. Ранее каждая проекция читала POSITION_STATE самостоятельно —
+ * 5–6 полных чтений на один пересчёт.
  */
 function v12RefreshProjections() {
-  // Лёгкая версия: пересчитываем всё (для корректности), т.к. объёмы
-  // на старте малы. Для 40k строк — перевести на dirty-флаги (К7).
-  v12RefreshDeficitSummary();
-  v12RefreshPicking();
-  v12RefreshWorkingBOM();
-  v12RefreshSupply();
-  v12RefreshDashboard();
+  v12HarvestDeficitInput();
+  v12HarvestPickingInput();
+  const posData = v12ReadSheet("POSITION_STATE");
+  v12RefreshDeficitSummary(posData);
+  v12RefreshPicking(posData);
+  v12RefreshWorkingBOM(posData);
+  v12RefreshSupply(posData);
+  v12RefreshDashboard(posData);
 }
 
 /**
@@ -72,7 +81,7 @@ function v12IsDeficitRowActive(r) {
   if (lc === V12_CONFIG.LIFECYCLE_STATE.ARCHIVED || lc === V12_CONFIG.LIFECYCLE_STATE.REMOVED) {
     return false;
   }
-  if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
+  if (v12IsChecked(r[P.RECEIVED_BY_PRODUCTION - 1])) {
     return false;
   }
   const requiredQty = toNumber(r[P.REQUIRED_QTY - 1]);
@@ -205,7 +214,7 @@ function v12HarvestDeficitInput(skip) {
         continue;
       }
 
-      v12ApplyComputedToRow(rowVals, v12GetWarehouseQtyForPositionRow(rowVals, index) + realDelta);
+      v12ApplyComputedToRow(rowVals);
       writes.push({ row: pos.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
       writes.push({ row: pos.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
       writes.push({ row: pos.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
@@ -274,9 +283,13 @@ function v12HarvestDeficitInput(skip) {
  * DEFICIT_SUMMARY: активные (не архив/не удалённые, не переданные производству)
  * позиции для снабжения. Колонки из V12_CONFIG.DEFICIT_COLUMNS.
  */
-function v12RefreshDeficitSummary() {
-  v12HarvestDeficitInput();
-  const data = v12ReadSheet("POSITION_STATE");
+function v12RefreshDeficitSummary(posData) {
+  // При вызове из v12RefreshProjections данные уже прочитаны и harvest уже
+  // выполнен — читаем лист и подбираем правки только при самостоятельном вызове.
+  if (!posData) {
+    v12HarvestDeficitInput();
+  }
+  const data = posData || v12ReadSheet("POSITION_STATE");
   const rows = [];
 
   for (let i = 1; i < data.length; i++) {
@@ -446,25 +459,6 @@ function v12ApplyDeficitColors(rows) {
 }
 
 /**
- * Человекочитаемый статус для сводки.
- */
-function v12SupplyStatusDisplay(supplyState, validation) {
-  if (validation === V12_CONFIG.VALIDATION_STATUS.ERROR) {
-    return "Ошибка данных";
-  }
-  const map = {
-    [V12_CONFIG.SUPPLY_STATE.NO_REQUIREMENT]: "Нет потребности",
-    [V12_CONFIG.SUPPLY_STATE.RESERVED]: "Зарезервировано",
-    [V12_CONFIG.SUPPLY_STATE.NOT_ORDERED]: "Не заказано",
-    [V12_CONFIG.SUPPLY_STATE.PARTIALLY_ORDERED]: "Заказано частично",
-    [V12_CONFIG.SUPPLY_STATE.ORDERED]: "Заказано",
-    [V12_CONFIG.SUPPLY_STATE.PARTIALLY_DELIVERED]: "Поставлено частично",
-    [V12_CONFIG.SUPPLY_STATE.DELIVERED]: "Поставлено"
-  };
-  return map[supplyState] || supplyState || "";
-}
-
-/**
  * Человекочитаемый статус производства (для ОТБОРКИ и WORKING BOM).
  * READY_FOR_HANDOFF → «На складе» (материал приехал и готов к отборке).
  */
@@ -482,6 +476,10 @@ function v12ProductionStatusDisplay(state) {
  * Чекбокс «Реальная поставка» (REAL_DELIVERY, кол. 12).
  */
 function v12InstallDeficitCheckboxes(rowCount) {
+  if (rowCount > 0 && _v12ProjectionUiState.deficitCheckboxes === rowCount) {
+    return; // число строк не изменилось — валидации уже стоят
+  }
+  _v12ProjectionUiState.deficitCheckboxes = rowCount;
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
   const D = V12_CONFIG.DEFICIT_COLUMNS;
   const lastRow = sheet.getLastRow();
@@ -564,7 +562,7 @@ function v12GetBomProjectCodes(data) {
     if (r[P.LIFECYCLE_STATE - 1] !== V12_CONFIG.LIFECYCLE_STATE.ACTIVE) {
       continue;
     }
-    if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
+    if (v12IsChecked(r[P.RECEIVED_BY_PRODUCTION - 1])) {
       continue;
     }
     const code = v12ExtractBomProjectCode(r[P.BOM_NAME - 1]);
@@ -621,11 +619,13 @@ function v12InstallPickingBomFilter(codes) {
  * «(Все проекты)»/пусто — без фильтра.
  * Порядок строк: BOM -> «На складе» сверху -> номер строки в BOM.
  */
-function v12RefreshPicking() {
-  v12HarvestPickingInput();
+function v12RefreshPicking(posData) {
+  if (!posData) {
+    v12HarvestPickingInput();
+  }
   const P = V12_CONFIG.POSITION_COLUMNS;
   const K = V12_CONFIG.PICKING_COLUMNS;
-  const data = v12ReadSheet("POSITION_STATE");
+  const data = posData || v12ReadSheet("POSITION_STATE");
   const codes = v12GetBomProjectCodes(data);
   // Даты создания BOM (самая ранняя ревизия) — для колонки «Дата поставки»
   // у позиций, изначально закрытых резервом BOM.
@@ -649,7 +649,7 @@ function v12RefreshPicking() {
     if (lc !== V12_CONFIG.LIFECYCLE_STATE.ACTIVE) {
       continue;
     }
-    if (r[P.RECEIVED_BY_PRODUCTION - 1] === true) {
+    if (v12IsChecked(r[P.RECEIVED_BY_PRODUCTION - 1])) {
       continue;
     }
     const bomName = r[P.BOM_NAME - 1];
@@ -735,6 +735,10 @@ function v12PickingDeliveryDate(r, bomCreatedDate) {
  * Чекбокс передачи в ОТБОРКЕ (кол. 12).
  */
 function v12InstallPickingCheckboxes(rowCount) {
+  if (rowCount > 0 && _v12ProjectionUiState.pickingCheckboxes === rowCount) {
+    return; // число строк не изменилось — валидации уже стоят
+  }
+  _v12ProjectionUiState.pickingCheckboxes = rowCount;
   const sheet = v12GetSheetByKey("PICKING");
   const K = V12_CONFIG.PICKING_COLUMNS;
   const lastRow = sheet.getLastRow();
@@ -803,10 +807,9 @@ function v12ApplyPickingColors(colors) {
 /**
  * WORKING BOM: активные позиции по всем BOM (для производства).
  */
-function v12RefreshWorkingBOM() {
+function v12RefreshWorkingBOM(posData) {
   const P = V12_CONFIG.POSITION_COLUMNS;
-  const W = V12_CONFIG.WORKING_BOM_COLUMNS;
-  const data = v12ReadSheet("POSITION_STATE");
+  const data = posData || v12ReadSheet("POSITION_STATE");
   const rows = [];
 
   for (let i = 1; i < data.length; i++) {
@@ -829,7 +832,8 @@ function v12RefreshWorkingBOM() {
       r[P.AVAILABLE_FOR_PRODUCTION - 1],
       r[P.RECEIVED_BY_PRODUCTION_QTY - 1],
       v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-      new Date()
+      false, // CHECKBOX (кол. 14)
+      new Date() // UPDATED_AT (кол. 15)
     ]);
   }
 
@@ -837,14 +841,33 @@ function v12RefreshWorkingBOM() {
   if (rows.length) {
     v12WriteRows("WORKING_BOM", 2, rows);
   }
+  v12InstallWorkingBomCheckboxes(rows.length);
+}
+
+/**
+ * Чекбокс передачи в WORKING BOM (кол. 14).
+ */
+function v12InstallWorkingBomCheckboxes(rowCount) {
+  const sheet = v12GetSheetByKey("WORKING_BOM");
+  const W = V12_CONFIG.WORKING_BOM_COLUMNS;
+  const lastRow = sheet.getLastRow();
+  const maxRows = Math.max(lastRow - 1, rowCount || 0);
+  if (maxRows <= 0) {
+    return;
+  }
+  sheet.getRange(2, W.CHECKBOX, maxRows, 1).clearDataValidations();
+  if (rowCount > 0) {
+    sheet.getRange(2, W.CHECKBOX, rowCount, 1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  }
 }
 /**
  * СНАБЖЕНИЕ (SUPPLY): агрегация по materialKey (ТЗ №68–71).
  */
-function v12RefreshSupply() {
+function v12RefreshSupply(posData) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const S = V12_CONFIG.SUPPLY_COLUMNS;
-  const data = v12ReadSheet("POSITION_STATE");
+  const data = posData || v12ReadSheet("POSITION_STATE");
   const agg = {};
 
   for (let i = 1; i < data.length; i++) {
@@ -896,9 +919,9 @@ function v12RefreshSupply() {
  * Агрегация по BOM: подсчёт позиций и BOM-статус (К2).
  * Возвращает Map<bomId, { total, collected, notOrdered, partial, late, onTime, errors, status, missing }>.
  */
-function v12AggregateBomStates() {
+function v12AggregateBomStates(posData) {
   const P = V12_CONFIG.POSITION_COLUMNS;
-  const data = v12ReadSheet("POSITION_STATE");
+  const data = posData || v12ReadSheet("POSITION_STATE");
   const bomMap = {};
 
   for (let i = 1; i < data.length; i++) {
@@ -928,7 +951,6 @@ function v12AggregateBomStates() {
     const supply = r[P.SUPPLY_STATE - 1];
     const production = r[P.PRODUCTION_STATE - 1];
     const validation = r[P.VALIDATION_STATUS - 1];
-    const received = r[P.RECEIVED_BY_PRODUCTION - 1] === true;
 
     if (validation === V12_CONFIG.VALIDATION_STATUS.ERROR) {
       b.errors++;
@@ -989,9 +1011,9 @@ function v12ComputeBomStatus(agg) {
  * DASHBOARD: сводка по BOM. Чекбокс «Выполнено» (DONE) активен только
  * при «Готов к производству» (ТЗ №53).
  */
-function v12RefreshDashboard() {
+function v12RefreshDashboard(posData) {
   const D = V12_CONFIG.DASHBOARD_COLUMNS;
-  const agg = v12AggregateBomStates();
+  const agg = v12AggregateBomStates(posData);
   const excluded = v12BuildExcludedMap();
   const bomIds = Object.keys(agg);
   const revDates = v12BuildRevisionDateMap();
@@ -1079,6 +1101,12 @@ function v12ApplyDashboardColors() {
   if (lastRow < 2) {
     return;
   }
+  // Условное форматирование — дорогая операция уровня листа. Пересоздаём
+  // правила только если число строк изменилось (иначе они уже актуальны).
+  if (_v12ProjectionUiState.dashboardColorRows === lastRow) {
+    return;
+  }
+  _v12ProjectionUiState.dashboardColorRows = lastRow;
   const range = sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.STATUS, lastRow - 1, 1);
   const rules = [];
   const BS = V12_CONFIG.BOM_STATUS;

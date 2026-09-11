@@ -26,26 +26,6 @@ function v12GetWarehouseQty(materialKey, index) {
 }
 
 /**
- * Собрать карту складских остатков: materialKey -> { warehouseQty, reservedQty, freeQty }.
- */
-function v12BuildWarehouseMap(data) {
-  const rows = data || v12ReadSheet("MATERIAL_STATE");
-  const M = V12_CONFIG.MATERIAL_COLUMNS;
-  const map = {};
-  for (let i = 1; i < rows.length; i++) {
-    const key = normalizeMaterialId(rows[i][M.MATERIAL_KEY - 1]);
-    if (key) {
-      map[key] = {
-        warehouseQty: toNumber(rows[i][M.WAREHOUSE_QTY - 1]),
-        reservedQty: toNumber(rows[i][M.RESERVED_QTY - 1]),
-        freeQty: toNumber(rows[i][M.FREE_QTY - 1])
-      };
-    }
-  }
-  return map;
-}
-
-/**
  * Агрегировать резервы по materialKey из POSITION_STATE.
  * Возвращает Map<materialKey, {reservedQty, requiredQty}>.
  */

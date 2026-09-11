@@ -27,20 +27,6 @@ function v12BuildMaterialKey(parts) {
 }
 
 /**
- * Построить стабильный ключ позиции для первичного связывания.
- * Используется только при создании positionId (не как primary key впоследствии).
- * Ключ детерминирован: code|name|model|unit (без строки и без версии).
- */
-function v12BuildPositionStableKey(row) {
-  const P = V12_CONFIG.POSITION_COLUMNS;
-  const code = String(row[P.MATERIAL_CODE - 1] || "").trim();
-  const name = String(row[P.MATERIAL_NAME - 1] || "").trim();
-  const model = String(row[P.MODEL - 1] || "").trim();
-  const unit = String(row[P.UNIT - 1] || "").trim();
-  return [code, name, model, unit].join("|");
-}
-
-/**
  * Сгенерировать уникальный positionId:
  *   bomId + ":" + materialKey, при дубликатах в рамках одного BOM —
  *   добавляется числовой суффикс (#2, #3, ...).

@@ -37,7 +37,7 @@ function v12SetOrderedQty(positionId, qty) {
 
   const row = pos.values.slice();
   row[P.ORDERED_QTY - 1] = newQty;
-  v12ApplyComputedToRow(row, v12GetWarehouseQtyForPositionRow(row, index));
+  v12ApplyComputedToRow(row);
 
   v12UpdatePosition(positionId, {
     ORDERED_QTY: newQty,
@@ -155,7 +155,7 @@ function v12SetRealDeliveryQty(positionId, qty) {
     ? (row[P.REAL_DELIVERY_DATE - 1] || new Date())
     : "";
   newRow[P.REAL_DELIVERY_DATE - 1] = newDeliveryDate;
-  v12ApplyComputedToRow(newRow, v12GetWarehouseQty(materialKey) + delta);
+  v12ApplyComputedToRow(newRow);
 
   v12UpdatePosition(positionId, {
     REAL_DELIVERY_QTY: newQty,
@@ -186,20 +186,4 @@ function v12SetRealDeliveryQty(positionId, qty) {
 
   v12RefreshProjections();
   v12FlushAudit();
-}
-
-/**
- * Вспомогательная: складской остаток для строки позиции (по materialKey).
- */
-function v12GetWarehouseQtyForPositionRow(row, index) {
-  const P = V12_CONFIG.POSITION_COLUMNS;
-  const materialKey = v12BuildMaterialKey({
-    code: row[P.MATERIAL_CODE - 1],
-    name: row[P.MATERIAL_NAME - 1],
-    model: row[P.MODEL - 1],
-    unit: row[P.UNIT - 1]
-  });
-  // ВАЖНО: сюда НЕЛЬЗЯ передавать индекс POSITION_STATE — v12GetWarehouseQty
-  // ожидает индекс MATERIAL_STATE. Без аргумента она сама строит корректный индекс.
-  return v12GetWarehouseQty(materialKey);
 }

@@ -47,7 +47,6 @@ function v12Audit(entry) {
   if (V12_CONFIG.SETTINGS.ENABLE_AUDIT === false) {
     return;
   }
-  const A = V12_CONFIG.AUDIT_COLUMNS;
   const e = entry || {};
   const oldVal = e.oldValue === undefined ? "" : (typeof e.oldValue === "string" ? e.oldValue : JSON.stringify(e.oldValue));
   const newVal = e.newValue === undefined ? "" : (typeof e.newValue === "string" ? e.newValue : JSON.stringify(e.newValue));

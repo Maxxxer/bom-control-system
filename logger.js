@@ -89,10 +89,3 @@ function flushSystemLog() {
     console.error("flushSystemLog failed: " + e.message);
   }
 }
-
-/**
- * Безопасный уровень — заглушка для совместимости.
- */
-function safeSystemLog(functionName, message, level) {
-  logSystem(functionName, message, level);
-}

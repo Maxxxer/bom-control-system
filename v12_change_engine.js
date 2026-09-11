@@ -26,7 +26,6 @@ function v12DetectBOMChanges(bomName, source, existing) {
   const addedIds = [];
   const deletedIds = [];
   const seenIds = new Set();
-  const existingIds = new Set(existing.keys());
 
   // Пройдём по строкам источника в порядке строк BOM
   const materials = (source && source.materials) || [];
@@ -221,7 +220,7 @@ function v12ApplySourceRevision(registry, changeSet, index) {
       row[P[k] - 1] = updates[pid][k];
     });
     row[P.SOURCE_REVISION - 1] = registry.sourceRevision;
-    v12ApplyComputedToRow(row, warehouseFor(pid, positionIndex));
+    v12ApplyComputedToRow(row);
 
     // Пишем и изменённые поля, и пересчитанные значения
     const changes = {};
@@ -257,37 +256,29 @@ function v12ApplySourceRevision(registry, changeSet, index) {
 }
 
 /** Вспомогательная: операционные значения по умолчанию для новой позиции. */
-function opsFor(ignored) {
+function opsFor() {
   return {
     orderedQty: 0,
     realDeliveryQty: 0,
     expectedDate: "",
     receivedByProduction: false,
-    receivedByProductionQty: 0,
-    warehouseQty: 0
+    receivedByProductionQty: 0
   };
-}
-
-/** Вспомогательная: складской остаток по materialKey (пока 0 — заполняется на этапе склада). */
-function warehouseFor(positionId, index) {
-  const pos = index.get(positionId);
-  if (!pos) {
-    return 0;
-  }
-  return 0; // физический остаток берётся из MATERIAL_STATE (этап E)
 }
 
 /**
  * Полная синхронизация одного BOM: регистрация источника + детект изменений
  * + применение ревизии. Возвращает { bomId, changed, added, removed }.
  */
-function v12SyncBOM(source) {
-  const reg = v12UpsertSourceBOM(source);
-  const positionIndex = v12BuildPositionIndex();
-  const existing = v12GetPositionsByBom(reg.bomId, positionIndex);
+function v12SyncBOM(source, positionIndex, registryIndex) {
+  // Индексы можно передать извне (массовая синхронизация) — тогда лист
+  // POSITION_STATE/BOM_REGISTRY не перечитывается на каждый BOM.
+  const idx = positionIndex || v12BuildPositionIndex();
+  const reg = v12UpsertSourceBOM(source, registryIndex);
+  const existing = v12GetPositionsByBom(reg.bomId, idx);
   const changeSet = v12DetectBOMChanges(reg.bomId, source, existing);
   if (changeSet.hasChanges) {
-    v12ApplySourceRevision(reg, changeSet, positionIndex);
+    v12ApplySourceRevision(reg, changeSet, idx);
   }
   return {
     bomId: reg.bomId,

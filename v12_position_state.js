@@ -39,9 +39,8 @@ function v12BuildPositionRow(bomId, sourceMaterial, positionId, sourceRevision, 
   const ordered = toNumber(op.orderedQty);
   const realDelivery = toNumber(op.realDeliveryQty);
   const expected = op.expectedDate || "";
-  const received = op.receivedByProduction === true;
+  const received = v12IsChecked(op.receivedByProduction);
   const receivedQty = toNumber(op.receivedByProductionQty);
-  const warehouse = toNumber(op.warehouseQty);
 
   row[P.POSITION_ID - 1] = positionId;
   row[P.BOM_ID - 1] = bomId;
@@ -75,25 +74,21 @@ function v12BuildPositionRow(bomId, sourceMaterial, positionId, sourceRevision, 
   row[P.FLAGS - 1] = "";
   row[P.UPDATED_AT - 1] = new Date();
 
-  v12ApplyComputedToRow(row, warehouse);
+  v12ApplyComputedToRow(row);
   return row;
 }
 
 /**
  * Применить вычисленные значения к строке POSITION_STATE (in-place).
  */
-function v12ApplyComputedToRow(row, warehouseQty) {
+function v12ApplyComputedToRow(row) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const calc = v12CalculatePositionState({
     requiredQty: row[P.REQUIRED_QTY - 1],
     reservedQty: row[P.RESERVED_QTY - 1],
     orderedQty: row[P.ORDERED_QTY - 1],
     realDeliveryQty: row[P.REAL_DELIVERY_QTY - 1],
-    expectedDate: row[P.EXPECTED_DATE - 1],
-    deadline: row[P.DEADLINE - 1],
-    receivedByProduction: row[P.RECEIVED_BY_PRODUCTION - 1] === true,
-    receivedByProductionQty: row[P.RECEIVED_BY_PRODUCTION_QTY - 1],
-    warehouseQty: warehouseQty,
+    receivedByProduction: row[P.RECEIVED_BY_PRODUCTION - 1],
     row: row
   });
 
@@ -126,14 +121,4 @@ function v12PersistNewPositions(rows, index) {
       index.set(pid, { row: startRow + i, values: r });
     }
   });
-}
-
-/**
- * Является ли позиция активной (не архив/не удалена).
- */
-function v12IsActivePosition(row) {
-  const P = V12_CONFIG.POSITION_COLUMNS;
-  const lc = row[P.LIFECYCLE_STATE - 1];
-  return lc !== V12_CONFIG.LIFECYCLE_STATE.ARCHIVED &&
-    lc !== V12_CONFIG.LIFECYCLE_STATE.REMOVED;
 }

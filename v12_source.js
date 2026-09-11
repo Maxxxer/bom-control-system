@@ -21,7 +21,7 @@ function v12BuildExcludedMap() {
   const data = readSheetValues(sheet);
   const map = {};
   for (let i = 1; i < data.length; i++) {
-    if (data[i][V12_CONFIG.EXCLUDED_BOMS_COLUMNS.DONE - 1] === true) {
+    if (v12IsChecked(data[i][V12_CONFIG.EXCLUDED_BOMS_COLUMNS.DONE - 1])) {
       const id = normalizeMaterialId(data[i][V12_CONFIG.EXCLUDED_BOMS_COLUMNS.BOM_ID - 1]);
       if (id) {
         map[id] = true;
@@ -167,8 +167,10 @@ function v12HashSourceData(materials) {
  * Зарегистрировать/обновить BOM в BOM_REGISTRY по данным источника.
  * Возвращает { bomId, created, changed }.
  */
-function v12UpsertSourceBOM(source) {
-  const registry = v12BuildBomRegistryIndex();
+function v12UpsertSourceBOM(source, registryIndex) {
+  // registryIndex передаётся вызывающим для массовой синхронизации — чтобы не
+  // перечитывать BOM_REGISTRY на каждый BOM. При одиночном вызове строится сам.
+  const registry = registryIndex || v12BuildBomRegistryIndex();
   const B = V12_CONFIG.BOM_REGISTRY_COLUMNS;
   let reg;
 
@@ -200,6 +202,7 @@ function v12UpsertSourceBOM(source) {
     row[B.DIRTY - 1] = true;
     row[B.UPDATED_AT - 1] = new Date();
     appendRow(sheet, row);
+    v12AppendBomRevision(bomId, 1);
     return { bomId: bomId, created: true, changed: true };
   }
 
@@ -216,5 +219,29 @@ function v12UpsertSourceBOM(source) {
     update.DIRTY = true;
   }
   v12UpdateBomRegistry(bomId, update, registry);
+  if (changed) {
+    v12AppendBomRevision(bomId, update.SOURCE_REVISION);
+  }
   return { bomId: bomId, created: false, changed: changed };
+}
+
+/**
+ * Зафиксировать ревизию BOM в BOM_REVISION.
+ *
+ * Проекции читают самую раннюю запись как «дату создания» BOM
+ * (Dashboard «Дата создания», «Дата поставки» в ОТБОРКЕ у позиций,
+ * закрытых резервом BOM). Без этой записи обе колонки всегда пусты.
+ */
+function v12AppendBomRevision(bomId, revision) {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.BOM_REVISION);
+  if (!sheet) {
+    return;
+  }
+  const R = V12_CONFIG.BOM_REVISION_COLUMNS;
+  const row = new Array(V12_CONFIG.COLUMN_COUNT.BOM_REVISION).fill("");
+  row[R.DATE - 1] = new Date();
+  row[R.BOM_ID - 1] = bomId;
+  row[R.REVISION - 1] = revision;
+  row[R.USER - 1] = getCurrentUser();
+  appendRow(sheet, row);
 }

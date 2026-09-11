@@ -23,9 +23,9 @@ function v12OnOpen() {
   SpreadsheetApp.getUi()
     .createMenu("BOM CONTROL V12")
     .addItem("🔄 Полная синхронизация", "v12RunFullSync")
-    .addSeparator()
-    .addItem("📥 Импорт BOM (источник)", "v12RunFullSync")
     .addItem("📊 Обновить проекции", "v12RefreshAllProjections")
+    .addSeparator()
+    .addItem("↩ Вернуть из архива", "v12PromptReturnFromArchive")
     .addSeparator()
     .addItem("🔎 Диагностика V12", "v12Diagnostic")
     .addItem("🧪 Тест V12", "v12RunDebug")
@@ -99,7 +99,6 @@ function v12ConsistencyCheck() {
     registryBoms: new Set(),
     positionBoms: new Set(),
     positionIds: new Set(),
-    archivedPositionIds: new Set(),
     errors: []
   };
 
@@ -120,9 +119,6 @@ function v12ConsistencyCheck() {
     if (bomId) {
       report.positionBoms.add(bomId);
     }
-    if (r[P.LIFECYCLE_STATE - 1] === V12_CONFIG.LIFECYCLE_STATE.ARCHIVED) {
-      report.archivedPositionIds.add(pid);
-    }
   }
 
   // BOM из позиций, отсутствующие в реестре
@@ -139,20 +135,44 @@ function v12ConsistencyCheck() {
     }
   });
 
-  // Дубликаты positionId
-  if (report.positionIds.size !== (positionData.length - 1)) {
+  // Дубликаты positionId: число уникальных ID сравниваем с числом НЕПУСТЫХ ID
+  // (иначе строки с пустым Position ID давали бы ложное «обнаружены дубликаты»).
+  const nonEmptyIdCount = positionData.slice(1).filter(function (r) {
+    return normalizeMaterialId(r[P.POSITION_ID - 1]);
+  }).length;
+  if (report.positionIds.size !== nonEmptyIdCount) {
     report.errors.push("Обнаружены дубликаты positionId");
   }
 
-  // Проверка: архивированные позиции не должны участвовать в активных проекциях
-  report.archivedPositionIds.forEach(function (pid) {
-    if (report.positionIds.has(pid)) {
-      // архивная позиция остаётся в POSITION_STATE (ок), но должна отсутствовать в сводке/отборке
-      // это проверяется отдельно — здесь только факт фиксации
-    }
-  });
-
   return report;
+}
+
+/**
+ * Диалог возврата позиции из архива (ТЗ №78–82).
+ * Запрашивает Position ID и причину, вызывает v12ReturnFromArchive.
+ */
+function v12PromptReturnFromArchive() {
+  const ui = SpreadsheetApp.getUi();
+  const idResponse = ui.prompt("Возврат из архива", "Position ID позиции:", ui.ButtonSet.OK_CANCEL);
+  if (idResponse.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+  const positionId = String(idResponse.getResponseText() || "").trim();
+  if (!positionId) {
+    ui.alert("Position ID не указан");
+    return;
+  }
+  const reasonResponse = ui.prompt("Возврат из архива", "Причина возврата:", ui.ButtonSet.OK_CANCEL);
+  if (reasonResponse.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+  const reason = String(reasonResponse.getResponseText() || "").trim();
+  const result = v12ReturnFromArchive(positionId, reason);
+  if (result && result.status === "returned") {
+    ui.alert("Позиция возвращена из архива: " + positionId);
+  } else {
+    ui.alert("Не удалось вернуть: " + ((result && result.reason) || "неизвестная ошибка"));
+  }
 }
 
 /**
@@ -235,10 +255,15 @@ function v12RunDebug() {
   report.errors = report.tests.filter(function (t) { return !t.pass; })
     .map(function (t) { return t.name; });
 
-  logSystem("v12RunDebug", "Тесты V12: " + report.tests.length + ", ошибок: " + report.errors.length, report);
-  SpreadsheetApp.getUi().alert("Тест V12 завершён.\nВсего: " + report.tests.length +
+  const summary = "Тест V12 завершён.\nВсего: " + report.tests.length +
     "\nОшибок: " + report.errors.length +
-    (report.errors.length ? "\n\n" + report.errors.join("\n") : ""));
+    (report.errors.length ? "\n\n" + report.errors.join("\n") : "");
+  logSystem("v12RunDebug", summary, report, report.errors.length ? "WARNING" : "INFO");
+  try {
+    SpreadsheetApp.getUi().alert(summary);
+  } catch (e) {
+    // нет UI (запуск из триггера) — результат уже в SYSTEM_LOG
+  }
   return report;
 }
 

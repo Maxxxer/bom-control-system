@@ -160,17 +160,6 @@ function v12ClearBody(key) {
 }
 
 /**
- * Вставить строки в лист V12 (append).
- */
-function v12AppendRows(key, rows) {
-  const sheet = v12GetSheetByKey(key);
-  if (!rows || !rows.length) {
-    return;
-  }
-  writeValues(sheet, sheet.getLastRow() + 1, 1, rows);
-}
-
-/**
  * Построить индекс POSITION_STATE: Map<positionId, {row, values}>.
  * Если data передан — не читаем лист повторно.
  */

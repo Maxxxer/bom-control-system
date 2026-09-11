@@ -65,19 +65,3 @@ function v12RequireRole(role, action) {
     throw new Error("Недостаточно прав для роли '" + role + "' на действие '" + action + "' (пользователь: " + user + ")");
   }
 }
-
-/**
- * Имя роли по-человечески (для логов/UI).
- */
-function v12RoleLabel(role) {
-  const R = V12_CONFIG.ROLES;
-  const map = {
-    [R.ADMIN]: "Администратор",
-    [R.ECONOMIST]: "Экономист",
-    [R.PROCUREMENT]: "Снабженец",
-    [R.WAREHOUSE]: "Кладовщик",
-    [R.PRODUCTION]: "Производство",
-    [R.VIEWER]: "Наблюдатель"
-  };
-  return map[role] || role || "Неизвестная роль";
-}
