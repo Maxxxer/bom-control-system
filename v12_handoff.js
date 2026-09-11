@@ -19,7 +19,7 @@
  * sourceUI: из V12_CONFIG.SOURCE_UI (PICKING / WORKING_BOM).
  * Возвращает { status: "handoff" | "already" | "blocked", reason? }.
  */
-function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh) {
+function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
   const lock = acquireScriptLock();
   try {
     const role = v12GetCurrentUserRole();
@@ -28,7 +28,10 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh) {
       : "PICKING_CHECKBOX";
     v12RequireRole(role, action);
 
-    const index = v12BuildPositionIndex();
+    // ctx позволяет при пакетной передаче переиспользовать общие индексы
+    // POSITION_STATE/MATERIAL_STATE и накапливать складские дельты (см.
+    // v12HandlePickingRangeEdit / v12HarvestPickingInput).
+    const index = (ctx && ctx.index) || v12BuildPositionIndex();
     const pos = v12GetPositionById(positionId, index);
     if (!pos) {
       return { status: "blocked", reason: "Позиция не найдена" };
@@ -76,9 +79,20 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh) {
 
     // Архивация позиции
     v12ArchivePosition(positionId, sourceUI, index);
+    // Синхронизируем in-memory индекс (при пакетной обработке защищает от
+    // повторной передачи той же позиции в одном диапазоне).
+    row[P.RECEIVED_BY_PRODUCTION - 1] = true;
+    row[P.RECEIVED_BY_PRODUCTION_QTY - 1] = required;
+    row[P.LIFECYCLE_STATE - 1] = V12_CONFIG.LIFECYCLE_STATE.ARCHIVED;
 
-    // Снять резерв с физического склада (передача = резерв перешёл в производство)
-    v12AdjustWarehouseQty(materialKey, -required);
+    // Снять резерв с физического склада (передача = резерв перешёл в производство).
+    // При пакетной обработке (ctx) дельты накапливаются и применяются ОДИН раз в
+    // конце — иначе на каждую строку читается/пишется MATERIAL_STATE.
+    if (ctx) {
+      ctx.warehouseDelta[materialKey] = (ctx.warehouseDelta[materialKey] || 0) - required;
+    } else {
+      v12AdjustWarehouseQty(materialKey, -required);
+    }
 
     // Аудит
     v12Audit({
@@ -91,6 +105,8 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh) {
       newValue: true,
       reason: "Передано производству из " + sourceUI
     });
+    v12LogHistory(positionId, "PRODUCTION_HANDOFF", "", required, "Передано из " + sourceUI);
+    v12LogEvent(V12_CONFIG.AUDIT_ACTIONS.HANDOFF, positionId, bomId, { sourceUI: sourceUI, qty: required });
 
     // При массовой передаче (диапазон) пересчёт проекций делается один раз
     // вызывающей стороной — здесь пропускаем, чтобы не пересобирать лист на
@@ -204,6 +220,7 @@ function v12ReturnFromArchive(positionId, reason) {
       newValue: false,
       reason: reason
     });
+    v12LogHistory(positionId, "RETURN_FROM_ARCHIVE", returnedQty, 0, reason);
 
     v12RefreshProjections();
     return { status: "returned" };
@@ -220,8 +237,8 @@ function v12ReturnFromArchive(positionId, reason) {
 /**
  * Скорректировать складской остаток по materialKey (увеличить/уменьшить).
  */
-function v12AdjustWarehouseQty(materialKey, delta) {
-  const index = v12BuildMaterialIndex();
+function v12AdjustWarehouseQty(materialKey, delta, materialIndex) {
+  const index = materialIndex || v12BuildMaterialIndex();
   const M = V12_CONFIG.MATERIAL_COLUMNS;
   const m = index.get(materialKey);
   if (!m) {
@@ -248,6 +265,23 @@ function v12AdjustWarehouseQty(materialKey, delta) {
     { row: m.row, col: M.WAREHOUSE_QTY, value: next },
     { row: m.row, col: M.UPDATED_AT, value: new Date() }
   ]);
+}
+
+/**
+ * Применить накопленные складские дельты (пакетная передача) — по одному
+ * вызову v12AdjustWarehouseQty на materialKey (ключам уникальны, поэтому общий
+ * materialIndex безопасен).
+ */
+function v12ApplyWarehouseDeltas(deltas, materialIndex) {
+  if (!deltas) {
+    return;
+  }
+  Object.keys(deltas).forEach(function (mk) {
+    const d = deltas[mk];
+    if (d) {
+      v12AdjustWarehouseQty(mk, d, materialIndex);
+    }
+  });
 }
 
 /**

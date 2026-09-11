@@ -85,7 +85,21 @@ function v12OnEdit(e) {
     // проекций не накладывались при быстром вводе (иначе значения затираются).
     // ВАЖНО: правка не отбрасывается по флагу занятости — при плановом
     // обновлении она дождётся освобождения блокировки и будет обработана.
-    const lock = acquireScriptLock();
+    const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+    if (!lock) {
+      // Блокировку не удалось взять за 10 с — вероятно идёт полная синхронизация.
+      // Уведомляем пользователя и (для одиночной ячейки) откатываем правку,
+      // чтобы не осталось «применённое-но-не-записанное» состояние.
+      try {
+        SpreadsheetApp.getUi().alert("Система занята обновлением. Повторите ввод через несколько секунд.");
+      } catch (e2) {
+        // нет UI (вызов из триггера) — просто выходим
+      }
+      if (isSingleCell) {
+        v12RevertEdit(e);
+      }
+      return;
+    }
     try {
       // DEFICIT_SUMMARY — вставка/заполнение диапазона (несколько ячеек)
       if (isSummaryRange) {
@@ -181,6 +195,9 @@ function v12HandleMaterialStateEdit(e) {
       newValue: newQty,
       data: { materialKey: materialKey }
     });
+    // Пересчитываем контрольные RESERVED_QTY/FREE_QTY склада, чтобы они не
+    // «расходились» до ближайшего полного синка (контроль ТЗ №30).
+    v12RecalculateWarehouseConsistency();
     v12RefreshProjections();
     v12FlushAudit();
     return;
@@ -241,17 +258,20 @@ function v12HandleDeficitEdit(e) {
   // при быстром вводе предыдущий пересчёт мог успеть откатить ячейку, и «живое»
   // чтение вернуло бы уже затёртое значение — тогда правка теряется.
   const newValue = (e.value !== undefined) ? e.value : e.range.getValue();
+  // Индекс POSITION_STATE строим ОДИН раз на правку и прокидываем в операцию
+  // (иначе каждая операция читает лист заново).
+  const posIndex = v12BuildPositionIndex();
   if (column === D.ORDERED_QTY) {
-    v12SetOrderedQty(positionId, newValue);
+    v12SetOrderedQty(positionId, newValue, posIndex);
   } else if (column === D.EXPECTED_DATE) {
-    v12SetExpectedDate(positionId, newValue);
+    v12SetExpectedDate(positionId, newValue, posIndex);
   } else if (column === D.REAL_DELIVERY) {
     // Значение чекбокса из события onEdit приходит и как boolean (true/false),
     // и как строка ("TRUE"/"FALSE"). Нормализуем — иначе отметка не применяется,
     // поставка не убирается из сводки, а состояние чекбокса сбрасывается.
     const checked = v12IsChecked(newValue);
     try {
-      v12SetRealDeliveryQty(positionId, checked ? v12GetDeficitRequiredQty(positionId) : 0);
+      v12SetRealDeliveryQty(positionId, checked ? v12GetDeficitRequiredQty(positionId, posIndex) : 0, posIndex);
     } catch (err) {
       v12RevertEdit(e);
       try { SpreadsheetApp.getUi().alert("Не удалось отметить поставку: " + err.message); } catch (e2) {}
@@ -294,10 +314,12 @@ function v12HandleDeficitRangeEdit(e) {
   const touched = {};   // positionId -> { row, vals, changed, oldOrdered, oldExpected, oldReal, desiredReal }
   const writes = [];
   const warehouseDelta = {};   // materialKey -> суммарная дельта склада
+  // Position ID всех строк диапазона читаем ОДНОЙ выборкой (а не по ячейке в цикле).
+  const idColumn = sheet.getRange(firstRow, D.POSITION_ID, numRows, 1).getValues();
 
   for (let r = 0; r < numRows; r++) {
     const sheetRow = firstRow + r;
-    const positionId = normalizeMaterialId(sheet.getRange(sheetRow, D.POSITION_ID).getValue());
+    const positionId = normalizeMaterialId(idColumn[r][0]);
     if (!positionId) {
       continue;
     }
@@ -453,10 +475,13 @@ function v12HandleDeficitRangeEdit(e) {
     }
   }
 
+  // Пересчитываем проекции, только если реально что-то изменилось (иначе
+  // диапазонный ввод в read-only колонку/без прав вызывал бы полный пересчёт зря).
   // Один пересчёт на всю группу — обновляет статус по всем затронутым строкам
-  // и синхронизирует ВСЕ проекции (в т.ч. ОТБОРКА/WORKING BOM, где отражаются
-  // переданные количества и складской остаток), как и одиночная операция.
-  v12RefreshProjections();
+  // и синхронизирует ВСЕ проекции (в т.ч. ОТБОРКА/WORKING BOM).
+  if (writes.length) {
+    v12RefreshProjections();
+  }
   v12FlushAudit();
 }
 
@@ -473,7 +498,9 @@ function v12HandlePickingEdit(e) {
     return;
   }
   const positionId = sheet.getRange(row, K.POSITION_ID).getValue();
-  const checked = e.range.getValue();
+  // Снимок значения из события (как в Сводке): «живое» чтение ячейки при
+  // быстром вводе может вернуть уже изменённое/откатанное значение.
+  const checked = (e.value !== undefined) ? e.value : e.range.getValue();
   if (v12IsChecked(checked)) {
     const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING);
     if (result.status === "blocked") {
@@ -500,6 +527,15 @@ function v12HandlePickingRangeEdit(e) {
   const values = (e.values && e.values.length === numRows) ? e.values : e.range.getValues();
   let anyHandoff = false;
 
+  // Общие индексы и накопитель складских дельт на весь диапазон: передача
+  // больше не читает POSITION_STATE/MATERIAL_STATE на каждую строку.
+  const posIndex = v12BuildPositionIndex();
+  const materialIndex = v12BuildMaterialIndex();
+  const ctx = { index: posIndex, materialIndex: materialIndex, warehouseDelta: {} };
+  // Position ID всех строк диапазона читаем ОДНОЙ выборкой (а не по ячейке в
+  // цикле) — иначе на диапазон из N строк приходило бы N одиночных чтений.
+  const idColumn = sheet.getRange(firstRow, K.POSITION_ID, numRows, 1).getValues();
+
   for (let r = 0; r < numRows; r++) {
     if (firstRow + r === 1) {
       continue;   // строка заголовка (в т.ч. ячейка фильтра B1) не обрабатывается
@@ -511,12 +547,12 @@ function v12HandlePickingRangeEdit(e) {
       if (!v12IsChecked(values[r][c])) {
         continue;
       }
-      const positionId = normalizeMaterialId(sheet.getRange(firstRow + r, K.POSITION_ID).getValue());
+      const positionId = normalizeMaterialId(idColumn[r][0]);
       if (!positionId) {
         continue;
       }
       // Пересчёт проекций — один раз после обработки всей группы.
-      const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true);
+      const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true, ctx);
       if (result && result.status === "blocked") {
         // передать не удалось — снимаем отметку в этой строке
         sheet.getRange(firstRow + r, K.CHECKBOX).setValue(false);
@@ -524,6 +560,8 @@ function v12HandlePickingRangeEdit(e) {
       anyHandoff = true;
     }
   }
+
+  v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex);
 
   if (anyHandoff) {
     v12RefreshProjections();
@@ -548,7 +586,7 @@ function v12HandleWorkingBomEdit(e) {
     return;
   }
   const positionId = sheet.getRange(row, W.POSITION_ID).getValue();
-  const checked = v12IsChecked(e.range.getValue());
+  const checked = v12IsChecked((e.value !== undefined) ? e.value : e.range.getValue());
   if (checked) {
     const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.WORKING_BOM);
     if (result && result.status === "blocked") {
@@ -560,12 +598,34 @@ function v12HandleWorkingBomEdit(e) {
 
 /**
  * Откат запрещённой ручной правки.
+ *
+ * Для одиночной ячейки onEdit отдаёт `oldValue` — значение восстанавливается.
+ * Для ДИАПАЗОНА `oldValue` отсутствует, и точный откат технически невозможен:
+ * раньше функция в этом случае молча ничего не делала (баг C-4 отчёта №33),
+ * из-за чего запрещённая правка диапазона оставалась применённой без следа.
+ * Теперь такой случай явно фиксируется в системном логе (WARNING), чтобы он
+ * не оставался «незамеченным» (обработчики диапазонов чекбоксов откатывают
+ * свои ячейки самостоятельно — см. v12HandlePickingRangeEdit).
  */
 function v12RevertEdit(e) {
   try {
-    if (e && e.range && e.oldValue !== undefined) {
-      e.range.setValue(e.oldValue);
+    if (!e || !e.range) {
+      return;
     }
+    if (e.oldValue !== undefined) {
+      e.range.setValue(e.oldValue);
+      return;
+    }
+    const numCells = (e.range.getNumRows ? e.range.getNumRows() : 1) *
+      (e.range.getNumColumns ? e.range.getNumColumns() : 1);
+    if (numCells > 1) {
+      logSystem("v12RevertEdit",
+        "Запрещённая правка диапазона " + (e.range.getA1Notation ? e.range.getA1Notation() : "?") +
+        " на листе «" + (e.range.getSheet ? e.range.getSheet().getName() : "?") +
+        "» не может быть откачена автоматически (нет oldValue)", "WARNING");
+      return;
+    }
+    logSystem("v12RevertEdit", "Откат невозможен: нет oldValue для одиночной ячейки", "WARNING");
   } catch (err) {
     logSystem("v12RevertEdit", err.message, err, "ERROR");
   }
@@ -638,8 +698,12 @@ function v12RunFullSync() {
     const files = v12ListSourceBOMFiles();
     // Индексы строятся ОДИН раз на весь прогон (а не на каждый BOM) — это снимает
     // тысячи полных чтений POSITION_STATE/BOM_REGISTRY при массовой синхронизации.
-    // Новые позиции дописываются в этот же индекс внутри v12PersistNewPositions.
-    const positionIndex = v12BuildPositionIndex();
+    // POSITION_STATE читается ОДИН раз, из него строятся оба индекса: по positionId
+    // и по BOM (positionsByBom — получать позиции конкретного BOM за O(1)).
+    // Новые позиции дописываются в positionIndex внутри v12PersistNewPositions.
+    const posData = v12ReadSheet("POSITION_STATE");
+    const positionIndex = v12BuildPositionIndex(posData);
+    const positionsByBom = v12BuildPositionsByBomIndex(posData);
     const registryIndex = v12BuildBomRegistryIndex();
     let totalAdded = 0;
     let totalRemoved = 0;
@@ -648,7 +712,7 @@ function v12RunFullSync() {
     files.forEach(function (file) {
       const source = v12ReadSourceBOM(file);
       if (source) {
-        const result = v12SyncBOM(source, positionIndex, registryIndex);
+        const result = v12SyncBOM(source, positionIndex, registryIndex, positionsByBom);
         totalAdded += result.added;
         totalRemoved += result.removed;
         if (result.changed) {

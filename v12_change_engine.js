@@ -209,7 +209,10 @@ function v12ApplySourceRevision(registry, changeSet, index) {
     }
   });
 
-  // Обновить изменённые позиции: пишем изменённые поля + пересчитанные колонки
+  // Обновить изменённые позиции ОДНИМ батчем: изменённые поля + пересчитанные
+  // колонки (ранее — отдельный v12UpdatePosition/setValues на каждую позицию).
+  const posSheet = v12GetSheetByKey("POSITION_STATE");
+  const writes = [];
   Object.keys(updates).forEach(function (pid) {
     const pos = positionIndex.get(pid);
     if (!pos) {
@@ -222,35 +225,43 @@ function v12ApplySourceRevision(registry, changeSet, index) {
     row[P.SOURCE_REVISION - 1] = registry.sourceRevision;
     v12ApplyComputedToRow(row);
 
-    // Пишем и изменённые поля, и пересчитанные значения
-    const changes = {};
     Object.keys(updates[pid]).forEach(function (k) {
-      changes[k] = updates[pid][k];
+      writes.push({ row: pos.row, col: P[k], value: updates[pid][k] });
     });
-    changes.SOURCE_REVISION = registry.sourceRevision;
-    changes.VALIDATION_STATUS = row[P.VALIDATION_STATUS - 1];
-    changes.SUPPLY_STATE = row[P.SUPPLY_STATE - 1];
-    changes.PRODUCTION_STATE = row[P.PRODUCTION_STATE - 1];
-    changes.DEFICIT_QTY = row[P.DEFICIT_QTY - 1];
-    changes.UNCOVERED_NEED = row[P.UNCOVERED_NEED - 1];
-    changes.OVER_ORDERED_QTY = row[P.OVER_ORDERED_QTY - 1];
-    changes.SHORT_DELIVERY_QTY = row[P.SHORT_DELIVERY_QTY - 1];
-    changes.AVAILABLE_FOR_PRODUCTION = row[P.AVAILABLE_FOR_PRODUCTION - 1];
-    changes.FLAGS = row[P.FLAGS - 1];
-    v12UpdatePosition(pid, changes, positionIndex);
+    writes.push({ row: pos.row, col: P.SOURCE_REVISION, value: registry.sourceRevision });
+    writes.push({ row: pos.row, col: P.VALIDATION_STATUS, value: row[P.VALIDATION_STATUS - 1] });
+    writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: row[P.SUPPLY_STATE - 1] });
+    writes.push({ row: pos.row, col: P.PRODUCTION_STATE, value: row[P.PRODUCTION_STATE - 1] });
+    writes.push({ row: pos.row, col: P.DEFICIT_QTY, value: row[P.DEFICIT_QTY - 1] });
+    writes.push({ row: pos.row, col: P.UNCOVERED_NEED, value: row[P.UNCOVERED_NEED - 1] });
+    writes.push({ row: pos.row, col: P.OVER_ORDERED_QTY, value: row[P.OVER_ORDERED_QTY - 1] });
+    writes.push({ row: pos.row, col: P.SHORT_DELIVERY_QTY, value: row[P.SHORT_DELIVERY_QTY - 1] });
+    writes.push({ row: pos.row, col: P.AVAILABLE_FOR_PRODUCTION, value: row[P.AVAILABLE_FOR_PRODUCTION - 1] });
+    writes.push({ row: pos.row, col: P.FLAGS, value: row[P.FLAGS - 1] });
+    writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
+
+    // Синхронизируем in-memory строку индекса (последующие чтения в этом прогоне).
+    for (let c = 0; c < row.length; c++) {
+      pos.values[c] = row[c];
+    }
   });
 
-  // Удалить: lifecycle = REMOVED, пересчитать
+  // Удалить: lifecycle = REMOVED (в тот же батч).
   changeSet.deletedIds.forEach(function (pid) {
     const pos = positionIndex.get(pid);
     if (!pos) {
       return;
     }
-    v12UpdatePosition(pid, {
-      LIFECYCLE_STATE: V12_CONFIG.LIFECYCLE_STATE.REMOVED,
-      SOURCE_REVISION: registry.sourceRevision
-    }, positionIndex);
+    writes.push({ row: pos.row, col: P.LIFECYCLE_STATE, value: V12_CONFIG.LIFECYCLE_STATE.REMOVED });
+    writes.push({ row: pos.row, col: P.SOURCE_REVISION, value: registry.sourceRevision });
+    writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
+    pos.values[P.LIFECYCLE_STATE - 1] = V12_CONFIG.LIFECYCLE_STATE.REMOVED;
+    pos.values[P.SOURCE_REVISION - 1] = registry.sourceRevision;
   });
+
+  if (writes.length) {
+    batchWrite(posSheet, writes);
+  }
 
   return changeSet;
 }
@@ -270,12 +281,13 @@ function opsFor() {
  * Полная синхронизация одного BOM: регистрация источника + детект изменений
  * + применение ревизии. Возвращает { bomId, changed, added, removed }.
  */
-function v12SyncBOM(source, positionIndex, registryIndex) {
+function v12SyncBOM(source, positionIndex, registryIndex, positionsByBom) {
   // Индексы можно передать извне (массовая синхронизация) — тогда лист
-  // POSITION_STATE/BOM_REGISTRY не перечитывается на каждый BOM.
+  // POSITION_STATE/BOM_REGISTRY не перечитывается на каждый BOM. positionsByBom
+  // (Map<bomId, Map<pid, m>>) даёт позиции конкретного BOM за O(1).
   const idx = positionIndex || v12BuildPositionIndex();
   const reg = v12UpsertSourceBOM(source, registryIndex);
-  const existing = v12GetPositionsByBom(reg.bomId, idx);
+  const existing = v12GetPositionsByBom(reg.bomId, idx, positionsByBom);
   const changeSet = v12DetectBOMChanges(reg.bomId, source, existing);
   if (changeSet.hasChanges) {
     v12ApplySourceRevision(reg, changeSet, idx);

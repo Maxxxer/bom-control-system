@@ -15,13 +15,14 @@
 /**
  * Установить количество заказа. PROCUREMENT.
  */
-function v12SetOrderedQty(positionId, qty) {
+function v12SetOrderedQty(positionId, qty, index) {
   const role = v12GetCurrentUserRole();
   v12RequireRole(role, "ORDERED_QTY");
 
   const newQty = Math.max(0, toNumber(qty));
-  const index = v12BuildPositionIndex();
-  const pos = v12GetPositionById(positionId, index);
+  // Индекс можно передать извне (onEdit строит его один раз на правку).
+  const idx = index || v12BuildPositionIndex();
+  const pos = v12GetPositionById(positionId, idx);
   if (!pos) {
     throw new Error("Позиция не найдена: " + positionId);
   }
@@ -30,8 +31,9 @@ function v12SetOrderedQty(positionId, qty) {
   if (oldQty === newQty) {
     // Значение уже совпадает с состоянием — запись и агрегаты не нужны,
     // но строку сводки всё равно согласуем (на случай расхождения листа).
+    v12HarvestDeficitInput({ positionId: positionId, key: "ORDERED_QTY" });
     SpreadsheetApp.flush();
-    v12RefreshDeficitSummaryRow(positionId, "ORDERED_QTY");
+    v12RefreshDeficitSummaryRow(positionId, "ORDERED_QTY", v12ReadSheet("POSITION_STATE"));
     return;
   }
 
@@ -49,7 +51,7 @@ function v12SetOrderedQty(positionId, qty) {
     SHORT_DELIVERY_QTY: row[P.SHORT_DELIVERY_QTY - 1],
     AVAILABLE_FOR_PRODUCTION: row[P.AVAILABLE_FOR_PRODUCTION - 1],
     FLAGS: row[P.FLAGS - 1]
-  }, index);
+  }, idx);
 
   v12Audit({
     action: V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED,
@@ -59,15 +61,21 @@ function v12SetOrderedQty(positionId, qty) {
     oldValue: oldQty,
     newValue: newQty
   });
+  v12LogHistory(positionId, "ORDERED_QTY", oldQty, newQty);
+  v12LogEvent(V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED, positionId, row[P.BOM_ID - 1], { oldValue: oldQty, newValue: newQty });
 
   // Сводку согласуем ВСЕГДА и точечно (по строке позиции) — это устраняет
   // потерю «Заказано»/«Ожидаемой поставки» при быстром вводе.
+  // POSITION_STATE читаем ОДИН раз: harvest подбирает правки, затем одни и те
+  // же данные используются и точечной строкой сводки, и агрегатами.
+  v12HarvestDeficitInput({ positionId: positionId, key: "ORDERED_QTY" });
   SpreadsheetApp.flush();
-  v12RefreshDeficitSummaryRow(positionId, "ORDERED_QTY");
+  const posData = v12ReadSheet("POSITION_STATE");
+  v12RefreshDeficitSummaryRow(positionId, "ORDERED_QTY", posData);
   // Агрегаты (СНАБЖЕНИЕ/Dashboard) обновляем, когда введены оба поля — как раньше.
   if (row[P.EXPECTED_DATE - 1]) {
-    v12RefreshSupply();
-    v12RefreshDashboard();
+    v12RefreshSupply(posData);
+    v12RefreshDashboard(posData);
   }
   v12FlushAudit();
 }
@@ -75,12 +83,12 @@ function v12SetOrderedQty(positionId, qty) {
 /**
  * Установить ожидаемую дату поставки. PROCUREMENT.
  */
-function v12SetExpectedDate(positionId, date) {
+function v12SetExpectedDate(positionId, date, index) {
   const role = v12GetCurrentUserRole();
   v12RequireRole(role, "EXPECTED_DATE");
 
-  const index = v12BuildPositionIndex();
-  const pos = v12GetPositionById(positionId, index);
+  const idx = index || v12BuildPositionIndex();
+  const pos = v12GetPositionById(positionId, idx);
   if (!pos) {
     throw new Error("Позиция не найдена: " + positionId);
   }
@@ -91,14 +99,15 @@ function v12SetExpectedDate(positionId, date) {
   const newDate = v12ToDate(date);
   if (v12DateValue(oldDate) === v12DateValue(newDate)) {
     // Дата уже совпадает — запись не нужна, но строку сводки согласуем.
+    v12HarvestDeficitInput({ positionId: positionId, key: "EXPECTED_DATE" });
     SpreadsheetApp.flush();
-    v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE");
+    v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE", v12ReadSheet("POSITION_STATE"));
     return;
   }
 
   v12UpdatePosition(positionId, {
     EXPECTED_DATE: newDate ? newDate : ""
-  }, index);
+  }, idx);
 
   v12Audit({
     action: V12_CONFIG.AUDIT_ACTIONS.EXPECTED_DATE_CHANGED,
@@ -108,13 +117,16 @@ function v12SetExpectedDate(positionId, date) {
     oldValue: oldDate,
     newValue: newDate ? newDate.getTime() : ""
   });
+  v12LogHistory(positionId, "EXPECTED_DATE", oldDate, newDate ? newDate.getTime() : "");
 
   // Сводку согласуем ВСЕГДА и точечно — иначе при быстром вводе значение теряется.
+  v12HarvestDeficitInput({ positionId: positionId, key: "EXPECTED_DATE" });
   SpreadsheetApp.flush();
-  v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE");
+  const posData = v12ReadSheet("POSITION_STATE");
+  v12RefreshDeficitSummaryRow(positionId, "EXPECTED_DATE", posData);
   if (toNumber(pos.values[P.ORDERED_QTY - 1]) > 0) {
-    v12RefreshSupply();
-    v12RefreshDashboard();
+    v12RefreshSupply(posData);
+    v12RefreshDashboard(posData);
   }
   v12FlushAudit();
 }
@@ -123,13 +135,13 @@ function v12SetExpectedDate(positionId, date) {
  * Зафиксировать реальную поставку количеством. PROCUREMENT.
  * Количество поступает на склад: warehouse += qty.
  */
-function v12SetRealDeliveryQty(positionId, qty) {
+function v12SetRealDeliveryQty(positionId, qty, index) {
   const role = v12GetCurrentUserRole();
   v12RequireRole(role, "REAL_DELIVERY");
 
   const newQty = Math.max(0, toNumber(qty));
-  const index = v12BuildPositionIndex();
-  const pos = v12GetPositionById(positionId, index);
+  const idx = index || v12BuildPositionIndex();
+  const pos = v12GetPositionById(positionId, idx);
   if (!pos) {
     throw new Error("Позиция не найдена: " + positionId);
   }
@@ -168,7 +180,7 @@ function v12SetRealDeliveryQty(positionId, qty) {
     SHORT_DELIVERY_QTY: newRow[P.SHORT_DELIVERY_QTY - 1],
     AVAILABLE_FOR_PRODUCTION: newRow[P.AVAILABLE_FOR_PRODUCTION - 1],
     FLAGS: newRow[P.FLAGS - 1]
-  }, index);
+  }, idx);
 
   // Остаток склада изменяется на дельту
   if (delta !== 0) {
@@ -183,6 +195,7 @@ function v12SetRealDeliveryQty(positionId, qty) {
     oldValue: oldQty,
     newValue: newQty
   });
+  v12LogHistory(positionId, "REAL_DELIVERY_QTY", oldQty, newQty);
 
   v12RefreshProjections();
   v12FlushAudit();

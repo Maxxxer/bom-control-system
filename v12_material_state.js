@@ -13,19 +13,6 @@
  */
 
 /**
- * Найти физический остаток материала по materialKey.
- * index — индекс MATERIAL_STATE.
- */
-function v12GetWarehouseQty(materialKey, index) {
-  const idx = index || v12BuildMaterialIndex();
-  const m = idx.get(normalizeMaterialId(materialKey));
-  if (!m) {
-    return 0;
-  }
-  return toNumber(m.values[V12_CONFIG.MATERIAL_COLUMNS.WAREHOUSE_QTY - 1]);
-}
-
-/**
  * Агрегировать резервы по materialKey из POSITION_STATE.
  * Возвращает Map<materialKey, {reservedQty, requiredQty}>.
  */

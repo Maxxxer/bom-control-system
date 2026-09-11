@@ -99,7 +99,8 @@ function v12ConsistencyCheck() {
     registryBoms: new Set(),
     positionBoms: new Set(),
     positionIds: new Set(),
-    errors: []
+    errors: [],
+    info: []
   };
 
   for (let i = 1; i < registryData.length; i++) {
@@ -128,10 +129,11 @@ function v12ConsistencyCheck() {
     }
   });
 
-  // BOM из реестра, отсутствующие в позициях (допустимо, если BOM пуст)
+  // BOM из реестра без позиций — это НОРМАЛЬНО (новый BOM или все позиции
+  // отфильтрованы): не ошибка, а информационная заметка.
   report.registryBoms.forEach(function (bomId) {
     if (!report.positionBoms.has(bomId)) {
-      report.errors.push("BOM " + bomId + " есть в BOM_REGISTRY, но нет позиций");
+      report.info.push("BOM " + bomId + " есть в BOM_REGISTRY, но пока без позиций");
     }
   });
 

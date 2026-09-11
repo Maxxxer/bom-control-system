@@ -39,3 +39,15 @@
 - [ ] clasp push → v12Install → v12RunFullSync → v12RunDebug → v12ConsistencyCheck
 - [ ] Решить судьбу legacy-функций controller.js (runFullUpdate/installV11) — держать как wrapper или удалить
 - [ ] Заполнить V12_ROLE_MAP (email → роль) в v12_roles.js
+---
+
+## Вторая волна правок по отчёту №33 (project_info__34.md)
+
+- [x] B-12: `utils.js :: toNumber` — корректный разбор разделителей («1,234.56» → 1234.56 и т.п.)
+- [x] C-4: `v12RevertEdit` — диапазон без `oldValue` больше не «молчит» (лог WARNING)
+- [x] P-6: `v12HandlePickingRangeEdit` — колонка Position ID читается одной выборкой
+- [x] P-7: `v12RefreshProjections` — POSITION_STATE читается один раз; harvest принимает `posData`
+- [x] Регрессионный тест `_local_tests/v12_audit_fixes2_test.js` (B-12, C-4, P-7), зарегистрирован в `_tmp_run.js`
+- [x] Верификация: `node --check` 20 файлов / 0 ошибок; 4 набора тестов PASSED
+- [x] Документация: `project_info__35.md`
+- [ ] Осознанно оставлено (проектные решения, не дефекты): B-2, B-3, B-4, B-5, B-6, B-10, B-11, C-3, P-8, P-9 — см. project_info__35.md

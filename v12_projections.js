@@ -22,10 +22,11 @@
  * пересоздавать conditional-formatting правила на каждом пересчёте — это
  * дорогой вызов уровня листа.
  *
- * ВНИМАНИЕ: data-validation (чекбоксы Сводки/ОТБОРКИ) здесь НЕ кэшируется.
- * `v12ClearBody` → `clearRange.clearDataValidations()` стирает валидации на
- * каждом полном пересчёте, поэтому `v12InstallDeficitCheckboxes` и
- * `v12InstallPickingCheckboxes` обязаны восстанавливать их безусловно.
+ * Замечание: в Google Apps Script модуль-глобалы НЕ переживают отдельные
+ * запуски (каждый триггер/меню — новый контекст), поэтому кэш фактически
+ * действует лишь в пределах одного исполнения. data-validation (чекбоксы
+ * Сводки/ОТБОРКИ) здесь не кэшируется намеренно: её владелец —
+ * v12Install*Checkboxes — восстанавливает валидацию безусловно.
  */
 const _v12ProjectionUiState = {};
 
@@ -45,14 +46,26 @@ function v12RefreshAllProjections() {
  * 5–6 полных чтений на один пересчёт.
  */
 function v12RefreshProjections() {
-  v12HarvestDeficitInput();
-  v12HarvestPickingInput();
-  const posData = v12ReadSheet("POSITION_STATE");
+  // POSITION_STATE читается ОДИН раз: harvest сверяется уже с прочитанными
+  // данными, и повторное чтение делается ТОЛЬКО если harvest реально что-то
+  // исправил (страховка от пропущенного onEdit). Ранее лист читался дважды —
+  // отдельно в harvest и отдельно для проекций (P-7 отчёта №33).
+  let posData = v12ReadSheet("POSITION_STATE");
+  const harvestedDeficit = v12HarvestDeficitInput(null, posData);
+  const harvestedPicking = v12HarvestPickingInput(posData);
+  if (harvestedDeficit || harvestedPicking) {
+    posData = v12ReadSheet("POSITION_STATE");
+  }
+  // Даты ревизий и карта исключённых BOM читаются ОДИН раз на пересчёт и
+  // раздаются проекциям (ранее BOM_REVISION читался дважды — в ОТБОРКЕ и в
+  // Dashboard; EXCLUDED_BOMS — из Dashboard).
+  const revDates = v12BuildRevisionDateMap();
+  const excluded = v12BuildExcludedMap();
   v12RefreshDeficitSummary(posData);
-  v12RefreshPicking(posData);
+  v12RefreshPicking(posData, revDates);
   v12RefreshWorkingBOM(posData);
   v12RefreshSupply(posData);
-  v12RefreshDashboard(posData);
+  v12RefreshDashboard(posData, revDates, excluded);
 }
 
 /**
@@ -143,24 +156,26 @@ function v12ParseSummaryDate(value) {
  * сводки, поэтому не теряется (и не затирает соседнюю ячейку строки).
  * В обычном состоянии значения совпадают и функция ничего не меняет.
  */
-function v12HarvestDeficitInput(skip) {
+function v12HarvestDeficitInput(skip, posData) {
   if (_v12Harvesting) {
-    return;
+    return false;
   }
   _v12Harvesting = true;
   try {
     const sheet = getSheetByName(V12_CONFIG.SHEETS.DEFICIT_SUMMARY);
     if (!sheet) {
-      return;
+      return false;
     }
     const D = V12_CONFIG.DEFICIT_COLUMNS;
     const P = V12_CONFIG.POSITION_COLUMNS;
     const M = V12_CONFIG.MATERIAL_COLUMNS;
     const data = readSheetValues(sheet);
     if (data.length < 2) {
-      return;
+      return false;
     }
-    const index = v12BuildPositionIndex();
+    // posData (опц.) — уже прочитанный POSITION_STATE от вызывающей стороны
+    // (v12RefreshProjections): не читаем лист повторно (P-7 отчёта №33).
+    const index = v12BuildPositionIndex(posData);
     const posSheet = v12GetSheetByKey("POSITION_STATE");
     const writes = [];
     // Складские дельты от «реальной поставки», подобранной из чекбоксов.
@@ -279,6 +294,9 @@ function v12HarvestDeficitInput(skip) {
         batchWrite(materialSheet, mWrites);
       }
     }
+    // Признак «harvest что-то исправил» — вызывает перечитывание POSITION_STATE
+    // в v12RefreshProjections (иначе данные проекций остались бы устаревшими).
+    return writes.length > 0;
   } finally {
     _v12Harvesting = false;
   }
@@ -321,11 +339,15 @@ function v12RefreshDeficitSummary(posData) {
  * сводки или порядок строк на листе разошёлся с POSITION_STATE — выполняется
  * безопасный полный пересчёт.
  */
-function v12RefreshDeficitSummaryRow(positionId, committedKey) {
+function v12RefreshDeficitSummaryRow(positionId, committedKey, posData) {
   // Переносим в POSITION_STATE всё, что уже введено в строку сводки (кроме
   // только что зафиксированной колонки), чтобы перезапись строки не затёрла
   // соседнюю ячейку (например, «Заказано», введённое раньше своего onEdit).
-  v12HarvestDeficitInput(committedKey ? { positionId: positionId, key: committedKey } : null);
+  // Если posData передан вызывающей стороной — harvest уже выполнен, лист
+  // повторно не читаем.
+  if (!posData) {
+    v12HarvestDeficitInput(committedKey ? { positionId: positionId, key: committedKey } : null);
+  }
   const id = normalizeMaterialId(positionId);
   if (!id) {
     v12RefreshDeficitSummary();
@@ -333,7 +355,7 @@ function v12RefreshDeficitSummaryRow(positionId, committedKey) {
   }
   const P = V12_CONFIG.POSITION_COLUMNS;
   const D = V12_CONFIG.DEFICIT_COLUMNS;
-  const data = v12ReadSheet("POSITION_STATE");
+  const data = posData || v12ReadSheet("POSITION_STATE");
   const rows = [];
   let targetIndex = -1;
 
@@ -483,12 +505,13 @@ function v12ProductionStatusDisplay(state) {
 function v12InstallDeficitCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
   const D = V12_CONFIG.DEFICIT_COLUMNS;
-  const lastRow = sheet.getLastRow();
-  const maxRows = Math.max(lastRow - 1, rowCount || 0);
-  if (maxRows <= 0) {
+  // clearBody больше НЕ сбрасывает валидации (см. clearRange), поэтому чистим
+  // колонку на всю высоту листа — иначе ниже новых данных останутся «фантомные» чекбоксы.
+  const totalRows = Math.max(sheet.getMaxRows() - 1, rowCount || 0);
+  if (totalRows <= 0) {
     return;
   }
-  sheet.getRange(2, D.REAL_DELIVERY, maxRows, 1).clearDataValidations();
+  sheet.getRange(2, D.REAL_DELIVERY, totalRows, 1).clearDataValidations();
   if (rowCount > 0) {
     sheet.getRange(2, D.REAL_DELIVERY, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
@@ -508,22 +531,29 @@ let _v12HarvestingPicking = false;
  * без пересчёта проекций (skipRefresh=true); пересчёт делает вызывающая сторона
  * (v12RefreshPicking). Вызывается в начале v12RefreshPicking ДО перезаписи листа.
  */
-function v12HarvestPickingInput() {
+function v12HarvestPickingInput(posData) {
   if (_v12HarvestingPicking) {
-    return;
+    return false;
   }
   _v12HarvestingPicking = true;
   try {
     const sheet = getSheetByName(V12_CONFIG.SHEETS.PICKING);
     if (!sheet) {
-      return;
+      return false;
     }
     const K = V12_CONFIG.PICKING_COLUMNS;
     const data = readSheetValues(sheet);
     if (data.length < 2) {
-      return;
+      return false;
     }
     let handedAny = false;
+    // Общие индексы и накопитель дельт на весь проход — чтобы не читать листы
+    // на каждую отмеченную строку (передача через harvest тоже пакетная).
+    // posData (опц.) — уже прочитанный POSITION_STATE от вызывающей стороны
+    // (v12RefreshProjections): не читаем лист повторно (P-7 отчёта №33).
+    const posIndex = v12BuildPositionIndex(posData);
+    const materialIndex = v12BuildMaterialIndex();
+    const ctx = { index: posIndex, materialIndex: materialIndex, warehouseDelta: {} };
     for (let i = 1; i < data.length; i++) {
       if (!v12IsChecked(data[i][K.CHECKBOX - 1])) {
         continue;
@@ -533,12 +563,16 @@ function v12HarvestPickingInput() {
         continue;
       }
       // skipRefresh=true — проекции пересчитает вызывающая сторона.
-      v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true);
+      v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true, ctx);
       handedAny = true;
     }
+    v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex);
     if (handedAny) {
       SpreadsheetApp.flush();
     }
+    // Признак «harvest что-то передал» — вызывает перечитывание POSITION_STATE
+    // в v12RefreshProjections (передача меняет состояние позиций).
+    return handedAny;
   } finally {
     _v12HarvestingPicking = false;
   }
@@ -620,7 +654,7 @@ function v12InstallPickingBomFilter(codes) {
  * «(Все проекты)»/пусто — без фильтра.
  * Порядок строк: BOM -> «На складе» сверху -> номер строки в BOM.
  */
-function v12RefreshPicking(posData) {
+function v12RefreshPicking(posData, revDates) {
   if (!posData) {
     v12HarvestPickingInput();
   }
@@ -629,8 +663,9 @@ function v12RefreshPicking(posData) {
   const data = posData || v12ReadSheet("POSITION_STATE");
   const codes = v12GetBomProjectCodes(data);
   // Даты создания BOM (самая ранняя ревизия) — для колонки «Дата поставки»
-  // у позиций, изначально закрытых резервом BOM.
-  const bomCreatedDates = v12BuildRevisionDateMap();
+  // у позиций, изначально закрытых резервом BOM. revDates передаётся из
+  // v12RefreshProjections, чтобы не читать BOM_REVISION повторно.
+  const bomCreatedDates = revDates || v12BuildRevisionDateMap();
   let filter = v12GetPickingFilter();
   // Выбран несуществующий/исчезнувший проект — сбрасываем фильтр на «Все проекты»
   // до сборки строк (иначе лист окажется пустым).
@@ -738,12 +773,11 @@ function v12PickingDeliveryDate(r, bomCreatedDate) {
 function v12InstallPickingCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("PICKING");
   const K = V12_CONFIG.PICKING_COLUMNS;
-  const lastRow = sheet.getLastRow();
-  const maxRows = Math.max(lastRow - 1, rowCount || 0);
-  if (maxRows <= 0) {
+  const totalRows = Math.max(sheet.getMaxRows() - 1, rowCount || 0);
+  if (totalRows <= 0) {
     return;
   }
-  sheet.getRange(2, K.CHECKBOX, maxRows, 1).clearDataValidations();
+  sheet.getRange(2, K.CHECKBOX, totalRows, 1).clearDataValidations();
   if (rowCount > 0) {
     sheet.getRange(2, K.CHECKBOX, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
@@ -847,12 +881,11 @@ function v12RefreshWorkingBOM(posData) {
 function v12InstallWorkingBomCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("WORKING_BOM");
   const W = V12_CONFIG.WORKING_BOM_COLUMNS;
-  const lastRow = sheet.getLastRow();
-  const maxRows = Math.max(lastRow - 1, rowCount || 0);
-  if (maxRows <= 0) {
+  const totalRows = Math.max(sheet.getMaxRows() - 1, rowCount || 0);
+  if (totalRows <= 0) {
     return;
   }
-  sheet.getRange(2, W.CHECKBOX, maxRows, 1).clearDataValidations();
+  sheet.getRange(2, W.CHECKBOX, totalRows, 1).clearDataValidations();
   if (rowCount > 0) {
     sheet.getRange(2, W.CHECKBOX, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
@@ -971,9 +1004,18 @@ function v12AggregateBomStates(posData) {
         b.partial++;
         b.missing.push({ code: r[P.MATERIAL_CODE - 1], name: r[P.MATERIAL_NAME - 1], reason: "Поставлено частично" });
         break;
-      case V12_CONFIG.SUPPLY_STATE.ORDERED:
-        b.onTime++;
+      case V12_CONFIG.SUPPLY_STATE.ORDERED: {
+        // Позиция заказана и ещё не собрана: если ожидаемый приход позже
+        // крайнего срока — BOM «опаздывает» (иначе статус WAITING_LATE недостижим).
+        const exp = v12ToDate(r[P.EXPECTED_DATE - 1]);
+        const dead = v12ToDate(r[P.DEADLINE - 1]);
+        if (exp && dead && exp.getTime() > dead.getTime()) {
+          b.late++;
+        } else {
+          b.onTime++;
+        }
         break;
+      }
       default:
         b.onTime++;
     }
@@ -1008,12 +1050,12 @@ function v12ComputeBomStatus(agg) {
  * DASHBOARD: сводка по BOM. Чекбокс «Выполнено» (DONE) активен только
  * при «Готов к производству» (ТЗ №53).
  */
-function v12RefreshDashboard(posData) {
+function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   const D = V12_CONFIG.DASHBOARD_COLUMNS;
   const agg = v12AggregateBomStates(posData);
-  const excluded = v12BuildExcludedMap();
+  const excluded = excludedIn || v12BuildExcludedMap();
   const bomIds = Object.keys(agg);
-  const revDates = v12BuildRevisionDateMap();
+  const revDates = revDatesIn || v12BuildRevisionDateMap();
   const rows = [];
 
   bomIds.forEach(function (bomId) {
@@ -1077,12 +1119,11 @@ function v12BuildRevisionDateMap() {
  */
 function v12InstallDashboardCheckboxes(rowCount) {
   const sheet = v12GetSheetByKey("DASHBOARD");
-  const lastRow = sheet.getLastRow();
-  const maxRows = Math.max(lastRow - 1, rowCount || 0);
-  if (maxRows <= 0) {
+  const totalRows = Math.max(sheet.getMaxRows() - 1, rowCount || 0);
+  if (totalRows <= 0) {
     return;
   }
-  sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.DONE, maxRows, 1).clearDataValidations();
+  sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.DONE, totalRows, 1).clearDataValidations();
   if (rowCount > 0) {
     sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.DONE, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());

@@ -41,6 +41,13 @@ function writeValues(sheet, row, col, values) {
 
 /**
  * Очистить содержимое диапазона.
+ *
+ * ВАЖНО: data-validation НЕ сбрасывается здесь. Ранее `clearDataValidations()`
+ * вызывался на каждом пересчёте (`clearBody` → `clearRange`) и стирал все
+ * валидации тела листа, из-за чего чекбоксы «Реальная поставка»/«Отметка
+ * получено» терялись, если проекция не переустанавливала их. Теперь каждый
+ * владелец валидации (v12Install*Checkboxes / v12InstallPickingBomFilter)
+ * управляет ею сам и очищает свою колонку на всю высоту листа.
  */
 function clearRange(sheet, row, col, numRows, numCols) {
   if (numRows <= 0 || numCols <= 0) {
@@ -48,7 +55,6 @@ function clearRange(sheet, row, col, numRows, numCols) {
   }
   const range = sheet.getRange(row, col, numRows, numCols);
   range.clearContent();
-  range.clearDataValidations();
 }
 
 /**

@@ -177,6 +177,30 @@ function v12BuildPositionIndex(data) {
 }
 
 /**
+ * Построить индекс POSITION_STATE, СГРУППИРОВАННЫЙ по BOM_ID:
+ *   Map<bomId(norm), Map<positionId, {row, values}>>.
+ * Позволяет получать позиции конкретного BOM за O(1), без полного прохода по
+ * всем позициям (в v12RunFullSync это ранее давало O(BOMs × positions)).
+ */
+function v12BuildPositionsByBomIndex(data) {
+  const rows = data || v12ReadSheet("POSITION_STATE");
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const byBom = new Map();
+  for (let i = 1; i < rows.length; i++) {
+    const pid = normalizeMaterialId(rows[i][P.POSITION_ID - 1]);
+    if (!pid) {
+      continue;
+    }
+    const bomId = v12Norm(rows[i][P.BOM_ID - 1]);
+    if (!byBom.has(bomId)) {
+      byBom.set(bomId, new Map());
+    }
+    byBom.get(bomId).set(pid, { row: i + 1, values: rows[i] });
+  }
+  return byBom;
+}
+
+/**
  * Получить позицию по positionId.
  */
 function v12GetPositionById(positionId, index) {

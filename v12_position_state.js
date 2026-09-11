@@ -12,8 +12,15 @@
 
 /**
  * Получить позиции конкретного BOM: Map<positionId, {row, values}>.
+ *
+ * byBom (опц.) — индекс Map<bomId, Map<pid, m>> (v12BuildPositionsByBomIndex):
+ * даёт позиции конкретного BOM за O(1) без полного прохода по всем позициям.
+ * Без byBom — линейный проход по index (обратная совместимость).
  */
-function v12GetPositionsByBom(bomId, index) {
+function v12GetPositionsByBom(bomId, index, byBom) {
+  if (byBom) {
+    return byBom.get(v12Norm(bomId)) || new Map();
+  }
   const idx = index || v12BuildPositionIndex();
   const P = V12_CONFIG.POSITION_COLUMNS;
   const result = new Map();

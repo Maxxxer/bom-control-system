@@ -28,6 +28,7 @@ function makeSheet(name, header) {
       for (let r = 0; r < this._data.length; r++) { const row = this._data[r] || []; for (let c = 0; c < row.length; c++) { const v = row[c]; if (v !== "" && v !== null && v !== undefined) { if (c + 1 > last) { last = c + 1; } } } }
       return last;
     },
+    getMaxRows() { return 1000; },
     getDataRange() {
       const lastRow = this.getLastRow(), lastCol = this.getLastColumn(), src = this._data, out = [];
       for (let r = 0; r < lastRow; r++) { const row = src[r] || [], rr = []; for (let c = 0; c < lastCol; c++) { const v = row[c]; rr.push(v === undefined || v === null ? "" : v); } out.push(rr); }
@@ -69,7 +70,7 @@ globalThis.SpreadsheetApp = {
   newConditionalFormatRule() { return { whenTextContains() { return this; }, setBackground() { return this; }, setRanges() { return this; }, build() { return {}; } }; },
   flush() {}
 };
-globalThis.LockService = { getScriptLock() { return { waitLock() {}, releaseLock() {} }; } };
+globalThis.LockService = { getScriptLock() { return { waitLock() {}, tryLock() { return true; }, releaseLock() {} }; } };
 globalThis.PropertiesService = { getScriptProperties() { return { getProperty() { return null; }, setProperty() {}, deleteProperty() {} }; } };
 globalThis.Session = { getActiveUser() { return { getEmail() { return "test@example.com"; } }; } };
 globalThis.Utilities = { getUuid() { return "uuid-" + Math.random().toString(16).slice(2); } };
@@ -81,7 +82,7 @@ const files = [
   "v12_config.js", "utils.js", "sheet_service.js", "v12_utils.js", "v12_calculate.js",
   "v12_position_state.js", "v12_material_state.js", "v12_audit.js", "v12_roles.js",
   "v12_source.js", "v12_sheet_service.js", "v12_projections.js", "v12_operations.js",
-  "v12_handoff.js", "v12_change_engine.js", "lock.js", "v12_trigger.js"
+  "v12_handoff.js", "v12_change_engine.js", "v12_events.js", "lock.js", "v12_trigger.js"
 ];
 
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")
@@ -102,7 +103,7 @@ globalThis.v12MarkReceivedByProduction = function (positionId, sourceUI, skipRef
   return { status: "ok" };
 };
 
-["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "PICKING", "WORKING_BOM"]
+["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "PICKING", "WORKING_BOM", "EVENT_LOG"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
 const PS = sheets[C.SHEETS.POSITION_STATE];
