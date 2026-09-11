@@ -955,10 +955,10 @@ function v12RefreshSupply(posData, revDates) {
 /**
  * Учесть проект позиции в карте проектов материала (колонка «Проекты»).
  *
- * projectsMap: { <код проекта>: { project, date } }. Для каждого проекта
- * хранится «крайняя» (самая поздняя) дата поставки среди его позиций — по ней
- * затем идёт сортировка проектов. Проекты без кода (пустое имя BOM) не
- * учитываются.
+ * projectsMap: { <код проекта>: { project, date, deficit } }. Для каждого
+ * проекта суммируется дефицит его позиций и хранится «крайняя» (самая поздняя)
+ * дата поставки — по ней затем идёт сортировка проектов. Проекты без кода
+ * (пустое имя BOM) не учитываются.
  */
 function v12AccumulateSupplyProject(projectsMap, r, bomCreatedDates) {
   const P = V12_CONFIG.POSITION_COLUMNS;
@@ -966,13 +966,18 @@ function v12AccumulateSupplyProject(projectsMap, r, bomCreatedDates) {
   if (!project) {
     return;
   }
+  let entry = projectsMap[project];
+  if (!entry) {
+    entry = { project: project, date: "", deficit: 0 };
+    projectsMap[project] = entry;
+  }
+  entry.deficit += toNumber(r[P.DEFICIT_QTY - 1]);
   const date = v12PickingDeliveryDate(
     r,
     bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]
   );
-  const prev = projectsMap[project];
-  if (!prev || v12IsLaterDate(date, prev.date)) {
-    projectsMap[project] = { project: project, date: date };
+  if (v12IsLaterDate(date, entry.date)) {
+    entry.date = date;
   }
 }
 
@@ -993,10 +998,11 @@ function v12IsLaterDate(date, than) {
 }
 
 /**
- * Текст колонки «Проекты»: по строке на проект «<номер> - <дата>».
+ * Текст колонки «Проекты»: по строке на проект в формате
+ * «<дефицит> - <номер проекта> - <дата>» (пример: «4 - 1234.АБВ - 05.09.2026»).
  *
  * Сортировка по дате поставки по возрастанию (самый ранний проект сверху);
- * проекты без распознанной даты — в конце (в порядке кода проекта).
+ * проекты без распознанной даты — в конце (в порядке кода проекта), без даты.
  * Формат даты — dd.MM.yyyy.
  */
 function v12BuildSupplyProjectsText(projectsMap) {
@@ -1013,7 +1019,9 @@ function v12BuildSupplyProjectsText(projectsMap) {
   });
   return list.map(function (p) {
     const d = v12ToDate(p.date);
-    return d ? (p.project + " - " + v12FormatDateOnly(d)) : p.project;
+    return d
+      ? (p.deficit + " - " + p.project + " - " + v12FormatDateOnly(d))
+      : (p.deficit + " - " + p.project);
   }).join("\n");
 }
 
