@@ -19,8 +19,13 @@
 
 /**
  * Кэш «уже применённого UI» по проекциям (число строк). Позволяет не
- * пересоздавать data-validation и conditional-formatting правила на каждом
- * пересчёте — это дорогие вызовы уровня листа.
+ * пересоздавать conditional-formatting правила на каждом пересчёте — это
+ * дорогой вызов уровня листа.
+ *
+ * ВНИМАНИЕ: data-validation (чекбоксы Сводки/ОТБОРКИ) здесь НЕ кэшируется.
+ * `v12ClearBody` → `clearRange.clearDataValidations()` стирает валидации на
+ * каждом полном пересчёте, поэтому `v12InstallDeficitCheckboxes` и
+ * `v12InstallPickingCheckboxes` обязаны восстанавливать их безусловно.
  */
 const _v12ProjectionUiState = {};
 
@@ -476,10 +481,6 @@ function v12ProductionStatusDisplay(state) {
  * Чекбокс «Реальная поставка» (REAL_DELIVERY, кол. 12).
  */
 function v12InstallDeficitCheckboxes(rowCount) {
-  if (rowCount > 0 && _v12ProjectionUiState.deficitCheckboxes === rowCount) {
-    return; // число строк не изменилось — валидации уже стоят
-  }
-  _v12ProjectionUiState.deficitCheckboxes = rowCount;
   const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
   const D = V12_CONFIG.DEFICIT_COLUMNS;
   const lastRow = sheet.getLastRow();
@@ -735,10 +736,6 @@ function v12PickingDeliveryDate(r, bomCreatedDate) {
  * Чекбокс передачи в ОТБОРКЕ (кол. 12).
  */
 function v12InstallPickingCheckboxes(rowCount) {
-  if (rowCount > 0 && _v12ProjectionUiState.pickingCheckboxes === rowCount) {
-    return; // число строк не изменилось — валидации уже стоят
-  }
-  _v12ProjectionUiState.pickingCheckboxes = rowCount;
   const sheet = v12GetSheetByKey("PICKING");
   const K = V12_CONFIG.PICKING_COLUMNS;
   const lastRow = sheet.getLastRow();
