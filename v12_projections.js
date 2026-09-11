@@ -949,6 +949,36 @@ function v12RefreshSupply(posData, revDates) {
   if (rows.length) {
     v12WriteRows("SUPPLY", 2, rows);
   }
+  v12EnsureSupplyFilter(rows.length);
+}
+
+/**
+ * Обеспечить автофильтр на листе СНАБЖЕНИЕ — сортировка и фильтр по любому
+ * столбцу (удобство работы снабжения с таблицей).
+ *
+ * Диапазон автофильтра — строка заголовков + строки данных (rowCount). Если
+ * существующий фильтр уже покрывает нужный диапазон — не трогаем его (не
+ * сбрасываем пользовательскую сортировку/фильтр при простом пересчёте).
+ * Иначе — пересоздаём. В окружениях без фильтров (локальные Node-тесты)
+ * функция ничего не делает.
+ */
+function v12EnsureSupplyFilter(rowCount) {
+  const sheet = v12GetSheetByKey("SUPPLY");
+  if (typeof sheet.getFilter !== "function") {
+    return;
+  }
+  const cols = V12_CONFIG.COLUMN_COUNT.SUPPLY;
+  const lastRow = Math.max((rowCount || 0) + 1, 2);
+  const existing = sheet.getFilter();
+  if (existing) {
+    const r = existing.getRange();
+    if (r.getRow() === 1 && r.getColumn() === 1 &&
+        r.getLastRow() === lastRow && r.getLastColumn() === cols) {
+      return;
+    }
+    existing.remove();
+  }
+  sheet.getRange(1, 1, lastRow, cols).createFilter();
 }
 
 /**

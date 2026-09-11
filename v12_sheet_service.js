@@ -198,6 +198,8 @@ function v12FormatSupplySheet() {
   if (typeof sheet.setColumnWidth === "function") {
     sheet.setColumnWidth(col, V12_SUPPLY_PROJECTS_COL_WIDTH);
   }
+  // Автофильтр (сортировка/фильтр по любому столбцу) — удобство работы снабжения.
+  v12EnsureSupplyFilter(Math.max(sheet.getLastRow() - 1, 0));
 }
 
 /**

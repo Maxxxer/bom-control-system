@@ -54,6 +54,7 @@ function makeSheet(name, header) {
       }
     },
     setColumnWidth() { globalThis.__colWidthCalls = (globalThis.__colWidthCalls || 0) + 1; },
+    getFilter() { return this._filter || null; },
     getDataRange() {
       const lastRow = this.getLastRow(), lastCol = this.getLastColumn(), src = this._data, out = [];
       for (let r = 0; r < lastRow; r++) { const row = src[r] || [], rr = []; for (let c = 0; c < lastCol; c++) { const v = row[c]; rr.push(v === undefined || v === null ? "" : v); } out.push(rr); }
@@ -72,7 +73,21 @@ function makeSheet(name, header) {
         clearContent() { for (let i = 0; i < numRows; i++) { for (let j = 0; j < numCols; j++) { self._setCell(row + i, col + j, ""); } } return this; },
         clearDataValidations() { return this; }, setDataValidation() { return this; },
         setBackgrounds() { return this; }, setBackground() { return this; }, setFontWeight() { return this; }, setNotes() { return this; },
-        setWrapStrategy() { globalThis.__wrapCalls = (globalThis.__wrapCalls || 0) + 1; return this; }
+        setWrapStrategy() { globalThis.__wrapCalls = (globalThis.__wrapCalls || 0) + 1; return this; },
+        createFilter() {
+          const filter = {
+            getRange() {
+              return {
+                getRow() { return row; }, getColumn() { return col; },
+                getLastRow() { return row + numRows - 1; }, getLastColumn() { return col + numCols - 1; }
+              };
+            },
+            remove() { self._filter = null; globalThis.__filterRemoveCalls = (globalThis.__filterRemoveCalls || 0) + 1; }
+          };
+          self._filter = filter;
+          globalThis.__filterCreateCalls = (globalThis.__filterCreateCalls || 0) + 1;
+          return filter;
+        }
       };
     },
     _setCell(r, c, v) {
@@ -326,6 +341,45 @@ console.log("=== S9: закрытый проект выпадает из кол�
   check("в «Проекты» только незакрытый проект",
     SP._data[1][S.PROJECTS - 1], "5 - BBB - 05.09.2026");
   check("«Всего дефицит» = 5", SP._data[1][S.TOTAL_DEFICIT - 1], 5);
+}
+
+console.log("=== S10: автофильтр на СНАБЖЕНИЕ (сортировка по столбцам) ===");
+{
+  const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-30"
+  }, "AAA-100:C1", 1, { expectedDate: "2026-09-05" }));
+
+  globalThis.__filterCreateCalls = 0;
+  globalThis.__filterRemoveCalls = 0;
+
+  N.v12RefreshSupply();   // 1 материал -> фильтр на строки 1..2
+  const f1 = SP.getFilter();
+  check("автофильтр создан", f1 !== null, true);
+  check("диапазон начинается со строки 1, кол. 1",
+    f1.getRange().getRow() === 1 && f1.getRange().getColumn() === 1, true);
+  check("последняя строка диапазона = 2", f1.getRange().getLastRow(), 2);
+  check("последняя колонка диапазона = 12", f1.getRange().getLastColumn(), 12);
+  check("createFilter вызван 1 раз", globalThis.__filterCreateCalls, 1);
+
+  // Повторный пересчёт с тем же числом строк — фильтр не пересоздаётся
+  // (не сбрасываем пользовательскую сортировку/фильтр).
+  N.v12RefreshSupply();
+  check("повторный пересчёт не пересоздаёт фильтр", globalThis.__filterCreateCalls, 1);
+  check("фильтр не удалялся", globalThis.__filterRemoveCalls, 0);
+
+  // Появился второй материал — диапазон расширяется (пересоздание фильтра).
+  PS._data.push(N.v12BuildPositionRow("BBB-200", {
+    bomName: "BBB-200", row: 1, code: "C2", name: "M-C2", model: "M1", unit: "шт",
+    requiredQty: 3, reservedQty: 0, deadline: "2026-09-30"
+  }, "BBB-200:C2", 1, {}));
+  N.v12RefreshSupply();   // 2 материала -> строки 1..3
+  check("фильтр пересоздан под новый диапазон", globalThis.__filterCreateCalls, 2);
+  check("старый фильтр удалён", globalThis.__filterRemoveCalls, 1);
+  check("новая последняя строка = 3", SP.getFilter().getRange().getLastRow(), 3);
 }
 
 console.log("");
