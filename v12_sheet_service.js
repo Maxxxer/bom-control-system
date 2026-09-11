@@ -37,6 +37,7 @@ function v12EnsureAllSheets() {
   });
   v12MigratePickingSchema();
   v12MigratePositionSchema();
+  v12MigrateSupplySchema();
   v12FormatAllSheets();
   // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
   // строку заголовков (в т.ч. ячейку B1).
@@ -122,6 +123,53 @@ function v12MigratePositionSchema() {
   }
   sheet.getRange(1, 1, 1, canonical.length).setValues([canonical]);
   sheet.getRange(1, 1, 1, canonical.length).setFontWeight("bold");
+}
+
+/**
+ * Устаревшие заголовки СНАБЖЕНИЯ, которые удаляются миграцией: эти колонки
+ * исключены из канона листа (агрегация по materialKey их не показывает).
+ */
+const V12_SUPPLY_LEGACY_HEADERS = ["Всего требуется", "Всего зарезервировано"];
+
+/**
+ * Миграция листа СНАБЖЕНИЕ под новую схему.
+ *
+ * В прежней схеме СНАБЖЕНИЕ содержало колонки «Всего требуется» и «Всего
+ * зарезервировано». Из канона (11 колонок) они убраны. Миграция удаляет любые
+ * устаревшие колонки из заголовка и приводит строку заголовков к канону.
+ * Тело листа не трогаем — оно пересобирается v12RefreshSupply.
+ */
+function v12MigrateSupplySchema() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.SUPPLY);
+  if (!sheet || typeof sheet.deleteColumn !== "function") {
+    return;
+  }
+  const expected = V12_CONFIG.HEADERS.SUPPLY.length;
+  // Порядок колонок меняется после каждого удаления — ищем заголовки заново
+  // и всегда удаляем самый левый устаревший столбец.
+  let safety = 0;
+  while (safety < 10) {
+    safety++;
+    const lastCol = sheet.getLastColumn();
+    if (lastCol <= 0) {
+      break;
+    }
+    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    let legacyIndex = -1;
+    V12_SUPPLY_LEGACY_HEADERS.forEach(function (name) {
+      const i = header.indexOf(name);
+      if (i !== -1 && (legacyIndex === -1 || i < legacyIndex)) {
+        legacyIndex = i;
+      }
+    });
+    if (legacyIndex === -1) {
+      break;
+    }
+    sheet.deleteColumn(legacyIndex + 1);
+  }
+  // Канонический заголовок (после удаления всех устаревших колонок).
+  sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.SUPPLY]);
+  sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
 }
 
 /**

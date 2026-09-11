@@ -63,7 +63,7 @@ const V12_CONFIG = {
     DEFICIT_SUMMARY: 14,
     PICKING: 12,
     WORKING_BOM: 15,
-    SUPPLY: 13,
+    SUPPLY: 11,
     DASHBOARD: 11,
     ARCHIVE: 13,
     AUDIT_LOG: 11,
@@ -214,7 +214,7 @@ const V12_CONFIG = {
   },
 
   /**
-   * СНАБЖЕНИЕ (SUPPLY) (13) — агрегация по materialKey.
+   * СНАБЖЕНИЕ (SUPPLY) (11) — агрегация по materialKey.
    */
   SUPPLY_COLUMNS: {
     MATERIAL_KEY: 1,
@@ -222,14 +222,12 @@ const V12_CONFIG = {
     MATERIAL_NAME: 3,
     MODEL: 4,
     UNIT: 5,
-    TOTAL_REQUIRED: 6,
-    TOTAL_RESERVED: 7,
-    TOTAL_DEFICIT: 8,
-    TOTAL_ORDERED: 9,
-    TOTAL_REAL_DELIVERY: 10,
-    TOTAL_UNCOVERED: 11,
-    BOM_COUNT: 12,
-    UPDATED_AT: 13
+    TOTAL_DEFICIT: 6,
+    TOTAL_ORDERED: 7,
+    TOTAL_REAL_DELIVERY: 8,
+    TOTAL_UNCOVERED: 9,
+    BOM_COUNT: 10,
+    UPDATED_AT: 11
   },
 
   /**
@@ -380,9 +378,8 @@ const V12_CONFIG = {
     ],
     SUPPLY: [
       "Material Key", "Код", "Наименование", "Модель", "Ед.изм",
-      "Всего требуется", "Всего зарезервировано", "Всего дефицит",
-      "Всего заказано", "Всего поставлено", "Всего непокрыто",
-      "BOM (кол-во)", "Обновлено"
+      "Всего дефицит", "Всего заказано", "Всего поставлено",
+      "Всего непокрыто", "BOM (кол-во)", "Обновлено"
     ],
     DASHBOARD: [
       "Выполнено", "BOM ID", "BOM", "Статус", "Позиций", "Собрано",

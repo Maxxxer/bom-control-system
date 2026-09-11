@@ -918,13 +918,11 @@ function v12RefreshSupply(posData) {
         name: r[P.MATERIAL_NAME - 1],
         model: r[P.MODEL - 1],
         unit: r[P.UNIT - 1],
-        required: 0, reserved: 0, deficit: 0, ordered: 0,
+        deficit: 0, ordered: 0,
         realDelivery: 0, uncovered: 0, bomCount: 0
       };
     }
     const a = agg[key];
-    a.required += toNumber(r[P.REQUIRED_QTY - 1]);
-    a.reserved += toNumber(r[P.RESERVED_QTY - 1]);
     a.deficit += toNumber(r[P.DEFICIT_QTY - 1]);
     a.ordered += toNumber(r[P.ORDERED_QTY - 1]);
     a.realDelivery += toNumber(r[P.REAL_DELIVERY_QTY - 1]);
@@ -935,8 +933,8 @@ function v12RefreshSupply(posData) {
   const rows = Object.keys(agg).map(function (key) {
     const a = agg[key];
     return [key, a.code, a.name, a.model, a.unit,
-      a.required, a.reserved, a.deficit, a.ordered,
-      a.realDelivery, a.uncovered, a.bomCount, new Date()];
+      a.deficit, a.ordered, a.realDelivery,
+      a.uncovered, a.bomCount, new Date()];
   });
 
   v12ClearBody("SUPPLY");
