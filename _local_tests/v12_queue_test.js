@@ -11,7 +11,14 @@
  *         повторный слив — no-op (идемпотентность, склад не меняется);
  *   Z5  — REAL_DELIVERY: realDelivery = required, склад +required один раз;
  *   Z6  — заблокированное намерение -> FAILED с причиной;
- *   Z7  — очистка старых DONE-строк (purge).
+ *   Z7  — очистка старых DONE-строк (purge);
+ *   Z8/Z8b — Вариант A: захват «Заказано» из Сводки и сохранение ввода, даже
+ *            если пересборка проекции затрёт ячейку (регрессия «сброс в 0.0»);
+ *   Z9  — «Заказано» = 0 применяется (для типизированных полей это НЕ отмена);
+ *   Z10 — захват «Ожидаемой поставки» из Сводки + слив;
+ *   Z11 — last-wins по «Заказано» (одно намерение, последнее значение);
+ *   Z12 — «Реальная поставка» через общий захват Сводки (регрессия);
+ *   Z13 — read-only колонка Сводки не перехватывается.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script.
  * Запуск: node _local_tests/v12_queue_test.js
@@ -125,6 +132,8 @@ const PS = sheets[C.SHEETS.POSITION_STATE];
 const MS = sheets[C.SHEETS.MATERIAL_STATE];
 const PK = sheets[C.SHEETS.PICKING];
 const QS = sheets[C.SHEETS.PENDING_EDITS];
+const DS = sheets[C.SHEETS.DEFICIT_SUMMARY];
+const D = C.DEFICIT_COLUMNS;
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -179,6 +188,11 @@ function cellEvent(sheet, row, col, value, oldValue) {
 function pickRow(positionId) {
   const row = new Array(C.COLUMN_COUNT.PICKING).fill("");
   row[K.POSITION_ID - 1] = positionId;
+  return row;
+}
+function deficitRow(positionId) {
+  const row = new Array(C.COLUMN_COUNT.DEFICIT_SUMMARY).fill("");
+  row[D.POSITION_ID - 1] = positionId;
   return row;
 }
 
@@ -333,6 +347,93 @@ resetQueue();
   check("Z7: старейшая строка удалена", hasOld, false);
   check("Z7: PENDING-строка сохранена", hasPending, true);
 }
+
+console.log("=== Z8: захват «Заказано» из Сводки + слив ===");
+resetPositions();
+resetQueue();
+resetPicking();
+setMaterial({ "C1": 0 });
+PS._data.push(mkPosition("C1", 1, 10, 0, 0, "", "2026-09-30"));   // deficit = 10
+DS._data = [C.HEADERS.DEFICIT_SUMMARY.slice()];
+DS._data.push(deficitRow("BOM1:C1"));
+N.v12OnEdit(cellEvent(DS, 2, D.ORDERED_QTY, 100));
+check("Z8: в очереди 1 строка", queueData().length - 1, 1);
+check("Z8: SOURCE = DEFICIT_SUMMARY", queueData()[1][Q.SOURCE - 1], "DEFICIT_SUMMARY");
+check("Z8: FIELD = ORDERED_QTY", queueData()[1][Q.FIELD - 1], "ORDERED_QTY");
+check("Z8: VALUE = 100 (число, не boolean)", queueData()[1][Q.VALUE - 1], 100);
+N.v12DrainPendingEdits();
+check("Z8: POSITION_STATE.ORDERED_QTY = 100", psCell("BOM1:C1", P.ORDERED_QTY), 100);
+check("Z8: строка очереди DONE", queueData()[1][Q.STATUS - 1], C.PENDING_STATUS.DONE);
+
+console.log("=== Z8b: ввод не теряется, даже если пересборка затрёт ячейку ===");
+// Симуляция гонки: намерение уже зафиксировано в очереди (быстрый путь onEdit),
+// затем ЛЮБАЯ пересборка проекции перезаписывает ячейку Сводки значением из
+// POSITION_STATE (0). Слив очереди восстанавливает ввод.
+resetPositions();
+resetQueue();
+setMaterial({ "C1": 0 });
+PS._data.push(mkPosition("C1", 1, 10, 0, 0, "", "2026-09-30"));
+DS._data = [C.HEADERS.DEFICIT_SUMMARY.slice()];
+DS._data.push(deficitRow("BOM1:C1"));
+N.v12OnEdit(cellEvent(DS, 2, D.ORDERED_QTY, 7));   // намерение в очереди
+DS._setCell(2, D.ORDERED_QTY, 0);                  // «пересборка» затёрла ячейку
+N.v12DrainPendingEdits();                          // слив применяет намерение
+check("Z8b: заказ сохранён (=7), несмотря на сброс ячейки", psCell("BOM1:C1", P.ORDERED_QTY), 7);
+
+console.log("=== Z9: «Заказано» = 0 применяется (это НЕ отмена) ===");
+resetPositions();
+resetQueue();
+PS._data.push(mkPosition("C1", 1, 10, 0, 50, "2026-09-05", "2026-09-30"));   // уже заказано 50
+DS._data = [C.HEADERS.DEFICIT_SUMMARY.slice()];
+DS._data.push(deficitRow("BOM1:C1"));
+N.v12OnEdit(cellEvent(DS, 2, D.ORDERED_QTY, 0));
+check("Z9: VALUE = 0", queueData()[1][Q.VALUE - 1], 0);
+N.v12DrainPendingEdits();
+check("Z9: ORDERED_QTY сброшен в 0", psCell("BOM1:C1", P.ORDERED_QTY), 0);
+
+console.log("=== Z10: захват «Ожидаемая поставка» + слив ===");
+resetPositions();
+resetQueue();
+PS._data.push(mkPosition("C1", 1, 10, 0, 10, "", "2026-09-30"));
+DS._data = [C.HEADERS.DEFICIT_SUMMARY.slice()];
+DS._data.push(deficitRow("BOM1:C1"));
+N.v12OnEdit(cellEvent(DS, 2, D.EXPECTED_DATE, new Date(2026, 8, 20)));   // 20.09.2026
+check("Z10: FIELD = EXPECTED_DATE", queueData()[1][Q.FIELD - 1], "EXPECTED_DATE");
+N.v12DrainPendingEdits();
+check("Z10: EXPECTED_DATE установлена (Date)", psCell("BOM1:C1", P.EXPECTED_DATE) instanceof Date, true);
+check("Z10: день = 20", psCell("BOM1:C1", P.EXPECTED_DATE).getDate(), 20);
+
+console.log("=== Z11: last-wins по «Заказано» (одно намерение, последнее значение) ===");
+resetQueue();
+N.v12EnqueuePendingEdit("DEFICIT_SUMMARY", "BOM1:C1", "ORDERED_QTY", 10, "u1");
+N.v12EnqueuePendingEdit("DEFICIT_SUMMARY", "BOM1:C1", "ORDERED_QTY", 25, "u2");
+{
+  const intents = N.v12ResolvePendingIntents(queueData());
+  check("Z11: одно намерение", intents.length, 1);
+  check("Z11: последнее значение = 25", intents[0].value, 25);
+}
+
+console.log("=== Z12: «Реальная поставка» через общий захват Сводки (регрессия) ===");
+resetPositions();
+resetQueue();
+setMaterial({ "C1": 5 });
+PS._data.push(mkPosition("C1", 1, 10, 0, 10, "2026-09-05", "2026-09-10"));
+DS._data = [C.HEADERS.DEFICIT_SUMMARY.slice()];
+DS._data.push(deficitRow("BOM1:C1"));
+N.v12OnEdit(cellEvent(DS, 2, D.REAL_DELIVERY, true));
+check("Z12: FIELD = REAL_DELIVERY", queueData()[1][Q.FIELD - 1], "REAL_DELIVERY");
+check("Z12: VALUE = true", queueData()[1][Q.VALUE - 1], true);
+N.v12DrainPendingEdits();
+check("Z12: REAL_DELIVERY_QTY = 10", psCell("BOM1:C1", P.REAL_DELIVERY_QTY), 10);
+check("Z12: склад C1 = 15", whQty("C1"), 15);
+
+console.log("=== Z13: read-only колонка Сводки не перехватывается (идёт прежней логикой) ===");
+resetQueue();
+// Колонка «Статус» (14) — не редактируемая. Захват не должен её принять.
+DS._data = [C.HEADERS.DEFICIT_SUMMARY.slice()];
+DS._data.push(deficitRow("BOM1:C2"));
+N.v12OnEdit(cellEvent(DS, 2, D.STATUS, "Не заказано"));
+check("Z13: очередь пуста (колонка не перехвачена)", queueData().length - 1, 0);
 
 console.log("");
 if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }

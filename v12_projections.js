@@ -198,18 +198,15 @@ function v12HarvestDeficitInput(skip, posData) {
       let changed = false;
       let realDelta = 0;
 
-      const orderedSheet = toNumber(data[i][D.ORDERED_QTY - 1]);
-      const skipOrdered = (pid === skipPid && skipKey === "ORDERED_QTY");
-      if (!skipOrdered && orderedSheet !== toNumber(pos.values[P.ORDERED_QTY - 1])) {
-        rowVals[P.ORDERED_QTY - 1] = orderedSheet;
-        changed = true;
-      }
-      const expDate = v12ParseSummaryDate(data[i][D.EXPECTED_DATE - 1]);
-      const skipExpected = (pid === skipPid && skipKey === "EXPECTED_DATE");
-      if (!skipExpected && expDate && expDate.getTime() !== v12DateValue(pos.values[P.EXPECTED_DATE - 1])) {
-        rowVals[P.EXPECTED_DATE - 1] = expDate;
-        changed = true;
-      }
+      // ВАЖНО (Вариант A): типизированные поля Сводки («Заказано», «Ожидаемая
+      // дата») БОЛЬШЕ НЕ подхватываются из листа. Их правки фиксирует очередь
+      // PENDING_EDITS (onEdit) и применяет слив — значит, к моменту пересбора
+      // проекций POSITION_STATE уже актуален, а ячейка Сводки может содержать
+      // УСТАРЕВШЕЕ значение (идёт пересборка). Прежний «подхват» (Сводка
+      // авторитетнее позиции) в этом случае ЗАТИРАЛ только что применённое
+      // значение нулём/старым — это и был источник исходного дефекта
+      // («сброс в 0.0»). Очередь — единый источник истины для этих полей.
+      // Подхват «Реальной поставки» сохранён ниже: он строго монотонный («вверх»).
 
       // Чекбокс «Реальная поставка» — страховка от потери массовых отметок:
       // если строка отмечена в листе, но поставка ещё не зафиксирована в

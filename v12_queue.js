@@ -66,6 +66,40 @@ function v12WithActor(actor, fn) {
  */
 
 /**
+ * true, если поле очереди — ЧЕКБОКС (boolean-семантика): передача или
+ * реальная поставка. Остальные поля (Заказано/Ожидаемая) — типизированные.
+ */
+function v12IsBooleanPendingField(field) {
+  const F = V12_CONFIG.PENDING_FIELD;
+  return field === F.HANDOFF || field === F.REAL_DELIVERY;
+}
+
+/**
+ * Привести значение намерения к типу, соответствующему полю FIELD:
+ *   чекбоксы (HANDOFF / REAL_DELIVERY) -> boolean (v12IsChecked);
+ *   Заказано (ORDERED_QTY)             -> неотрицательное число;
+ *   Ожидаемая (EXPECTED_DATE)          -> Date либо "" (пусто).
+ *
+ * Единая точка интерпретации колонки VALUE очереди: и при захвате правки,
+ * и при разборе намерений применяется одна и та же нормализация, поэтому
+ * типизированные поля не «схлопываются» в boolean, как раньше.
+ */
+function v12NormalizePendingValue(field, value) {
+  const F = V12_CONFIG.PENDING_FIELD;
+  if (v12IsBooleanPendingField(field)) {
+    return v12IsChecked(value);
+  }
+  if (field === F.ORDERED_QTY) {
+    return Math.max(0, toNumber(value));
+  }
+  if (field === F.EXPECTED_DATE) {
+    const d = v12ToDate(value);
+    return d ? d : "";
+  }
+  return value;
+}
+
+/**
  * Собрать строку очереди (массив по колонкам PENDING_EDITS).
  */
 function v12BuildPendingRow(sourceKey, positionId, field, value, actor) {
@@ -76,7 +110,7 @@ function v12BuildPendingRow(sourceKey, positionId, field, value, actor) {
   row[Q.SOURCE - 1] = sourceKey;
   row[Q.POSITION_ID - 1] = normalizeMaterialId(positionId);
   row[Q.FIELD - 1] = field;
-  row[Q.VALUE - 1] = v12IsChecked(value);
+  row[Q.VALUE - 1] = v12NormalizePendingValue(field, value);
   row[Q.USER - 1] = actor || v12CurrentActor();
   row[Q.STATUS - 1] = V12_CONFIG.PENDING_STATUS.PENDING;
   return row;
@@ -111,9 +145,11 @@ function v12EnqueuePendingEdit(sourceKey, positionId, field, value, actor) {
  *           обычную логику.
  *
  * Обрабатываются:
- *   ОТБОРКА          — кол. CHECKBOX (12),     поле HANDOFF,       право PICKING_CHECKBOX;
- *   WORKING BOM      — кол. CHECKBOX (14),     поле HANDOFF,       право WORKING_BOM_CHECKBOX;
- *   Сводка дефицитов — кол. REAL_DELIVERY (12), поле REAL_DELIVERY, право REAL_DELIVERY.
+ *   ОТБОРКА          — кол. CHECKBOX (12), поле HANDOFF, право PICKING_CHECKBOX;
+ *   WORKING BOM      — кол. CHECKBOX (14), поле HANDOFF, право WORKING_BOM_CHECKBOX;
+ *   Сводка дефицитов — кол. Заказано (9) / Ожидаемая поставка (10) /
+ *                      Реальная поставка (12): поля ORDERED_QTY / EXPECTED_DATE /
+ *                      REAL_DELIVERY (см. v12CaptureDeficitEdit, Вариант A).
  */
 function v12CaptureCheckboxEdit(e, sheetName) {
   const S = V12_CONFIG.SHEETS;
@@ -137,16 +173,10 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     field = V12_CONFIG.PENDING_FIELD.HANDOFF;
     sourceKey = V12_CONFIG.SOURCE_UI.WORKING_BOM;
   } else if (sheetName === S.DEFICIT_SUMMARY) {
-    column = V12_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY;
-    keyCol = V12_CONFIG.DEFICIT_COLUMNS.POSITION_ID;
-    action = "REAL_DELIVERY";
-    field = V12_CONFIG.PENDING_FIELD.REAL_DELIVERY;
-    sourceKey = V12_CONFIG.SOURCE_UI.DEFICIT_SUMMARY;
-    // В Сводке есть и другие редактируемые колонки («Заказано», «Ожидаемая»),
-    // поэтому перехватываем ТОЛЬКО диапазон, целиком лежащий в колонке чекбокса
-    // (клик или вертикальная вставка галочек). Прочие диапазоны отдаём прежней
-    // логике (v12HandleDeficitRangeEdit), чтобы не потерять ввод заказа/даты.
-    exactColumnOnly = true;
+    // Сводка — особый случай: содержит НЕСКОЛЬКО редактируемых колонок
+    // («Заказано», «Ожидаемая поставка», «Реальная поставка»). Их обработка
+    // вынесена в v12CaptureDeficitEdit (Вариант A) — возвращаем её результат.
+    return v12CaptureDeficitEdit(e);
   } else {
     return false;
   }
@@ -212,6 +242,91 @@ function v12CaptureCheckboxEdit(e, sheetName) {
   }
   // Правка относится к чекбокс-колонке — считаем её обработанной здесь,
   // даже если строк без Position ID не оказалось.
+  return true;
+}
+
+/**
+ * Захват правки редактируемой колонки «Сводки дефицитов» (Вариант A).
+ *
+ * Обрабатываются три колонки Сводки:
+ *   ORDERED_QTY (9)   — «Заказано»,        поле ORDERED_QTY,   право ORDERED_QTY;
+ *   EXPECTED_DATE (10)— «Ожидаемая»,       поле EXPECTED_DATE, право EXPECTED_DATE;
+ *   REAL_DELIVERY (12)— «Реальная поставка», поле REAL_DELIVERY, право REAL_DELIVERY.
+ *
+ * Диапазон должен лежать ЦЕЛИКОМ в одной из этих колонок (одиночная ячейка,
+ * вертикальная вставка/автозаполнение). Смешанный диапазон (несколько колонок)
+ * не перехватывается — его обрабатывает прежняя логика onEdit
+ * (v12HandleDeficitRangeEdit), чтобы не потерять ввод.
+ *
+ * Возвращает true, если правка обработана здесь (намерение зафиксировано либо
+ * откатана как запрещённая), иначе false.
+ */
+function v12CaptureDeficitEdit(e) {
+  const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const F = V12_CONFIG.PENDING_FIELD;
+  const range = e.range;
+  const col = range.getColumn();
+  const numCols = range.getNumColumns();
+  const lastCol = col + numCols - 1;
+
+  // Определяем поле/право по колонке. Только диапазон в пределах ОДНОЙ
+  // редактируемой колонки Сводки.
+  let field = "";
+  let action = "";
+  if (col === D.ORDERED_QTY && lastCol === D.ORDERED_QTY) {
+    field = F.ORDERED_QTY;
+    action = "ORDERED_QTY";
+  } else if (col === D.EXPECTED_DATE && lastCol === D.EXPECTED_DATE) {
+    field = F.EXPECTED_DATE;
+    action = "EXPECTED_DATE";
+  } else if (col === D.REAL_DELIVERY && lastCol === D.REAL_DELIVERY) {
+    field = F.REAL_DELIVERY;
+    action = "REAL_DELIVERY";
+  } else {
+    return false;   // не наша колонка / смешанный диапазон — прежняя логика
+  }
+
+  // Права проверяем на этапе захвата: onEdit исполняется от имени редактора
+  // (в отличие от фонового триггера, где getCurrentUser() дал бы владельца).
+  const role = v12GetCurrentUserRole();
+  if (!v12CanEditField(role, action)) {
+    v12RevertEdit(e);
+    logSystem("v12CaptureDeficitEdit",
+      "Нет права '" + action + "' для роли '" + role + "' (" + v12CurrentActor() + ")", "WARNING");
+    flushSystemLog();
+    return true;
+  }
+
+  const sheet = range.getSheet();
+  const firstRow = range.getRow();
+  const numRows = range.getNumRows();
+  const singleCell = (numRows === 1 && numCols === 1);
+  // Снимок значений из события (e.value/e.values) — надёжнее живого чтения при
+  // быстром вводе (пересборка проекции могла успеть перезаписать ячейку).
+  const values = singleCell
+    ? [[e.value !== undefined ? e.value : range.getValue()]]
+    : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
+  const actor = getCurrentUser();
+  // Position ID всех строк диапазона — одной выборкой.
+  const idColumn = sheet.getRange(firstRow, D.POSITION_ID, numRows, 1).getValues();
+
+  const pendingRows = [];
+  for (let r = 0; r < numRows; r++) {
+    const sheetRow = firstRow + r;
+    if (sheetRow <= 1) {
+      continue;   // строка заголовка
+    }
+    const positionId = normalizeMaterialId(idColumn[r][0]);
+    if (!positionId) {
+      continue;
+    }
+    const rawValue = (values[r] && values[r].length) ? values[r][0] : "";
+    pendingRows.push(v12BuildPendingRow(V12_CONFIG.SOURCE_UI.DEFICIT_SUMMARY, positionId, field, rawValue, actor));
+  }
+
+  if (pendingRows.length) {
+    v12EnqueuePendingRows(pendingRows);
+  }
   return true;
 }
 
@@ -313,7 +428,7 @@ function v12ResolvePendingIntents(data) {
     byKey[key].source = source;
     byKey[key].pid = pid;
     byKey[key].field = field;
-    byKey[key].value = v12IsChecked(r[Q.VALUE - 1]);
+    byKey[key].value = v12NormalizePendingValue(field, r[Q.VALUE - 1]);
     byKey[key].user = String(r[Q.USER - 1] || "").trim();
   }
   return order.map(function (k) { return byKey[k]; });
@@ -397,7 +512,7 @@ function v12PurgeDonePendingEdits(maxAgeDays) {
  *
  * Повторяет семантику v12HarvestDeficitInput для одной позиции, но без
  * чтения листа Сводки (намерение уже в очереди). Записи копятся в
- * ctx.realDeliveryWrites, складская дельта — в ctx.warehouseDelta.
+ * ctx.positionWrites, складская дельта — в ctx.warehouseDelta.
  * Возвращает { status: "applied" | "already" | "blocked", reason? }.
  */
 function v12ApplyRealDeliveryIntent(positionId, ctx, posIndex) {
@@ -430,7 +545,7 @@ function v12ApplyRealDeliveryIntent(positionId, ctx, posIndex) {
     unit: rowVals[P.UNIT - 1]
   });
 
-  const writes = (ctx && ctx.realDeliveryWrites) || [];
+  const writes = (ctx && ctx.positionWrites) || [];
   writes.push({ row: pos.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
   writes.push({ row: pos.row, col: P.REAL_DELIVERY_DATE, value: rowVals[P.REAL_DELIVERY_DATE - 1] });
   writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
@@ -467,6 +582,112 @@ function v12ApplyRealDeliveryIntent(positionId, ctx, posIndex) {
 }
 
 /**
+ * Применить намерение «Заказано» (ORDERED_QTY) пакетно.
+ *
+ * Повторяет семантику v12SetOrderedQty (расчёт + аудит + история + событие),
+ * но БЕЗ немедленной перезаписи Сводки/СНАБЖЕНИЯ/Dashboard — записи копятся в
+ * ctx.positionWrites, а проекции пересчитываются ОДИН раз в конце слива.
+ * Возвращает { status: "applied" | "already" | "blocked", reason? }.
+ */
+function v12ApplyOrderedIntent(positionId, value, ctx, posIndex) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  // Право проверяем от имени автора правки (актор-контекст слива).
+  v12RequireRole(v12GetCurrentUserRole(), "ORDERED_QTY");
+
+  const index = posIndex || (ctx && ctx.index) || v12BuildPositionIndex();
+  const pos = v12GetPositionById(positionId, index);
+  if (!pos) {
+    return { status: "blocked", reason: "Позиция не найдена" };
+  }
+
+  const row = pos.values;
+  const newQty = Math.max(0, toNumber(value));
+  const oldQty = toNumber(row[P.ORDERED_QTY - 1]);
+  if (oldQty === newQty) {
+    return { status: "already" };
+  }
+
+  const rowVals = row.slice();
+  rowVals[P.ORDERED_QTY - 1] = newQty;
+  v12ApplyComputedToRow(rowVals);
+
+  const writes = (ctx && ctx.positionWrites) || [];
+  writes.push({ row: pos.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
+  writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
+  writes.push({ row: pos.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
+  writes.push({ row: pos.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
+  writes.push({ row: pos.row, col: P.UNCOVERED_NEED, value: rowVals[P.UNCOVERED_NEED - 1] });
+  writes.push({ row: pos.row, col: P.OVER_ORDERED_QTY, value: rowVals[P.OVER_ORDERED_QTY - 1] });
+  writes.push({ row: pos.row, col: P.SHORT_DELIVERY_QTY, value: rowVals[P.SHORT_DELIVERY_QTY - 1] });
+  writes.push({ row: pos.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
+  writes.push({ row: pos.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
+  writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
+
+  // Синхронизируем in-memory строку индекса целиком (защита от повторной
+  // обработки в пачке: последующие намерения по этой позиции увидят новое).
+  for (let c = 0; c < rowVals.length; c++) {
+    row[c] = rowVals[c];
+  }
+
+  v12Audit({
+    action: V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED,
+    bomId: row[P.BOM_ID - 1],
+    positionId: positionId,
+    field: "ORDERED_QTY",
+    oldValue: oldQty,
+    newValue: newQty
+  });
+  v12LogHistory(positionId, "ORDERED_QTY", oldQty, newQty);
+  v12LogEvent(V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED, positionId, row[P.BOM_ID - 1],
+    { oldValue: oldQty, newValue: newQty });
+
+  return { status: "applied" };
+}
+
+/**
+ * Применить намерение «Ожидаемая поставка» (EXPECTED_DATE) пакетно.
+ *
+ * Повторяет семантику v12SetExpectedDate (нормализация даты + аудит + история),
+ * но записи копятся в ctx.positionWrites (проекции — один раз в конце слива).
+ * Возвращает { status: "applied" | "already" | "blocked", reason? }.
+ */
+function v12ApplyExpectedDateIntent(positionId, value, ctx, posIndex) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  v12RequireRole(v12GetCurrentUserRole(), "EXPECTED_DATE");
+
+  const index = posIndex || (ctx && ctx.index) || v12BuildPositionIndex();
+  const pos = v12GetPositionById(positionId, index);
+  if (!pos) {
+    return { status: "blocked", reason: "Позиция не найдена" };
+  }
+
+  const row = pos.values;
+  const oldDate = row[P.EXPECTED_DATE - 1] || "";
+  const newDate = v12ToDate(value);
+  if (v12DateValue(oldDate) === v12DateValue(newDate)) {
+    return { status: "already" };
+  }
+
+  const writes = (ctx && ctx.positionWrites) || [];
+  writes.push({ row: pos.row, col: P.EXPECTED_DATE, value: newDate ? newDate : "" });
+  writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
+
+  row[P.EXPECTED_DATE - 1] = newDate ? newDate : "";
+
+  v12Audit({
+    action: V12_CONFIG.AUDIT_ACTIONS.EXPECTED_DATE_CHANGED,
+    bomId: row[P.BOM_ID - 1],
+    positionId: positionId,
+    field: "EXPECTED_DATE",
+    oldValue: oldDate,
+    newValue: newDate ? newDate.getTime() : ""
+  });
+  v12LogHistory(positionId, "EXPECTED_DATE", oldDate, newDate ? newDate.getTime() : "");
+
+  return { status: "applied" };
+}
+
+/**
  * Основной слив очереди. Применяет все PENDING-намерения пакетно, одним
  * пересчётом проекций, и помечает строки обработанными.
  */
@@ -495,31 +716,34 @@ function v12DrainPendingEdits() {
       index: posIndex,
       materialIndex: materialIndex,
       warehouseDelta: {},
-      realDeliveryWrites: []
+      positionWrites: []
     };
     const failed = {};
     let applied = 0;
 
     intents.forEach(function (it) {
-      if (!it.value) {
-        return;   // отмена (last-wins) — ничего не делаем
+      // Отмена (last-wins) относится ТОЛЬКО к чекбокс-полям: для них value=false
+      // означает «ничего не делать». Для типизированных полей (Заказано=0,
+      // Очистка даты) значение применяется как есть — это не отмена.
+      if (v12IsBooleanPendingField(it.field) && !it.value) {
+        return;
       }
       v12WithActor(it.user, function () {
         try {
+          let res = null;
           if (it.field === V12_CONFIG.PENDING_FIELD.HANDOFF) {
-            const res = v12MarkReceivedByProduction(it.pid, it.source, true, ctx);
-            if (res && res.status === "blocked") {
-              failed[it.row] = res.reason || "заблокировано";
-            } else {
-              applied++;
-            }
+            res = v12MarkReceivedByProduction(it.pid, it.source, true, ctx);
           } else if (it.field === V12_CONFIG.PENDING_FIELD.REAL_DELIVERY) {
-            const res = v12ApplyRealDeliveryIntent(it.pid, ctx, posIndex);
-            if (res && res.status === "blocked") {
-              failed[it.row] = res.reason || "заблокировано";
-            } else {
-              applied++;
-            }
+            res = v12ApplyRealDeliveryIntent(it.pid, ctx, posIndex);
+          } else if (it.field === V12_CONFIG.PENDING_FIELD.ORDERED_QTY) {
+            res = v12ApplyOrderedIntent(it.pid, it.value, ctx, posIndex);
+          } else if (it.field === V12_CONFIG.PENDING_FIELD.EXPECTED_DATE) {
+            res = v12ApplyExpectedDateIntent(it.pid, it.value, ctx, posIndex);
+          }
+          if (res && res.status === "blocked") {
+            failed[it.row] = res.reason || "заблокировано";
+          } else {
+            applied++;
           }
         } catch (err) {
           failed[it.row] = err.message;
@@ -532,9 +756,10 @@ function v12DrainPendingEdits() {
     if (Object.keys(ctx.warehouseDelta).length) {
       v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex);
     }
-    // Записи POSITION_STATE от «реальной поставки» — одним батчем.
-    if (ctx.realDeliveryWrites.length) {
-      batchWrite(v12GetSheetByKey("POSITION_STATE"), ctx.realDeliveryWrites);
+    // Записи POSITION_STATE (реальная поставка / заказ / ожидаемая дата) —
+    // одним батчем.
+    if (ctx.positionWrites.length) {
+      batchWrite(v12GetSheetByKey("POSITION_STATE"), ctx.positionWrites);
     }
 
     // ОДИН пересчёт всех проекций на всю пачку.
