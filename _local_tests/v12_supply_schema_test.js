@@ -2,16 +2,18 @@
  * ЛОКАЛЬНЫЙ тест схемы листа СНАБЖЕНИЕ (SUPPLY).
  *
  * Проверяет:
- *   - конфиг: COLUMN_COUNT.SUPPLY = 10; SUPPLY_COLUMNS без TOTAL_REQUIRED,
- *     TOTAL_RESERVED, BOM_COUNT и UPDATED_AT; PROJECTS = 10 (последняя колонка);
+ *   - конфиг: COLUMN_COUNT.SUPPLY = 9; SUPPLY_COLUMNS без TOTAL_REQUIRED,
+ *     TOTAL_RESERVED, BOM_COUNT, TOTAL_UNCOVERED и UPDATED_AT;
+ *     PROJECTS = 9 (последняя колонка);
  *     HEADERS.SUPPLY без «Всего требуется»/«Всего зарезервировано»/
- *     «BOM (кол-во)»/«Обновлено», но с «Проекты» (кол. 10);
+ *     «BOM (кол-во)»/«Всего непокрыто»/«Обновлено», но с «Проекты» (кол. 9);
  *   - миграцию v12MigrateSupplySchema(): удаление устаревших колонок и
- *     приведение заголовка к канону (10 колонок), в т.ч. из схемы 13 колонок
- *     (с «Всего требуется»/«Всего зарезервировано»/«BOM (кол-во)»/«Обновлено»)
- *     и из схемы 10 колонок с «BOM (кол-во)» (до появления «Проекты»);
+ *     приведение заголовка к канону (9 колонок), в т.ч. из схемы 13 колонок
+ *     (с «Всего требуется»/«Всего зарезервировано»/«BOM (кол-во)»/
+ *     «Всего непокрыто»/«Обновлено») и из схемы 10 колонок с «BOM (кол-во)»
+ *     и «Всего непокрыто» (до появления «Проекты»);
  *   - идемпотентность миграции (повторный запуск на корректном листе — no-op);
- *   - запись проекции v12RefreshSupply(): 10 колонок; кол. 10 = «Проекты» —
+ *   - запись проекции v12RefreshSupply(): 9 колонок; кол. 9 = «Проекты» —
  *     по строке на проект «<дефицит> - <номер> - <крайний срок>»,
  *     отсортировано по крайнему сроку по возрастанию (самый ранний сверху);
  *     при нескольких BOM одного проекта дефицит суммируется, а срок берётся
@@ -149,35 +151,37 @@ function check(label, actual, expected) {
 }
 
 const CANON = C.HEADERS.SUPPLY;
-// Схема 13 колонок: три устаревшие колонки — «Всего требуется»,
-// «Всего зарезервировано», «Обновлено».
+// Схема 13 колонок: пять устаревших колонок — «Всего требуется»,
+// «Всего зарезервировано», «Всего непокрыто», «BOM (кол-во)», «Обновлено».
 const LEGACY_13 = ["Material Key", "Код", "Наименование", "Модель", "Ед.изм",
   "Всего требуется", "Всего зарезервировано", "Всего дефицит",
   "Всего заказано", "Всего поставлено", "Всего непокрыто",
   "BOM (кол-во)", "Обновлено"];
-// Схема 10 колонок: с устаревшей «BOM (кол-во)», но БЕЗ колонки «Проекты».
+// Схема 10 колонок: с устаревшими «BOM (кол-во)» и «Всего непокрыто»,
+// но БЕЗ колонки «Проекты».
 const LEGACY_10 = ["Material Key", "Код", "Наименование", "Модель", "Ед.изм",
   "Всего дефицит", "Всего заказано", "Всего поставлено",
   "Всего непокрыто", "BOM (кол-во)"];
 
 console.log("=== S1: конфиг колонок СНАБЖЕНИЯ ===");
-check("COLUMN_COUNT.SUPPLY = 10", C.COLUMN_COUNT.SUPPLY, 10);
-check("HEADERS.SUPPLY.length = 10", CANON.length, 10);
+check("COLUMN_COUNT.SUPPLY = 9", C.COLUMN_COUNT.SUPPLY, 9);
+check("HEADERS.SUPPLY.length = 9", CANON.length, 9);
 check("SUPPLY_COLUMNS.TOTAL_REQUIRED отсутствует", C.SUPPLY_COLUMNS.TOTAL_REQUIRED, undefined);
 check("SUPPLY_COLUMNS.TOTAL_RESERVED отсутствует", C.SUPPLY_COLUMNS.TOTAL_RESERVED, undefined);
 check("SUPPLY_COLUMNS.BOM_COUNT отсутствует", C.SUPPLY_COLUMNS.BOM_COUNT, undefined);
+check("SUPPLY_COLUMNS.TOTAL_UNCOVERED отсутствует", C.SUPPLY_COLUMNS.TOTAL_UNCOVERED, undefined);
 check("SUPPLY_COLUMNS.UPDATED_AT отсутствует", C.SUPPLY_COLUMNS.UPDATED_AT, undefined);
 check("SUPPLY_COLUMNS.TOTAL_DEFICIT = 6", C.SUPPLY_COLUMNS.TOTAL_DEFICIT, 6);
 check("SUPPLY_COLUMNS.TOTAL_ORDERED = 7", C.SUPPLY_COLUMNS.TOTAL_ORDERED, 7);
 check("SUPPLY_COLUMNS.TOTAL_REAL_DELIVERY = 8", C.SUPPLY_COLUMNS.TOTAL_REAL_DELIVERY, 8);
-check("SUPPLY_COLUMNS.TOTAL_UNCOVERED = 9", C.SUPPLY_COLUMNS.TOTAL_UNCOVERED, 9);
-check("SUPPLY_COLUMNS.PROJECTS = 10", C.SUPPLY_COLUMNS.PROJECTS, 10);
+check("SUPPLY_COLUMNS.PROJECTS = 9", C.SUPPLY_COLUMNS.PROJECTS, 9);
 check("HEADERS.SUPPLY без «Всего требуется»", CANON.indexOf("Всего требуется"), -1);
 check("HEADERS.SUPPLY без «Всего зарезервировано»", CANON.indexOf("Всего зарезервировано"), -1);
 check("HEADERS.SUPPLY без «BOM (кол-во)»", CANON.indexOf("BOM (кол-во)"), -1);
+check("HEADERS.SUPPLY без «Всего непокрыто»", CANON.indexOf("Всего непокрыто"), -1);
 check("HEADERS.SUPPLY без «Обновлено»", CANON.indexOf("Обновлено"), -1);
 check("HEADERS.SUPPLY[5] = «Всего дефицит»", CANON[5], "Всего дефицит");
-check("HEADERS.SUPPLY[9] = «Проекты»", CANON[9], "Проекты");
+check("HEADERS.SUPPLY[8] = «Проекты»", CANON[8], "Проекты");
 check("Legacy-13 = 13 колонок (setup sanity)", LEGACY_13.length, 13);
 check("Legacy-10 = 10 колонок (setup sanity)", LEGACY_10.length, 10);
 
@@ -185,7 +189,7 @@ check("Legacy-10 = 10 колонок (setup sanity)", LEGACY_10.length, 10);
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "WORKING_BOM", "PICKING", "EVENT_LOG"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
-console.log("=== S2: миграция схемы 13 -> 10 ===");
+console.log("=== S2: миграция схемы 13 -> 9 ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, LEGACY_13);
   const bodyRow = new Array(13).fill("");
@@ -198,35 +202,37 @@ console.log("=== S2: миграция схемы 13 -> 10 ===");
   N.v12MigrateSupplySchema();
 
   const header = SP._data[0];
-  check("заголовок = 10 колонок", header.length, 10);
+  check("заголовок = 9 колонок", header.length, 9);
   check("«Всего требуется» удалён", header.indexOf("Всего требуется"), -1);
   check("«Всего зарезервировано» удалён", header.indexOf("Всего зарезервировано"), -1);
   check("«BOM (кол-во)» удалён", header.indexOf("BOM (кол-во)"), -1);
+  check("«Всего непокрыто» удалён", header.indexOf("Всего непокрыто"), -1);
   check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
-  check("кол. 10 = «Проекты»", header[9], "Проекты");
+  check("кол. 9 = «Проекты»", header[8], "Проекты");
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
 }
 
-console.log("=== S2b: миграция схемы 10 -> 10 (с «BOM (кол-во)», без «Проекты») ===");
+console.log("=== S2b: миграция схемы 10 -> 9 (с «BOM (кол-во)»/«Всего непокрыто», без «Проекты») ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, LEGACY_10);
   N.v12MigrateSupplySchema();
   const header = SP._data[0];
-  check("заголовок = 10 колонок", header.length, 10);
+  check("заголовок = 9 колонок", header.length, 9);
   check("«BOM (кол-во)» удалён", header.indexOf("BOM (кол-во)"), -1);
-  check("кол. 10 = «Проекты»", header[9], "Проекты");
+  check("«Всего непокрыто» удалён", header.indexOf("Всего непокрыто"), -1);
+  check("кол. 9 = «Проекты»", header[8], "Проекты");
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
 }
 
-console.log("=== S3: миграция идемпотентна (10 -> 10, no-op) ===");
+console.log("=== S3: миграция идемпотентна (9 -> 9, no-op) ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
   N.v12MigrateSupplySchema();
-  check("заголовок не изменился (10 колонок)", SP._data[0].length, 10);
+  check("заголовок не изменился (9 колонок)", SP._data[0].length, 9);
   check("заголовок совпал с каноном", JSON.stringify(SP._data[0]), JSON.stringify(CANON));
 }
 
-console.log("=== S4: v12RefreshSupply пишет 10 колонок + «Проекты» ===");
+console.log("=== S4: v12RefreshSupply пишет 9 колонок + «Проекты» ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
   const PS = sheets[C.SHEETS.POSITION_STATE];
@@ -247,13 +253,13 @@ console.log("=== S4: v12RefreshSupply пишет 10 колонок + «Прое�
   const S = C.SUPPLY_COLUMNS;
   check("в СНАБЖЕНИИ 1 строка данных", SP._data.length, 2);
   const row = SP._data[1];
-  check("тело строки = 10 колонок", row.length, 10);
+  check("тело строки = 9 колонок", row.length, 9);
   check("кол. 1 = Material Key", row[S.MATERIAL_KEY - 1], "C1");
   check("кол. 6 = «Всего дефицит» = 15", row[S.TOTAL_DEFICIT - 1], 15);
-  check("кол. 9 = «Всего непокрыто»", row[S.TOTAL_UNCOVERED - 1], 15);
-  check("кол. 10 = «Проекты»: <дефицит> - <проект> - <крайний срок>, ранний сверху",
+  check("кол. 8 = «Всего поставлено» = 0", row[S.TOTAL_REAL_DELIVERY - 1], 0);
+  check("кол. 9 = «Проекты»: <дефицит> - <проект> - <крайний срок>, ранний сверху",
     row[S.PROJECTS - 1], "5 - BBB - 20.09.2026\n10 - AAA - 25.09.2026");
-  check("11-й колонки (бывш. «BOM (кол-во)») нет", row[10], undefined);
+  check("10-й колонки (бывш. «Всего непокрыто») нет", row[9], undefined);
 }
 
 console.log("=== S5: несколько BOM одного проекта -> берётся САМЫЙ РАННИЙ срок ===");
@@ -371,7 +377,7 @@ console.log("=== S10: автофильтр на СНАБЖЕНИЕ (сортир
   check("диапазон начинается со строки 1, кол. 1",
     f1.getRange().getRow() === 1 && f1.getRange().getColumn() === 1, true);
   check("последняя строка диапазона = 2", f1.getRange().getLastRow(), 2);
-  check("последняя колонка диапазона = 10", f1.getRange().getLastColumn(), 10);
+  check("последняя колонка диапазона = 9", f1.getRange().getLastColumn(), 9);
   check("createFilter вызван 1 раз", globalThis.__filterCreateCalls, 1);
 
   // Повторный пересчёт с тем же числом строк — фильтр не пересоздаётся
@@ -391,7 +397,7 @@ console.log("=== S10: автофильтр на СНАБЖЕНИЕ (сортир
   check("новая последняя строка = 3", SP.getFilter().getRange().getLastRow(), 3);
 }
 
-console.log("=== S11: выравнивание (центр для количеств/ед.изм./дат, слева для наименований) ===");
+console.log("=== S11: выравнивание (центр для количеств/ед.изм., слева для наименований) ===");
 {
   makeSheet(C.SHEETS.SUPPLY, CANON);
   globalThis.__alignCalls = [];
@@ -403,12 +409,12 @@ console.log("=== S11: выравнивание (центр для количес
   // Количества и ед.изм. — по центру.
   check("Ед.изм (5) — center", alignOf(5), "center");
   check("Всего дефицит (6) — center", alignOf(6), "center");
-  check("Всего непокрыто (9) — center", alignOf(9), "center");
-  check("колонки 11 (бывш. «BOM (кол-во)») больше нет", alignOf(11), null);
+  check("Всего поставлено (8) — center", alignOf(8), "center");
+  check("колонки 9 (бывш. «Всего непокрыто») больше нет", alignOf(10), null);
   // Наименования, модели, проекты — слева.
   check("Наименование (3) — left", alignOf(3), "left");
   check("Модель (4) — left", alignOf(4), "left");
-  check("Проекты (10) — left", alignOf(10), "left");
+  check("Проекты (9) — left", alignOf(9), "left");
   // По вертикали — по центру.
   const vSup = globalThis.__vAlignCalls.filter(function (v) { return v.sheet === name; });
   check("вертикальное выравнивание = middle",

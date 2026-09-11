@@ -64,7 +64,7 @@ const V12_CONFIG = {
     DEFICIT_SUMMARY: 14,
     PICKING: 12,
     WORKING_BOM: 15,
-    SUPPLY: 10,
+    SUPPLY: 9,
     DASHBOARD: 11,
     ARCHIVE: 13,
     AUDIT_LOG: 11,
@@ -216,7 +216,7 @@ const V12_CONFIG = {
   },
 
   /**
-   * СНАБЖЕНИЕ (SUPPLY) (10) — агрегация по materialKey.
+   * СНАБЖЕНИЕ (SUPPLY) (9) — агрегация по materialKey.
    * Колонка PROJECTS (последняя) — перечень проектов, использующих материал,
    * в формате «<дефицит> - <номер проекта> - <крайний срок>», по строке на
    * проект, отсортированный по крайнему сроку по возрастанию (самый ранний
@@ -232,8 +232,7 @@ const V12_CONFIG = {
     TOTAL_DEFICIT: 6,
     TOTAL_ORDERED: 7,
     TOTAL_REAL_DELIVERY: 8,
-    TOTAL_UNCOVERED: 9,
-    PROJECTS: 10
+    PROJECTS: 9
   },
 
   /**
@@ -424,7 +423,7 @@ const V12_CONFIG = {
     SUPPLY: [
       "Material Key", "Код", "Наименование", "Модель", "Ед.изм",
       "Всего дефицит", "Всего заказано", "Всего поставлено",
-      "Всего непокрыто", "Проекты"
+      "Проекты"
     ],
     DASHBOARD: [
       "Выполнено", "BOM ID", "BOM", "Статус", "Позиций", "Собрано",
