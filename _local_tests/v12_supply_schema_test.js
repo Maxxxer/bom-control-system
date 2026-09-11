@@ -2,16 +2,19 @@
  * ЛОКАЛЬНЫЙ тест схемы листа СНАБЖЕНИЕ (SUPPLY).
  *
  * Проверяет:
- *   - конфиг: COLUMN_COUNT.SUPPLY = 11; SUPPLY_COLUMNS без TOTAL_REQUIRED и
- *     TOTAL_RESERVED; TOTAL_DEFICIT = 6 ... UPDATED_AT = 11;
- *     HEADERS.SUPPLY без «Всего требуется» и «Всего зарезервировано»;
- *   - миграцию v12MigrateSupplySchema(): удаление устаревших колонок
- *     «Всего требуется» и «Всего зарезервировано» из схемы 13 колонок и
- *     канонический заголовок (11 колонок);
+ *   - конфиг: COLUMN_COUNT.SUPPLY = 12; SUPPLY_COLUMNS без TOTAL_REQUIRED и
+ *     TOTAL_RESERVED; PROJECTS = 11, UPDATED_AT = 12; HEADERS.SUPPLY без
+ *     «Всего требуется»/«Всего зарезервировано», но с «Проекты» (кол. 11)
+ *     и «Обновлено» (кол. 12);
+ *   - миграцию v12MigrateSupplySchema(): удаление устаревших колонок и
+ *     приведение заголовка к канону (12 колонок), в т.ч. из старой 11-колоночной
+ *     схемы (до появления «Проекты»);
  *   - идемпотентность миграции (повторный запуск на корректном листе — no-op);
- *   - запись проекции v12RefreshSupply(): тело строки содержит ровно 11 ячеек,
- *     кол. 6 = «Всего дефицит», кол. 7 = «Всего заказано», кол. 10 = BOM (кол-во),
- *     кол. 11 = «Обновлено».
+ *   - запись проекции v12RefreshSupply(): 12 колонок; кол. 11 = «Проекты» —
+ *     по строке на проект «<номер> - <крайняя дата поставки>», отсортировано
+ *     по дате по возрастанию (самый ранний сверху); при нескольких BOM одного
+ *     проекта берётся самая поздняя дата;
+ *   - v12FormatSupplySheet() не падает и настраивает wrap/ширину колонки.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script
  * (лежит в _local_tests/ и исключён через .claspignore).
@@ -47,6 +50,7 @@ function makeSheet(name, header) {
         if (row.length > ci) { row.splice(ci, 1); }
       }
     },
+    setColumnWidth() { globalThis.__colWidthCalls = (globalThis.__colWidthCalls || 0) + 1; },
     getDataRange() {
       const lastRow = this.getLastRow(), lastCol = this.getLastColumn(), src = this._data, out = [];
       for (let r = 0; r < lastRow; r++) { const row = src[r] || [], rr = []; for (let c = 0; c < lastCol; c++) { const v = row[c]; rr.push(v === undefined || v === null ? "" : v); } out.push(rr); }
@@ -64,7 +68,8 @@ function makeSheet(name, header) {
         setValues(vals) { for (let i = 0; i < vals.length; i++) { for (let j = 0; j < vals[i].length; j++) { self._setCell(row + i, col + j, vals[i][j]); } } return this; },
         clearContent() { for (let i = 0; i < numRows; i++) { for (let j = 0; j < numCols; j++) { self._setCell(row + i, col + j, ""); } } return this; },
         clearDataValidations() { return this; }, setDataValidation() { return this; },
-        setBackgrounds() { return this; }, setBackground() { return this; }, setFontWeight() { return this; }, setNotes() { return this; }
+        setBackgrounds() { return this; }, setBackground() { return this; }, setFontWeight() { return this; }, setNotes() { return this; },
+        setWrapStrategy() { globalThis.__wrapCalls = (globalThis.__wrapCalls || 0) + 1; return this; }
       };
     },
     _setCell(r, c, v) {
@@ -82,6 +87,7 @@ function makeSheet(name, header) {
 }
 
 globalThis.SpreadsheetApp = {
+  WrapStrategy: { WRAP: "WRAP", OVERFLOW: "OVERFLOW" },
   getActive() { return { getSheetByName(n) { return sheets[n] || null; }, insertSheet(n) { return makeSheet(n); } }; },
   getUi() { return { alert() {}, createMenu() { return this; } }; },
   newDataValidation() { return { requireCheckbox() { return this; }, requireValueInList() { return this; }, build() { return {}; } }; },
@@ -104,7 +110,8 @@ const files = [
 
 const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join("\n")
   + "\n;globalThis.__V12 = { V12_CONFIG: V12_CONFIG, v12BuildPositionRow: v12BuildPositionRow,"
-  + " v12MigrateSupplySchema: v12MigrateSupplySchema, v12RefreshSupply: v12RefreshSupply };";
+  + " v12MigrateSupplySchema: v12MigrateSupplySchema, v12RefreshSupply: v12RefreshSupply,"
+  + " v12BuildSupplyProjectsText: v12BuildSupplyProjectsText, v12FormatSupplySheet: v12FormatSupplySheet };";
 
 vm.runInThisContext(src, { filename: "v12-bundle.js" });
 const N = globalThis.__V12;
@@ -118,15 +125,19 @@ function check(label, actual, expected) {
 }
 
 const CANON = C.HEADERS.SUPPLY;
-// Схема 13 колонок: с обеими устаревшими колонками.
+// Схема 13 колонок: с двумя устаревшими колонками.
 const LEGACY_13 = ["Material Key", "Код", "Наименование", "Модель", "Ед.изм",
   "Всего требуется", "Всего зарезервировано", "Всего дефицит",
   "Всего заказано", "Всего поставлено", "Всего непокрыто",
   "BOM (кол-во)", "Обновлено"];
+// Схема 11 колонок: прежний канон БЕЗ колонки «Проекты».
+const LEGACY_11 = ["Material Key", "Код", "Наименование", "Модель", "Ед.изм",
+  "Всего дефицит", "Всего заказано", "Всего поставлено",
+  "Всего непокрыто", "BOM (кол-во)", "Обновлено"];
 
 console.log("=== S1: конфиг колонок СНАБЖЕНИЯ ===");
-check("COLUMN_COUNT.SUPPLY = 11", C.COLUMN_COUNT.SUPPLY, 11);
-check("HEADERS.SUPPLY.length = 11", CANON.length, 11);
+check("COLUMN_COUNT.SUPPLY = 12", C.COLUMN_COUNT.SUPPLY, 12);
+check("HEADERS.SUPPLY.length = 12", CANON.length, 12);
 check("SUPPLY_COLUMNS.TOTAL_REQUIRED отсутствует", C.SUPPLY_COLUMNS.TOTAL_REQUIRED, undefined);
 check("SUPPLY_COLUMNS.TOTAL_RESERVED отсутствует", C.SUPPLY_COLUMNS.TOTAL_RESERVED, undefined);
 check("SUPPLY_COLUMNS.TOTAL_DEFICIT = 6", C.SUPPLY_COLUMNS.TOTAL_DEFICIT, 6);
@@ -134,20 +145,22 @@ check("SUPPLY_COLUMNS.TOTAL_ORDERED = 7", C.SUPPLY_COLUMNS.TOTAL_ORDERED, 7);
 check("SUPPLY_COLUMNS.TOTAL_REAL_DELIVERY = 8", C.SUPPLY_COLUMNS.TOTAL_REAL_DELIVERY, 8);
 check("SUPPLY_COLUMNS.TOTAL_UNCOVERED = 9", C.SUPPLY_COLUMNS.TOTAL_UNCOVERED, 9);
 check("SUPPLY_COLUMNS.BOM_COUNT = 10", C.SUPPLY_COLUMNS.BOM_COUNT, 10);
-check("SUPPLY_COLUMNS.UPDATED_AT = 11", C.SUPPLY_COLUMNS.UPDATED_AT, 11);
+check("SUPPLY_COLUMNS.PROJECTS = 11", C.SUPPLY_COLUMNS.PROJECTS, 11);
+check("SUPPLY_COLUMNS.UPDATED_AT = 12", C.SUPPLY_COLUMNS.UPDATED_AT, 12);
 check("HEADERS.SUPPLY без «Всего требуется»", CANON.indexOf("Всего требуется"), -1);
 check("HEADERS.SUPPLY без «Всего зарезервировано»", CANON.indexOf("Всего зарезервировано"), -1);
 check("HEADERS.SUPPLY[5] = «Всего дефицит»", CANON[5], "Всего дефицит");
-check("HEADERS.SUPPLY[6] = «Всего заказано»", CANON[6], "Всего заказано");
 check("HEADERS.SUPPLY[9] = «BOM (кол-во)»", CANON[9], "BOM (кол-во)");
-check("HEADERS.SUPPLY[10] = «Обновлено»", CANON[10], "Обновлено");
+check("HEADERS.SUPPLY[10] = «Проекты»", CANON[10], "Проекты");
+check("HEADERS.SUPPLY[11] = «Обновлено»", CANON[11], "Обновлено");
 check("Legacy-13 = 13 колонок (setup sanity)", LEGACY_13.length, 13);
+check("Legacy-11 = 11 колонок (setup sanity)", LEGACY_11.length, 11);
 
 // Остальные листы пустые (по заголовку), чтобы refresh не падал.
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "WORKING_BOM", "PICKING", "EVENT_LOG"]
   .forEach(function (k) { makeSheet(C.SHEETS[k], C.HEADERS[k]); });
 
-console.log("=== S2: миграция схемы 13 -> 11 ===");
+console.log("=== S2: миграция схемы 13 -> 12 ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, LEGACY_13);
   const bodyRow = new Array(13).fill("");
@@ -160,46 +173,102 @@ console.log("=== S2: миграция схемы 13 -> 11 ===");
   N.v12MigrateSupplySchema();
 
   const header = SP._data[0];
-  check("заголовок = 11 колонок", header.length, 11);
+  check("заголовок = 12 колонок", header.length, 12);
   check("«Всего требуется» удалён", header.indexOf("Всего требуется"), -1);
   check("«Всего зарезервировано» удалён", header.indexOf("Всего зарезервировано"), -1);
-  check("кол. 6 = «Всего дефицит»", header[5], "Всего дефицит");
-  check("кол. 7 = «Всего заказано»", header[6], "Всего заказано");
-  check("кол. 11 = «Обновлено»", header[10], "Обновлено");
+  check("кол. 11 = «Проекты»", header[10], "Проекты");
+  check("кол. 12 = «Обновлено»", header[11], "Обновлено");
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
-  check("физически последняя колонка = 11", SP.getLastColumn(), 11);
 }
 
-console.log("=== S3: миграция идемпотентна (11 -> 11, no-op) ===");
+console.log("=== S2b: миграция схемы 11 -> 12 (прежний канон без «Проекты») ===");
+{
+  const SP = makeSheet(C.SHEETS.SUPPLY, LEGACY_11);
+  N.v12MigrateSupplySchema();
+  const header = SP._data[0];
+  check("заголовок = 12 колонок", header.length, 12);
+  check("кол. 11 = «Проекты»", header[10], "Проекты");
+  check("кол. 12 = «Обновлено»", header[11], "Обновлено");
+  check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
+}
+
+console.log("=== S3: миграция идемпотентна (12 -> 12, no-op) ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
   N.v12MigrateSupplySchema();
-  check("заголовок не изменился (11 колонок)", SP._data[0].length, 11);
+  check("заголовок не изменился (12 колонок)", SP._data[0].length, 12);
   check("заголовок совпал с каноном", JSON.stringify(SP._data[0]), JSON.stringify(CANON));
 }
 
-console.log("=== S4: проекция v12RefreshSupply пишет 11 колонок ===");
+console.log("=== S4: v12RefreshSupply пишет 12 колонок + «Проекты» ===");
 {
   const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
   const PS = sheets[C.SHEETS.POSITION_STATE];
   PS._data = [C.HEADERS.POSITION_STATE.slice()];
-  // Дефицит: required=10, reserved=0 -> deficit=10.
-  PS._data.push(N.v12BuildPositionRow("BOM1", {
-    bomName: "BOM1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
-    requiredQty: 10, reservedQty: 0, deadline: "2026-09-10"
-  }, "BOM1:C1", 1, { orderedQty: 4 }));
+  // Один материал (код C1) в двух проектах. Даты поставки = EXPECTED_DATE (нет резерва/поставки):
+  // BBB-200 -> 05.09.2026, AAA-100 -> 10.09.2026.
+  PS._data.push(N.v12BuildPositionRow("BBB-200", {
+    bomName: "BBB-200", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-20"
+  }, "BBB-200:C1", 1, { expectedDate: "2026-09-05" }));
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 10, reservedQty: 0, deadline: "2026-09-20"
+  }, "AAA-100:C1", 1, { expectedDate: "2026-09-10" }));
 
   N.v12RefreshSupply();
 
   const S = C.SUPPLY_COLUMNS;
   check("в СНАБЖЕНИИ 1 строка данных", SP._data.length, 2);
   const row = SP._data[1];
-  check("тело строки = 11 колонок", row.length, 11);
+  check("тело строки = 12 колонок", row.length, 12);
   check("кол. 1 = Material Key", row[S.MATERIAL_KEY - 1], "C1");
-  check("кол. 6 = «Всего дефицит» = 10", row[S.TOTAL_DEFICIT - 1], 10);
-  check("кол. 7 = «Всего заказано» = 4", row[S.TOTAL_ORDERED - 1], 4);
-  check("кол. 10 = BOM (кол-во) = 1", row[S.BOM_COUNT - 1], 1);
-  check("кол. 11 = «Обновлено» (Date)", row[S.UPDATED_AT - 1] instanceof Date, true);
+  check("кол. 6 = «Всего дефицит» = 15", row[S.TOTAL_DEFICIT - 1], 15);
+  check("кол. 10 = BOM (кол-во) = 2", row[S.BOM_COUNT - 1], 2);
+  check("кол. 11 = «Проекты» отсортированы по дате (ранний сверху)",
+    row[S.PROJECTS - 1], "BBB - 05.09.2026\nAAA - 10.09.2026");
+  check("кол. 12 = «Обновлено» (Date)", row[S.UPDATED_AT - 1] instanceof Date, true);
+}
+
+console.log("=== S5: несколько BOM одного проекта -> берётся самая поздняя дата ===");
+{
+  const SP = makeSheet(C.SHEETS.SUPPLY, CANON);
+  const PS = sheets[C.SHEETS.POSITION_STATE];
+  PS._data = [C.HEADERS.POSITION_STATE.slice()];
+  // Проект AAA в двух BOM: сроки 10.09 и 25.09 -> «крайняя» = 25.09.
+  PS._data.push(N.v12BuildPositionRow("AAA-100", {
+    bomName: "AAA-100", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-30"
+  }, "AAA-100:C1", 1, { expectedDate: "2026-09-10" }));
+  PS._data.push(N.v12BuildPositionRow("AAA-200", {
+    bomName: "AAA-200", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+    requiredQty: 5, reservedQty: 0, deadline: "2026-09-30"
+  }, "AAA-200:C1", 1, { expectedDate: "2026-09-25" }));
+
+  N.v12RefreshSupply();
+  const S = C.SUPPLY_COLUMNS;
+  check("один проект в строке «Проекты»", SP._data[1][S.PROJECTS - 1], "AAA - 25.09.2026");
+}
+
+console.log("=== S6: v12BuildSupplyProjectsText сортирует и форматирует ===");
+{
+  const txt = N.v12BuildSupplyProjectsText({
+    "BBB": { project: "BBB", date: "2026-09-05" },
+    "AAA": { project: "AAA", date: "2026-09-10" },
+    "CCC": { project: "CCC", date: "" }
+  });
+  check("сортировка по дате, без-даты в конец",
+    txt, "BBB - 05.09.2026\nAAA - 10.09.2026\nCCC");
+}
+
+console.log("=== S7: v12FormatSupplySheet настраивает wrap/ширину ===");
+{
+  makeSheet(C.SHEETS.SUPPLY, CANON);
+  globalThis.__wrapCalls = 0;
+  globalThis.__colWidthCalls = 0;
+  N.v12FormatSupplySheet();
+  check("wrap применён (>=1)", globalThis.__wrapCalls >= 1, true);
+  check("ширина колонки применена (>=1)", globalThis.__colWidthCalls >= 1, true);
 }
 
 console.log("");

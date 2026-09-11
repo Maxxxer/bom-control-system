@@ -38,6 +38,7 @@ function v12EnsureAllSheets() {
   v12MigratePickingSchema();
   v12MigratePositionSchema();
   v12MigrateSupplySchema();
+  v12FormatSupplySheet();
   v12FormatAllSheets();
   // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
   // строку заголовков (в т.ч. ячейку B1).
@@ -170,6 +171,33 @@ function v12MigrateSupplySchema() {
   // Канонический заголовок (после удаления всех устаревших колонок).
   sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.SUPPLY]);
   sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
+}
+
+/**
+ * Ширина колонки «Проекты» листа СНАБЖЕНИЕ (px) — под многострочный список
+ * проектов формата «<номер> - <дата>».
+ */
+const V12_SUPPLY_PROJECTS_COL_WIDTH = 220;
+
+/**
+ * Форматирование листа СНАБЖЕНИЕ: колонка «Проекты» — с переносом текста
+ * (многострочная ячейка) и увеличенной шириной. Вызывается при инициализации
+ * (v12EnsureAllSheets), а НЕ на каждом пересчёте проекций (дорогие операции
+ * уровня листа).
+ */
+function v12FormatSupplySheet() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.SUPPLY);
+  if (!sheet) {
+    return;
+  }
+  const col = V12_CONFIG.SUPPLY_COLUMNS.PROJECTS;
+  const range = sheet.getRange(1, col, Math.max(sheet.getMaxRows(), 2), 1);
+  if (typeof range.setWrapStrategy === "function" && SpreadsheetApp.WrapStrategy) {
+    range.setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
+  }
+  if (typeof sheet.setColumnWidth === "function") {
+    sheet.setColumnWidth(col, V12_SUPPLY_PROJECTS_COL_WIDTH);
+  }
 }
 
 /**

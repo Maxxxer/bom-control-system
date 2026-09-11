@@ -64,7 +64,7 @@ function v12RefreshProjections() {
   v12RefreshDeficitSummary(posData);
   v12RefreshPicking(posData, revDates);
   v12RefreshWorkingBOM(posData);
-  v12RefreshSupply(posData);
+  v12RefreshSupply(posData, revDates);
   v12RefreshDashboard(posData, revDates, excluded);
 }
 
@@ -893,11 +893,18 @@ function v12InstallWorkingBomCheckboxes(rowCount) {
 }
 /**
  * СНАБЖЕНИЕ (SUPPLY): агрегация по materialKey (ТЗ №68–71).
+ *
+ * Колонка «Проекты» перечисляет проекты, использующие материал, в формате
+ * «<номер проекта> - <крайняя дата поставки>» (по строке на проект),
+ * отсортированные по дате поставки по возрастанию (самый ранний сверху).
+ *
+ * revDates (опц.) — карта дат создания BOM (v12BuildRevisionDateMap),
+ * передаётся из v12RefreshProjections, чтобы не читать BOM_REVISION повторно.
  */
-function v12RefreshSupply(posData) {
+function v12RefreshSupply(posData, revDates) {
   const P = V12_CONFIG.POSITION_COLUMNS;
-  const S = V12_CONFIG.SUPPLY_COLUMNS;
   const data = posData || v12ReadSheet("POSITION_STATE");
+  const bomCreatedDates = revDates || v12BuildRevisionDateMap();
   const agg = {};
 
   for (let i = 1; i < data.length; i++) {
@@ -919,7 +926,8 @@ function v12RefreshSupply(posData) {
         model: r[P.MODEL - 1],
         unit: r[P.UNIT - 1],
         deficit: 0, ordered: 0,
-        realDelivery: 0, uncovered: 0, bomCount: 0
+        realDelivery: 0, uncovered: 0, bomCount: 0,
+        projects: {}
       };
     }
     const a = agg[key];
@@ -928,19 +936,85 @@ function v12RefreshSupply(posData) {
     a.realDelivery += toNumber(r[P.REAL_DELIVERY_QTY - 1]);
     a.uncovered += toNumber(r[P.UNCOVERED_NEED - 1]);
     a.bomCount += 1;
+    v12AccumulateSupplyProject(a.projects, r, bomCreatedDates);
   }
 
   const rows = Object.keys(agg).map(function (key) {
     const a = agg[key];
     return [key, a.code, a.name, a.model, a.unit,
       a.deficit, a.ordered, a.realDelivery,
-      a.uncovered, a.bomCount, new Date()];
+      a.uncovered, a.bomCount, v12BuildSupplyProjectsText(a.projects), new Date()];
   });
 
   v12ClearBody("SUPPLY");
   if (rows.length) {
     v12WriteRows("SUPPLY", 2, rows);
   }
+}
+
+/**
+ * Учесть проект позиции в карте проектов материала (колонка «Проекты»).
+ *
+ * projectsMap: { <код проекта>: { project, date } }. Для каждого проекта
+ * хранится «крайняя» (самая поздняя) дата поставки среди его позиций — по ней
+ * затем идёт сортировка проектов. Проекты без кода (пустое имя BOM) не
+ * учитываются.
+ */
+function v12AccumulateSupplyProject(projectsMap, r, bomCreatedDates) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const project = v12ExtractBomProjectCode(r[P.BOM_NAME - 1]);
+  if (!project) {
+    return;
+  }
+  const date = v12PickingDeliveryDate(
+    r,
+    bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]
+  );
+  const prev = projectsMap[project];
+  if (!prev || v12IsLaterDate(date, prev.date)) {
+    projectsMap[project] = { project: project, date: date };
+  }
+}
+
+/**
+ * true, если date строго позже than. Пустая/нераспознанная date не считается
+ * «позже» (не затирает уже сохранённую дату), пустая than — считается.
+ */
+function v12IsLaterDate(date, than) {
+  const d = v12ToDate(date);
+  if (!d) {
+    return false;
+  }
+  const t = v12ToDate(than);
+  if (!t) {
+    return true;
+  }
+  return d.getTime() > t.getTime();
+}
+
+/**
+ * Текст колонки «Проекты»: по строке на проект «<номер> - <дата>».
+ *
+ * Сортировка по дате поставки по возрастанию (самый ранний проект сверху);
+ * проекты без распознанной даты — в конце (в порядке кода проекта).
+ * Формат даты — dd.MM.yyyy.
+ */
+function v12BuildSupplyProjectsText(projectsMap) {
+  const list = Object.keys(projectsMap).map(function (k) { return projectsMap[k]; });
+  list.sort(function (a, b) {
+    const da = v12ToDate(a.date);
+    const db = v12ToDate(b.date);
+    const ta = da ? da.getTime() : Infinity;
+    const tb = db ? db.getTime() : Infinity;
+    if (ta !== tb) {
+      return ta - tb;
+    }
+    return String(a.project).localeCompare(String(b.project), "ru");
+  });
+  return list.map(function (p) {
+    const d = v12ToDate(p.date);
+    return d ? (p.project + " - " + v12FormatDateOnly(d)) : p.project;
+  }).join("\n");
 }
 
 /**
