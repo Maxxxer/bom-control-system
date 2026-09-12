@@ -121,9 +121,9 @@ function v12SetOrderedQty(positionId, qty, index, ctx) {
     oldValue: oldQty,
     newValue: newQty
   });
-  v12LogHistory(positionId, "ORDERED_QTY", oldQty, newQty);
+  v12LogHistory(positionId, "ORDERED_QTY", oldQty, newQty, "", ctx);
   v12LogEvent(V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED, positionId, row[P.BOM_ID - 1],
-    { oldValue: oldQty, newValue: newQty });
+    { oldValue: oldQty, newValue: newQty }, ctx);
 
   if (own) {
     v12CommitSingleOperation(work);
@@ -172,7 +172,7 @@ function v12SetExpectedDate(positionId, date, index, ctx) {
     oldValue: oldDate,
     newValue: newDate ? newDate.getTime() : ""
   });
-  v12LogHistory(positionId, "EXPECTED_DATE", oldDate, newDate ? newDate.getTime() : "");
+  v12LogHistory(positionId, "EXPECTED_DATE", oldDate, newDate ? newDate.getTime() : "", "", ctx);
 
   if (own) {
     v12CommitSingleOperation(work);
@@ -243,7 +243,7 @@ function v12SetRealDeliveryQty(positionId, qty, index, ctx) {
     oldValue: oldQty,
     newValue: newQty
   });
-  v12LogHistory(positionId, "REAL_DELIVERY_QTY", oldQty, newQty);
+  v12LogHistory(positionId, "REAL_DELIVERY_QTY", oldQty, newQty, "", ctx);
 
   if (own) {
     v12CommitSingleOperation(work);

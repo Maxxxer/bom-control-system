@@ -399,6 +399,55 @@ function v12ClearBody(key) {
 }
 
 /**
+ * Дописать пачку строк в конец листа V12 ОДНИМ вызовом (батч-режим логов).
+ *
+ * Возвращает число записанных строк. Пустая пачка — no-op.
+ * Используется для ARCHIVE / MATERIAL_HISTORY / EVENT_LOG: вместо appendRow на
+ * каждую позицию строки копятся в ctx.*Rows и сбрасываются одним writeValues.
+ */
+function v12FlushRowBuffer(key, rows) {
+  if (!rows || !rows.length) {
+    return 0;
+  }
+  const sheet = v12GetSheetByKey(key);
+  writeValues(sheet, sheet.getLastRow() + 1, 1, rows);
+  return rows.length;
+}
+
+/**
+ * Записать пакет изменений POSITION_STATE, выбирая способ по «плотности».
+ *
+ *   - если затронутые строки кластеризуются (span близок к числу строк) —
+ *     БЛОЧНАЯ запись (одна getValues + одна setValues на весь диапазон);
+ *   - если строки разбросаны редко — построчная запись «отрезков» (batchWrite).
+ *
+ * Так массовая передача производству (сотни смежных строк) пишет POSITION_STATE
+ * за 2 вызова, а редкие одиночные правки не тянут лишний большой диапазон.
+ */
+function v12WritePositionBatch(writes) {
+  if (!writes || !writes.length) {
+    return;
+  }
+  const sheet = v12GetSheetByKey("POSITION_STATE");
+  const distinctRows = {};
+  let minRow = Infinity;
+  let maxRow = -Infinity;
+  writes.forEach(function (w) {
+    distinctRows[w.row] = true;
+    if (w.row < minRow) { minRow = w.row; }
+    if (w.row > maxRow) { maxRow = w.row; }
+  });
+  const distinct = Object.keys(distinctRows).length;
+  const span = maxRow - minRow + 1;
+  // Порог: блок выгоден, когда диапазон не «раздут» относительно числа строк.
+  if (span <= distinct * 4 + 50 && typeof batchWriteBlock === "function") {
+    batchWriteBlock(sheet, writes);
+  } else {
+    batchWrite(sheet, writes);
+  }
+}
+
+/**
  * Построить индекс POSITION_STATE: Map<positionId, {row, values}>.
  * Если data передан — не читаем лист повторно.
  */

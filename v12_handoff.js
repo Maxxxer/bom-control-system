@@ -60,7 +60,9 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
       };
     }
 
-    const operationId = generateEventId();
+    // operationId генерируется ОДИН раз на пачку (ctx.operationId) — без RPC
+    // Utilities.getUuid() на каждую позицию.
+    const operationId = (ctx && ctx.operationId) || generateEventId();
     const bomId = row[P.BOM_ID - 1];
     const materialKey = v12BuildMaterialKey({
       code: row[P.MATERIAL_CODE - 1],
@@ -69,21 +71,45 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
       unit: row[P.UNIT - 1]
     });
 
-    // Фиксация передачи
-    v12UpdatePosition(positionId, {
-      RECEIVED_BY_PRODUCTION: true,
-      RECEIVED_BY_PRODUCTION_QTY: required,
-      RECEIVED_BY_PRODUCTION_AT: new Date(),
-      RECEIVED_BY_PRODUCTION_USER: v12CurrentActor()
-    }, index);
+    const receivedAt = new Date();
+    const receivedUser = v12CurrentActor();
+    // Фиксация передачи. В пакетном режиме (ctx) сырые поля копятся в
+    // ctx.positionWrites и пишутся ОДНИМ батчем в конце пачки — иначе на каждую
+    // позицию шёл бы отдельный batchWrite, а затем ещё один из архивации.
+    if (ctx) {
+      ctx.positionWrites.push({ row: pos.row, col: P.RECEIVED_BY_PRODUCTION, value: true });
+      ctx.positionWrites.push({ row: pos.row, col: P.RECEIVED_BY_PRODUCTION_QTY, value: required });
+      ctx.positionWrites.push({ row: pos.row, col: P.RECEIVED_BY_PRODUCTION_AT, value: receivedAt });
+      ctx.positionWrites.push({ row: pos.row, col: P.RECEIVED_BY_PRODUCTION_USER, value: receivedUser });
+    } else {
+      v12UpdatePosition(positionId, {
+        RECEIVED_BY_PRODUCTION: true,
+        RECEIVED_BY_PRODUCTION_QTY: required,
+        RECEIVED_BY_PRODUCTION_AT: receivedAt,
+        RECEIVED_BY_PRODUCTION_USER: receivedUser
+      }, index);
+    }
 
-    // Архивация позиции
-    v12ArchivePosition(positionId, sourceUI, index);
+    // Архивация позиции (в пакетном режиме строка архива копится в
+    // ctx.archiveRows, а LIFECYCLE_STATE пишется в общий батч POSITION_STATE).
+    v12ArchivePosition(positionId, sourceUI, index, ctx);
     // Синхронизируем in-memory индекс (при пакетной обработке защищает от
     // повторной передачи той же позиции в одном диапазоне).
     row[P.RECEIVED_BY_PRODUCTION - 1] = true;
     row[P.RECEIVED_BY_PRODUCTION_QTY - 1] = required;
     row[P.LIFECYCLE_STATE - 1] = V12_CONFIG.LIFECYCLE_STATE.ARCHIVED;
+
+    // Пересчёт производных столбцов POSITION_STATE (productionState/deficit/…).
+    // Без этого проекции, читающие производное состояние (Dashboard «Собрано» /
+    // «Недостающие материалы»), не увидят передачу: v12UpdatePosition пишет
+    // только сырые поля. При пакетном применении записи копятся в ctx и
+    // сбрасываются в конце v12DrainPendingEdits.
+    v12ApplyComputedToRow(row);
+    const computedCtx = ctx || { positionWrites: [] };
+    v12PushComputedWrites(computedCtx, pos.row, row);
+    if (!ctx) {
+      batchWrite(v12GetSheetByKey("POSITION_STATE"), computedCtx.positionWrites);
+    }
 
     // Снять резерв с физического склада (передача = резерв перешёл в производство).
     // При пакетной обработке (ctx) дельты накапливаются и применяются ОДИН раз в
@@ -105,8 +131,8 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
       newValue: true,
       reason: "Передано производству из " + sourceUI
     });
-    v12LogHistory(positionId, "PRODUCTION_HANDOFF", "", required, "Передано из " + sourceUI);
-    v12LogEvent(V12_CONFIG.AUDIT_ACTIONS.HANDOFF, positionId, bomId, { sourceUI: sourceUI, qty: required });
+    v12LogHistory(positionId, "PRODUCTION_HANDOFF", "", required, "Передано из " + sourceUI, ctx);
+    v12LogEvent(V12_CONFIG.AUDIT_ACTIONS.HANDOFF, positionId, bomId, { sourceUI: sourceUI, qty: required }, ctx);
 
     // При массовой передаче (диапазон) пересчёт проекций делается один раз
     // вызывающей стороной — здесь пропускаем, чтобы не пересобирать лист на
@@ -136,18 +162,21 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
 /**
  * Архивация позиции: запись в ARCHIVE + lifecycle = ARCHIVED.
  */
-function v12ArchivePosition(positionId, sourceUI, index) {
+function v12ArchivePosition(positionId, sourceUI, index, ctx) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const pos = v12GetPositionById(positionId, index);
   if (!pos) {
     return;
   }
   const row = pos.values;
-  const A = V12_CONFIG.ARCHIVE_COLUMNS;
   const archive = v12GetSheetByKey("ARCHIVE");
-  const history = v12GetPositionHistory(positionId);
+  // История берётся из заранее построенного индекса (ОДНО чтение
+  // MATERIAL_HISTORY на всю пачку), иначе — прежним способом (одиночный режим).
+  const history = (ctx && ctx.historyIndex)
+    ? (ctx.historyIndex.get(normalizeMaterialId(positionId)) || [])
+    : v12GetPositionHistory(positionId);
 
-  appendRow(archive, [
+  const archiveRow = [
     new Date(),
     positionId,
     row[P.BOM_NAME - 1],
@@ -161,11 +190,21 @@ function v12ArchivePosition(positionId, sourceUI, index) {
     row[P.RECEIVED_BY_PRODUCTION_USER - 1],
     sourceUI || "",
     JSON.stringify(history)
-  ]);
+  ];
 
-  v12UpdatePosition(positionId, {
-    LIFECYCLE_STATE: V12_CONFIG.LIFECYCLE_STATE.ARCHIVED
-  }, index);
+  if (ctx) {
+    ctx.archiveRows.push(archiveRow);
+    ctx.positionWrites.push({
+      row: pos.row,
+      col: P.LIFECYCLE_STATE,
+      value: V12_CONFIG.LIFECYCLE_STATE.ARCHIVED
+    });
+  } else {
+    appendRow(archive, archiveRow);
+    v12UpdatePosition(positionId, {
+      LIFECYCLE_STATE: V12_CONFIG.LIFECYCLE_STATE.ARCHIVED
+    }, index);
+  }
 }
 
 /**
@@ -207,6 +246,16 @@ function v12ReturnFromArchive(positionId, reason) {
       LIFECYCLE_STATE: V12_CONFIG.LIFECYCLE_STATE.ACTIVE
     }, index);
 
+    // Пересчёт производных столбцов после снятия «передано» (см. handoff) —
+    // иначе Dashboard/проекции на производном состоянии останутся устаревшими.
+    row[P.RECEIVED_BY_PRODUCTION - 1] = false;
+    row[P.RECEIVED_BY_PRODUCTION_QTY - 1] = 0;
+    row[P.LIFECYCLE_STATE - 1] = V12_CONFIG.LIFECYCLE_STATE.ACTIVE;
+    v12ApplyComputedToRow(row);
+    const returnCtx = { positionWrites: [] };
+    v12PushComputedWrites(returnCtx, pos.row, row);
+    batchWrite(v12GetSheetByKey("POSITION_STATE"), returnCtx.positionWrites);
+
     if (returnedQty > 0) {
       v12AdjustWarehouseQty(materialKey, returnedQty);
     }
@@ -237,7 +286,7 @@ function v12ReturnFromArchive(positionId, reason) {
 /**
  * Скорректировать складской остаток по materialKey (увеличить/уменьшить).
  */
-function v12AdjustWarehouseQty(materialKey, delta, materialIndex) {
+function v12AdjustWarehouseQty(materialKey, delta, materialIndex, ctx) {
   const index = materialIndex || v12BuildMaterialIndex();
   const M = V12_CONFIG.MATERIAL_COLUMNS;
   const m = index.get(materialKey);
@@ -254,6 +303,7 @@ function v12AdjustWarehouseQty(materialKey, delta, materialIndex) {
   const current = toNumber(m.values[M.WAREHOUSE_QTY - 1]);
   const next = Math.max(0, current + toNumber(delta));
   v12Audit({
+    operationId: ctx && ctx.operationId,
     action: V12_CONFIG.AUDIT_ACTIONS.WAREHOUSE_QTY_CHANGED,
     field: "WAREHOUSE_QTY",
     oldValue: current,
@@ -272,16 +322,56 @@ function v12AdjustWarehouseQty(materialKey, delta, materialIndex) {
  * вызову v12AdjustWarehouseQty на materialKey (ключам уникальны, поэтому общий
  * materialIndex безопасен).
  */
-function v12ApplyWarehouseDeltas(deltas, materialIndex) {
+function v12ApplyWarehouseDeltas(deltas, materialIndex, ctx) {
   if (!deltas) {
     return;
   }
   Object.keys(deltas).forEach(function (mk) {
     const d = deltas[mk];
     if (d) {
-      v12AdjustWarehouseQty(mk, d, materialIndex);
+      // ctx передаётся только для переиспользования operationId в аудите
+      // (без него на каждый materialKey шёл бы RPC Utilities.getUuid()).
+      v12AdjustWarehouseQty(mk, d, materialIndex, ctx);
     }
   });
+}
+
+/**
+ * Индекс истории позиций: Map<positionId, history[]> — ОДНО чтение
+ * MATERIAL_HISTORY на всю пачку передачи производству.
+ *
+ * Раньше v12ArchivePosition читал весь лист MATERIAL_HISTORY на КАЖДУЮ позицию
+ * (сложность O(N·M)) — это был главный источник медленности массовой отметки
+ * «Получено». Теперь лист читается один раз, а строки группируются по positionId.
+ */
+function v12BuildPositionHistoryIndex() {
+  const map = new Map();
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.MATERIAL_HISTORY);
+  if (!sheet) {
+    return map;
+  }
+  const data = readSheetValues(sheet);
+  const H = V12_CONFIG.HISTORY_COLUMNS;
+  for (let i = 1; i < data.length; i++) {
+    const id = normalizeMaterialId(data[i][H.POSITION_ID - 1]);
+    if (!id) {
+      continue;
+    }
+    let arr = map.get(id);
+    if (!arr) {
+      arr = [];
+      map.set(id, arr);
+    }
+    arr.push({
+      date: data[i][H.DATE - 1],
+      event: data[i][H.EVENT - 1],
+      old: data[i][H.OLD_VALUE - 1],
+      new: data[i][H.NEW_VALUE - 1],
+      user: data[i][H.USER - 1],
+      comment: data[i][H.COMMENT - 1]
+    });
+  }
+  return map;
 }
 
 /**

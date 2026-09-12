@@ -71,7 +71,7 @@ function makeSheet(name, header) {
       rowArr[ci] = v;
     },
     setFrozenRows() {}, insertSheet() {}, setConditionalFormatRules() {}, getConditionalFormatRules() { return []; },
-    setColumnWidth() {}, hideColumns() {}, showColumns() {}, deleteColumn() {}, getFilter() { return null; },
+    setColumnWidth() {}, hideColumns() {}, showColumns() {}, deleteColumn() {},
     appendRow(row) { this._data.push(row.slice ? row.slice() : row); }
   };
   sheets[name] = sheet;
@@ -106,7 +106,8 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
   + " v12RefreshDashboard: v12RefreshDashboard, v12AggregateBomStates: v12AggregateBomStates,"
   + " v12ComputeBomStatus: v12ComputeBomStatus, v12BuildMissingItemsText: v12BuildMissingItemsText,"
   + " v12DashboardStatusText: v12DashboardStatusText, v12DashboardPercentColor: v12DashboardPercentColor,"
-  + " v12IsBomReadyForDone: v12IsBomReadyForDone, v12FormatDateOnly: v12FormatDateOnly };";
+  + " v12IsBomReadyForDone: v12IsBomReadyForDone, v12FormatDateOnly: v12FormatDateOnly,"
+  + " v12MarkReceivedByProduction: v12MarkReceivedByProduction };";
 
 vm.runInThisContext(src, { filename: "v12-bundle.js" });
 const N = globalThis.__V12;
@@ -120,9 +121,17 @@ function check(label, actual, expected) {
   console.log((ok ? "PASS" : "FAIL") + "  " + label + "  (actual=" + JSON.stringify(actual) + ", expected=" + JSON.stringify(expected) + ")");
 }
 
-["POSITION_STATE", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS"].forEach(function (k) {
+["POSITION_STATE", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "DEFICIT_SUMMARY",
+  "PICKING", "WORKING_BOM", "SUPPLY", "ARCHIVE", "MATERIAL_STATE",
+  "MATERIAL_HISTORY", "AUDIT_LOG", "EVENT_LOG"].forEach(function (k) {
   makeSheet(C.SHEETS[k], C.HEADERS[k]);
 });
+
+// RBAC в тесте не проверяем — считаем пользователя администратором (иначе
+// v12MarkReceivedByProduction бросит «нет права PICKING_CHECKBOX»).
+globalThis.v12GetCurrentUserRole = function () { return C.ROLES.ADMIN; };
+globalThis.v12RequireRole = function () {};
+globalThis.v12CanEditField = function () { return true; };
 
 const PS = sheets[C.SHEETS.POSITION_STATE];
 const DB = sheets[C.SHEETS.DASHBOARD];
@@ -196,6 +205,29 @@ resetPositions();
 PS._data.push(mkPosition("BOM2", "D1", 1, 5, 5, { received: true, receivedQty: 5, deadline: "2026-09-01" }));
 check("H2: готов (все собраны)", N.v12IsBomReadyForDone("BOM2"), true);
 check("H3: неизвестный BOM → не готов", N.v12IsBomReadyForDone("NOPE"), false);
+
+// ---------- I) Регрессия: передача производству обновляет Dashboard ----------
+// Причина исходного дефекта: v12MarkReceivedByProduction писал только сырые
+// поля и НЕ пересчитывал производные (PRODUCTION_STATE/DEFICIT_QTY), поэтому
+// Dashboard (считает по производным) не обновлялся после «Отметка получено».
+console.log("=== I: передача производству обновляет Dashboard ===");
+const P = C.POSITION_COLUMNS;
+resetPositions();
+// Позиция готова к передаче: доступно (reserved) >= требуется.
+PS._data.push(mkPosition("BOM3", "E1", 1, 10, 10, { deadline: "2026-09-01" }));
+N.v12RefreshDashboard();
+
+check("I1: до передачи productionState = READY_FOR_HANDOFF",
+  PS._data[1][P.PRODUCTION_STATE - 1], C.PRODUCTION_STATE.READY_FOR_HANDOFF);
+check("I2: до передачи «Собрано» = 0", DB.getRange(2, D.COLLECTED_POSITIONS).getValue(), 0);
+
+const handoff = N.v12MarkReceivedByProduction("BOM3:E1", C.SOURCE_UI.PICKING, false);
+check("I3: передача применена", handoff.status, "handoff");
+check("I4: POSITION_STATE.PRODUCTION_STATE = RECEIVED (пересчёт производных)",
+  PS._data[1][P.PRODUCTION_STATE - 1], C.PRODUCTION_STATE.RECEIVED);
+check("I5: Dashboard «Собрано» = 1", DB.getRange(2, D.COLLECTED_POSITIONS).getValue(), 1);
+check("I6: Dashboard статус начинается с «100%»",
+  String(DB.getRange(2, D.STATUS).getValue()).indexOf("100%") === 0, true);
 
 console.log("");
 if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }

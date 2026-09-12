@@ -636,11 +636,21 @@ function v12DrainPendingEdits() {
     const intents = v12ResolvePendingIntents(data);
     const posIndex = v12BuildPositionIndex();
     const materialIndex = v12BuildMaterialIndex();
+    // Пакетный контекст. Кроме накопления записей POSITION_STATE и складских
+    // дельт он несёт батч-буферы логов (ARCHIVE / MATERIAL_HISTORY / EVENT_LOG),
+    // ЗАРАНЕЕ построенный индекс истории (ОДНО чтение MATERIAL_HISTORY вместо
+    // чтения листа на каждую позицию — устранение O(N·M)) и один operationId на
+    // всю пачку (без RPC Utilities.getUuid() на позицию).
     const ctx = {
       index: posIndex,
       materialIndex: materialIndex,
       warehouseDelta: {},
-      positionWrites: []
+      positionWrites: [],
+      historyIndex: v12BuildPositionHistoryIndex(),
+      archiveRows: [],
+      historyRows: [],
+      eventRows: [],
+      operationId: generateEventId()
     };
     const failed = {};
     let applied = 0;
@@ -669,13 +679,19 @@ function v12DrainPendingEdits() {
 
     // Складские дельты (передача + реальная поставка) — одним батчем.
     if (Object.keys(ctx.warehouseDelta).length) {
-      v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex);
+      v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex, ctx);
     }
-    // Записи POSITION_STATE (реальная поставка / заказ / ожидаемая дата) —
-    // одним батчем.
+    // Записи POSITION_STATE (реальная поставка / заказ / ожидаемая дата /
+    // передача производству) — одним умным батчем (блок для плотных пачек,
+    // «отрезки» для разреженных).
     if (ctx.positionWrites.length) {
-      batchWrite(v12GetSheetByKey("POSITION_STATE"), ctx.positionWrites);
+      v12WritePositionBatch(ctx.positionWrites);
     }
+    // Буферизованные логи пачки — по одному writeValues на лист (вместо
+    // appendRow на каждую позицию).
+    v12FlushRowBuffer("ARCHIVE", ctx.archiveRows);
+    v12FlushRowBuffer("MATERIAL_HISTORY", ctx.historyRows);
+    v12FlushRowBuffer("EVENT_LOG", ctx.eventRows);
 
     // ОДИН пересчёт всех проекций на всю пачку.
     SpreadsheetApp.flush();

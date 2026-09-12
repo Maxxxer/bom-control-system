@@ -10,13 +10,34 @@
  */
 
 /**
+ * Активная таблица — ОДНА на запуск.
+ *
+ * SpreadsheetApp.getActive() — дорогой RPC. Раньше он вызывался на каждый
+ * getSheetByName (т.е. десятки раз на одну операцию). Кэшируем ссылку: в рамках
+ * одного запуска скрипта активная таблица неизменна.
+ */
+let _v12CachedSpreadsheet = null;
+function v12ActiveSpreadsheet() {
+  if (!_v12CachedSpreadsheet) {
+    _v12CachedSpreadsheet = SpreadsheetApp.getActive();
+  }
+  return _v12CachedSpreadsheet;
+}
+
+/**
  * Получить лист по имени.
+ *
+ * Объект активной таблицы берётся из кэша (v12ActiveSpreadsheet) — именно
+ * SpreadsheetApp.getActive() был дорогим вызовом. Кэшировать САМИ листы по
+ * имени нельзя: лист может быть пересоздан под тем же именем (insertSheet при
+ * установке/миграции схемы), и кэш «залипал» бы на устаревшем объекте. Поэтому
+ * getSheetByName всегда возвращает актуальный лист активной таблицы.
  */
 function getSheetByName(sheetName) {
   if (!sheetName) {
     return null;
   }
-  return SpreadsheetApp.getActive().getSheetByName(sheetName);
+  return v12ActiveSpreadsheet().getSheetByName(sheetName);
 }
 
 /**
@@ -78,7 +99,7 @@ function appendRow(sheet, row) {
  * Создать лист, если нет; записать заголовки, если пуст.
  */
 function ensureSheet(name, headers) {
-  const ss = SpreadsheetApp.getActive();
+  const ss = v12ActiveSpreadsheet();
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
@@ -141,4 +162,46 @@ function batchWrite(sheet, changes) {
       sheet.getRange(row, cStart, 1, values.length).setValues([values]);
     });
   });
+}
+
+/**
+ * БЛОЧНАЯ запись ячеек одного листа: одна getValues + одна setValues на весь
+ * диапазон затронутых строк (вместо записи «отрезков» по каждой строке).
+ *
+ * Для «плотных» пакетных операций (массовая передача производству, где за раз
+ * меняются сотни смежных строк POSITION_STATE) это сокращает число вызовов
+ * SpreadsheetApp с O(строк × отрезков) до 2 вызовов на всю пачку.
+ *
+ * changes: [{row, col, value}] — как в batchWrite. Значения merge-ятся в
+ * прочитанный блок (промежуточные/чужие колонки сохраняются), затем блок
+ * пишется одной setValues.
+ */
+function batchWriteBlock(sheet, changes) {
+  if (!changes || changes.length === 0) {
+    return;
+  }
+  const byRow = {};
+  let minRow = Infinity;
+  let maxRow = -Infinity;
+  let maxCol = 0;
+  changes.forEach((c) => {
+    if (!byRow[c.row]) {
+      byRow[c.row] = {};
+    }
+    byRow[c.row][c.col] = c.value;
+    if (c.row < minRow) { minRow = c.row; }
+    if (c.row > maxRow) { maxRow = c.row; }
+    if (c.col > maxCol) { maxCol = c.col; }
+  });
+
+  const numRows = maxRow - minRow + 1;
+  const block = sheet.getRange(minRow, 1, numRows, maxCol).getValues();
+  Object.keys(byRow).forEach((rowStr) => {
+    const rel = Number(rowStr) - minRow;
+    const cols = byRow[rowStr];
+    Object.keys(cols).forEach((colStr) => {
+      block[rel][Number(colStr) - 1] = cols[colStr];
+    });
+  });
+  sheet.getRange(minRow, 1, numRows, maxCol).setValues(block);
 }
