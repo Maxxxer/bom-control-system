@@ -109,11 +109,13 @@ function v12NormalizePendingValue(field, value) {
 /**
  * Собрать строку очереди (массив по колонкам PENDING_EDITS).
  */
-function v12BuildPendingRow(sourceKey, positionId, field, value, actor) {
+function v12BuildPendingRow(sourceKey, positionId, field, value, actor, editId) {
   const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
   const row = new Array(V12_CONFIG.COLUMN_COUNT.PENDING_EDITS).fill("");
   row[Q.DATE - 1] = new Date();
-  row[Q.EDIT_ID - 1] = generateEventId();
+  // editId передаётся, когда на одну пачку достаточно ОДНОГО Edit ID
+  // (не тратим RPC Utilities.getUuid() на каждую строку захвата).
+  row[Q.EDIT_ID - 1] = editId || generateEventId();
   row[Q.SOURCE - 1] = sourceKey;
   row[Q.POSITION_ID - 1] = normalizeMaterialId(positionId);
   row[Q.FIELD - 1] = field;
@@ -124,18 +126,99 @@ function v12BuildPendingRow(sourceKey, positionId, field, value, actor) {
 }
 
 /**
- * Записать пачку строк очереди одним вызовом.
+ * Ключ намерения: SOURCE|POSITION_ID|FIELD (нормализованный).
+ */
+function v12PendingKey(source, positionId, field) {
+  return String(source || "").trim() + "|" +
+    normalizeMaterialId(positionId) + "|" +
+    String(field || "").trim();
+}
+
+/**
+ * Зафиксировать пачку намерений в PENDING_EDITS.
  *
- * После записи обновляется ячейка-индикатор «есть неприменённые изменения»,
- * чтобы пользователь не забыл нажать «Применить изменения».
+ * V4-надёжность (фикс дефекта «не все позиции попадают в очередь»):
+ *   1) запись идёт ПОД коротким общескриптовым локом, а `getLastRow()+1`
+ *      вычисляется уже ПОД локом — параллельные onEdit больше НЕ перезатирают
+ *      строки друг друга (раньше два события читали один getLastRow() и писали
+ *      в одну строку — часть намерений терялась);
+ *   2) UPsert по ключу (SOURCE|POSITION_ID|FIELD): если по ключу уже есть
+ *      PENDING-строка — она обновляется на месте (значение/автор/дата), иначе
+ *      строка добавляется. Убирает дубли «снял → поставил» и делает применение
+ *      детерминированным (в очереди максимум одно актуальное намерение на ключ).
+ *
+ * После записи обновляется ячейка-индикатор «есть неприменённые изменения».
  */
 function v12EnqueuePendingRows(rowArrays) {
   if (!rowArrays || !rowArrays.length) {
     return;
   }
-  const sheet = v12GetSheetByKey("PENDING_EDITS");
-  const startRow = sheet.getLastRow() + 1;
-  writeValues(sheet, startRow, 1, rowArrays);
+  const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+  if (!lock) {
+    logSystem("v12EnqueuePendingRows",
+      "Очередь занята (идёт применение/синхронизация) — намерение не зафиксировано", "WARNING");
+    flushSystemLog();
+    return;
+  }
+  try {
+    const sheet = v12GetSheetByKey("PENDING_EDITS");
+    const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
+    const PENDING = V12_CONFIG.PENDING_STATUS.PENDING;
+
+    // Ключ -> номер строки листа для действующих (PENDING) намерений.
+    const byKey = {};
+    const data = readSheetValues(sheet);
+    for (let i = 1; i < data.length; i++) {
+      const r = data[i];
+      if (String(r[Q.STATUS - 1]).trim() !== PENDING) {
+        continue;
+      }
+      const pid = normalizeMaterialId(r[Q.POSITION_ID - 1]);
+      if (!pid) {
+        continue;
+      }
+      byKey[v12PendingKey(r[Q.SOURCE - 1], pid, r[Q.FIELD - 1])] = i + 1;
+    }
+
+    // Схлопываем дубли внутри самой пачки (last-wins), затем upsert.
+    const order = [];
+    const batch = {};
+    rowArrays.forEach(function (row) {
+      const key = v12PendingKey(row[Q.SOURCE - 1], row[Q.POSITION_ID - 1], row[Q.FIELD - 1]);
+      if (order.indexOf(key) === -1) {
+        order.push(key);
+      }
+      batch[key] = row;
+    });
+
+    const appends = [];
+    const updates = [];
+    order.forEach(function (key) {
+      const row = batch[key];
+      const targetRow = byKey[key];
+      if (targetRow) {
+        updates.push({ row: targetRow, col: Q.DATE, value: row[Q.DATE - 1] });
+        updates.push({ row: targetRow, col: Q.VALUE, value: row[Q.VALUE - 1] });
+        updates.push({ row: targetRow, col: Q.USER, value: row[Q.USER - 1] });
+        updates.push({ row: targetRow, col: Q.EDIT_ID, value: row[Q.EDIT_ID - 1] });
+        updates.push({ row: targetRow, col: Q.STATUS, value: PENDING });
+        updates.push({ row: targetRow, col: Q.PROCESSED_AT, value: "" });
+        updates.push({ row: targetRow, col: Q.ERROR, value: "" });
+      } else {
+        appends.push(row);
+      }
+    });
+
+    if (appends.length) {
+      const startRow = sheet.getLastRow() + 1;   // вычисляется ПОД локом
+      writeValues(sheet, startRow, 1, appends);
+    }
+    if (updates.length) {
+      batchWrite(sheet, updates);
+    }
+  } finally {
+    lock.releaseLock();
+  }
   v12UpdatePendingIndicator();
 }
 
@@ -228,6 +311,8 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
   const localCol = singleCell ? 0 : (column - col);
   const actor = getCurrentUser();
+  // Один Edit ID на весь захват (без RPC на каждую строку).
+  const editIdBase = generateEventId();
   // Position ID всех строк читаем ОДНОЙ выборкой (а не по ячейке в цикле).
   const idColumn = sheet.getRange(firstRow, keyCol, numRows, 1).getValues();
 
@@ -245,7 +330,7 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     if (!positionId) {
       continue;
     }
-    pendingRows.push(v12BuildPendingRow(sourceKey, positionId, field, rowValues[localCol], actor));
+    pendingRows.push(v12BuildPendingRow(sourceKey, positionId, field, rowValues[localCol], actor, editIdBase + "-" + (r + 1)));
   }
 
   if (pendingRows.length) {
@@ -332,6 +417,8 @@ function v12CaptureDeficitEdit(e) {
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
   const actor = getCurrentUser();
+  // Один Edit ID на весь захват диапазона (без RPC на каждую строку).
+  const editIdBase = generateEventId();
   // Position ID всех строк диапазона — одной выборкой.
   const idColumn = sheet.getRange(firstRow, D.POSITION_ID, numRows, 1).getValues();
 
@@ -353,7 +440,8 @@ function v12CaptureDeficitEdit(e) {
         continue;
       }
       pendingRows.push(v12BuildPendingRow(
-        V12_CONFIG.SOURCE_UI.DEFICIT_SUMMARY, positionId, def.field, rowValues[local], actor));
+        V12_CONFIG.SOURCE_UI.DEFICIT_SUMMARY, positionId, def.field, rowValues[local], actor,
+        editIdBase + "-" + (r + 1) + "_" + (d + 1)));
     }
   }
 
@@ -564,6 +652,107 @@ function v12PurgeDonePendingEdits(maxAgeDays) {
 }
 
 /**
+ * Есть ли УСТАНОВЛЕННЫЕ галочки «Отметка получено» в ОТБОРКЕ / WORKING BOM.
+ *
+ * Дешёвый предфильтр для слива: если очередь пуста, но галочки стоят — слив
+ * всё равно нужен (страховка от потерянных onEdit, см. v12ReconcileCheckedHandoffs).
+ */
+function v12HasCheckedHandoffs() {
+  const targets = [
+    { sheetKey: "PICKING", checkCol: V12_CONFIG.PICKING_COLUMNS.CHECKBOX },
+    { sheetKey: "WORKING_BOM", checkCol: V12_CONFIG.WORKING_BOM_COLUMNS.CHECKBOX }
+  ];
+  for (let t = 0; t < targets.length; t++) {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS[targets[t].sheetKey]);
+    if (!sheet) {
+      continue;
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      continue;
+    }
+    const checks = sheet.getRange(2, targets[t].checkCol, lastRow - 1, 1).getValues();
+    for (let r = 0; r < checks.length; r++) {
+      if (v12IsChecked(checks[r][0])) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Реконсиляция: страховка от ПОТЕРЯННЫХ onEdit.
+ *
+ * Google может «проглотить» часть событий onEdit при массовой отметке, и тогда
+ * в PENDING_EDITS строки для установленной галочки нет. Здесь читаются колонки
+ * «Отметка получено» ОТБОРКИ и WORKING BOM; любая строка с УСТАНОВЛЕННОЙ
+ * галочкой, для которой в очереди НЕТ ни одного намерения HANDOFF (по ключу
+ * SOURCE|POSITION_ID), добавляется синтетическим намерением передачи.
+ *
+ * Инвариант: «галочка стоит ⇒ позиция будет передана». Применение идемпотентно
+ * (v12MarkReceivedByProduction проверяет уже принятое), поэтому повтор не опасен.
+ * Уже обработанные (DONE) строки очереди тоже считаются «есть» — повторно
+ * галочку не переигрываем.
+ *
+ * Возвращает массив намерений в формате v12ResolvePendingIntents ({ row:0, ... }).
+ */
+function v12ReconcileCheckedHandoffs(queueData) {
+  const F = V12_CONFIG.PENDING_FIELD.HANDOFF;
+  const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
+
+  // Ключи source|positionId, по которым намерение HANDOFF уже есть в очереди.
+  const have = {};
+  const rows = queueData || [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[Q.FIELD - 1] || "").trim() !== F) {
+      continue;
+    }
+    const pid = normalizeMaterialId(r[Q.POSITION_ID - 1]);
+    if (!pid) {
+      continue;
+    }
+    have[String(r[Q.SOURCE - 1] || "").trim() + "|" + pid] = true;
+  }
+
+  const out = [];
+  const targets = [
+    { sheetKey: "PICKING", source: V12_CONFIG.SOURCE_UI.PICKING,
+      idCol: V12_CONFIG.PICKING_COLUMNS.POSITION_ID,
+      checkCol: V12_CONFIG.PICKING_COLUMNS.CHECKBOX },
+    { sheetKey: "WORKING_BOM", source: V12_CONFIG.SOURCE_UI.WORKING_BOM,
+      idCol: V12_CONFIG.WORKING_BOM_COLUMNS.POSITION_ID,
+      checkCol: V12_CONFIG.WORKING_BOM_COLUMNS.CHECKBOX }
+  ];
+  targets.forEach(function (t) {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS[t.sheetKey]);
+    if (!sheet) {
+      return;
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      return;
+    }
+    const ids = sheet.getRange(2, t.idCol, lastRow - 1, 1).getValues();
+    const checks = sheet.getRange(2, t.checkCol, lastRow - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      const pid = normalizeMaterialId(ids[i][0]);
+      if (!pid || !v12IsChecked(checks[i][0])) {
+        continue;
+      }
+      const key = t.source + "|" + pid;
+      if (have[key]) {
+        continue;
+      }
+      have[key] = true;
+      out.push({ row: 0, source: t.source, pid: pid, field: F, value: true, user: v12CurrentActor() });
+    }
+  });
+  return out;
+}
+
+/**
  * Применить одно намерение очереди к состоянию позиции (пакетно).
  *
  * Расчёт, аудит, историю и складские дельты выполняют ОПЕРАЦИИ снабжения
@@ -616,7 +805,9 @@ function v12ApplyRealDeliveryIntent(positionId, ctx, posIndex) {
  * пересчётом проекций, и помечает строки обработанными.
  */
 function v12DrainPendingEdits() {
-  if (!v12HasPendingEdits()) {
+  // Предфильтр: есть очередь ИЛИ стоят галочки передачи, не попавшие в очередь
+  // (страховка от потерянных onEdit — см. v12ReconcileCheckedHandoffs).
+  if (!v12HasPendingEdits() && !v12HasCheckedHandoffs()) {
     return { drained: 0 };
   }
 
@@ -629,11 +820,13 @@ function v12DrainPendingEdits() {
     const sheet = v12GetSheetByKey("PENDING_EDITS");
     const data = readSheetValues(sheet);
     const pendingRows = v12CollectPendingRowNumbers(data);
-    if (!pendingRows.length) {
+
+    // Намерения очереди + синтетические намерения по установленным галочкам,
+    // для которых строки в очереди нет (потерянный onEdit).
+    const intents = v12ResolvePendingIntents(data).concat(v12ReconcileCheckedHandoffs(data));
+    if (!intents.length) {
       return { drained: 0 };
     }
-
-    const intents = v12ResolvePendingIntents(data);
     const posIndex = v12BuildPositionIndex();
     const materialIndex = v12BuildMaterialIndex();
     // Пакетный контекст. Кроме накопления записей POSITION_STATE и складских
@@ -666,7 +859,11 @@ function v12DrainPendingEdits() {
         try {
           const res = v12ApplyPendingIntent(it, ctx, posIndex);
           if (res && res.status === "blocked") {
-            failed[it.row] = res.reason || "заблокировано";
+            // it.row = 0 у синтетических (реконсилированных) намерений — их
+            // некуда пометить в очереди, поэтому в failed не пишем.
+            if (it.row) {
+              failed[it.row] = res.reason || "заблокировано";
+            }
           } else {
             applied++;
           }

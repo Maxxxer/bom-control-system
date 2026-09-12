@@ -10,7 +10,8 @@ const tests = [
   "_local_tests/v12_queue_test.js",
   "_local_tests/v12_ui_test.js",
   "_local_tests/v12_dashboard_test.js",
-  "_local_tests/v12_received_perf_test.js"
+  "_local_tests/v12_received_perf_test.js",
+  "_local_tests/v12_queue_capture_fix_test.js"
 ];
 const files = [
   "v12_config.js", "utils.js", "sheet_service.js", "v12_utils.js", "v12_calculate.js",
