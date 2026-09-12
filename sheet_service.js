@@ -76,6 +76,14 @@ function clearRange(sheet, row, col, numRows, numCols) {
   }
   const range = sheet.getRange(row, col, numRows, numCols);
   range.clearContent();
+  // Сброс ЗАЛИВКИ в БЕЛЫЙ: clearContent() очищает значения, но НЕ фон. При
+  // сокращении числа строк «освободившиеся» строки иначе сохраняли бы заливку
+  // прежних позиций (Сводка дефицитов / ОТБОРКА / WORKING BOM / Dashboard).
+  // Белый фон задаётся на весь очищаемый диапазон; затем пересборка проекции
+  // перекрашивает свои актуальные строки (после очистки) — их цвета сохраняются.
+  if (typeof range.setBackground === "function") {
+    range.setBackground("#FFFFFF");
+  }
 }
 
 /**
