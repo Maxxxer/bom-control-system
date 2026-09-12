@@ -4,6 +4,8 @@ const tests = [
   "_local_tests/v12_picking_schema_test.js",
   "_local_tests/v12_audit_fixes_test.js",
   "_local_tests/v12_audit_fixes2_test.js",
+  "_local_tests/v12_deficit_status_test.js",
+  "_local_tests/v12_supply_schema_test.js",
   "_local_tests/v12_queue_test.js"
 ];
 const files = [

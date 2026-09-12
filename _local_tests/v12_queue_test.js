@@ -4,7 +4,7 @@
  * Проверяет:
  *   Z1  — захват одиночной отметки через onEdit: в PENDING_EDITS одна строка
  *         PENDING с верными SOURCE/POSITION_ID/FIELD/VALUE/USER;
- *   Z1b — инлайн-слив: при QUEUE_INLINE_DRAIN=true onEdit применяет отметку сразу;
+ *   Z1b — V3: без Apply изменение НЕ применяется; v12ApplyChanges применяет намерение;
  *   Z2  — запрещённая роль: строка НЕ добавляется, ячейка откатывается;
  *   Z3  — last-wins: «поставил → снял» = отмена; дубликаты = одно намерение;
  *   Z4  — слив пачки: 3 передачи, склад списан ОДИН раз, строки DONE;
@@ -107,7 +107,7 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
   + "\n;globalThis.__V12 = { V12_CONFIG: V12_CONFIG, V12_ROLE_MAP: V12_ROLE_MAP,"
   + " v12BuildPositionRow: v12BuildPositionRow, v12OnEdit: v12OnEdit,"
   + " v12CaptureCheckboxEdit: v12CaptureCheckboxEdit, v12EnqueuePendingEdit: v12EnqueuePendingEdit,"
-  + " v12DrainPendingEdits: v12DrainPendingEdits, v12HasPendingEdits: v12HasPendingEdits,"
+  + " v12DrainPendingEdits: v12DrainPendingEdits, v12ApplyChanges: v12ApplyChanges, v12HasPendingEdits: v12HasPendingEdits,"
   + " v12CountPendingEdits: v12CountPendingEdits, v12ResolvePendingIntents: v12ResolvePendingIntents,"
   + " v12PurgeDonePendingEdits: v12PurgeDonePendingEdits, v12CurrentActor: v12CurrentActor };";
 
@@ -119,9 +119,9 @@ const Q = C.PENDING_EDIT_COLUMNS;
 const K = C.PICKING_COLUMNS;
 const M = C.MATERIAL_COLUMNS;
 
-// По умолчанию инлайн-слив выключаем — тогда onEdit только фиксирует намерение,
-// а слив вызываем вручную (детерминированно). Инлайн проверяется отдельно (Z1b).
-C.SETTINGS.QUEUE_INLINE_DRAIN = false;
+// V3: автоприменения (инлайн-слива) НЕТ вообще — onEdit только фиксирует
+// намерение в очереди, а применяет его v12ApplyChanges. В тестах применяем
+// вручную — детерминированно и без зависимости от таймеров.
 
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION",
  "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "PICKING", "WORKING_BOM",
@@ -213,9 +213,12 @@ check("Z1: в очереди 1 строка", queueData().length - 1, 1);
   check("Z1: USER", r[Q.USER - 1], "test@example.com");
   check("Z1: есть Edit ID", String(r[Q.EDIT_ID - 1] || "").length > 0, true);
 }
+check("Z1: индикатор неприменённых изменений заполнен", (function () {
+  const v = DS.getRange(1, C.COLUMN_COUNT.DEFICIT_SUMMARY + 2).getValue();
+  return String(v || "").length > 0;
+})(), true);
 
-console.log("=== Z1b: инлайн-слив применяет отметку сразу ===");
-C.SETTINGS.QUEUE_INLINE_DRAIN = true;
+console.log("=== Z1b: V3 — без Apply не применяется; v12ApplyChanges применяет ===");
 resetPositions();
 resetQueue();
 resetPicking();
@@ -223,11 +226,16 @@ setMaterial({ "C1": 50 });
 PS._data.push(mkPosition("C1", 1, 10, 10, 0, "", "2026-09-01"));   // available=10 >= required=10
 PK._data.push(pickRow("BOM1:C1"));
 N.v12OnEdit(cellEvent(PK, 2, K.CHECKBOX, true));
-check("Z1b: позиция передана (RECEIVED_BY_PRODUCTION)", psCell("BOM1:C1", P.RECEIVED_BY_PRODUCTION), true);
+check("Z1b: намерение зафиксировано (PENDING)", queueData()[1][Q.STATUS - 1], C.PENDING_STATUS.PENDING);
+check("Z1b: БЕЗ Apply позиция НЕ передана", psCell("BOM1:C1", P.RECEIVED_BY_PRODUCTION), false);
+N.v12ApplyChanges();
+check("Z1b: после Apply позиция передана", psCell("BOM1:C1", P.RECEIVED_BY_PRODUCTION), true);
 check("Z1b: жизненный цикл = ARCHIVED", psCell("BOM1:C1", P.LIFECYCLE_STATE), C.LIFECYCLE_STATE.ARCHIVED);
 check("Z1b: склад C1 = 40", whQty("C1"), 40);
-check("Z1b: очередь пуста (обработана)", queueData()[1][Q.STATUS - 1], C.PENDING_STATUS.DONE);
-C.SETTINGS.QUEUE_INLINE_DRAIN = false;
+check("Z1b: строка очереди DONE", queueData()[1][Q.STATUS - 1], C.PENDING_STATUS.DONE);
+check("Z1b: индикатор неприменённых изменений сброшен", (function () {
+  return String(DS.getRange(1, C.COLUMN_COUNT.DEFICIT_SUMMARY + 2).getValue() || "");
+})(), "");
 
 console.log("=== Z2: запрещённая роль — строка не создаётся, ячейка откатывается ===");
 resetQueue();

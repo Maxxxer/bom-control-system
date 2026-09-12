@@ -20,11 +20,28 @@ function onOpen() {
  * Меню V12.
  */
 function v12OnOpen() {
+  // V3 — модель «Применить»: число необработанных намерений выносим в подпись
+  // пункта меню, чтобы пользователь видел «есть неприменённые изменения».
+  // Подпись обновляется при открытии таблицы.
+  let pending = 0;
+  try {
+    pending = v12CountPendingEdits();
+    // Обновляем и ячейку-индикатор на видном листе: пользователь видит
+    // «есть неприменённые изменения» даже не открывая меню.
+    v12UpdatePendingIndicator(pending);
+  } catch (e) {
+    pending = 0;
+  }
+  const applyLabel = (pending > 0)
+    ? "✅ Применить изменения (" + pending + ")"
+    : "✅ Применить изменения";
+
   SpreadsheetApp.getUi()
     .createMenu("BOM CONTROL V12")
+    .addItem(applyLabel, "v12ApplyChangesUI")
+    .addSeparator()
     .addItem("🔄 Полная синхронизация", "v12RunFullSync")
     .addItem("📊 Обновить проекции", "v12RefreshAllProjections")
-    .addItem("⏱ Обработать очередь правок", "v12ScheduledQueueDrain")
     .addSeparator()
     .addItem("↩ Вернуть из архива", "v12PromptReturnFromArchive")
     .addSeparator()
@@ -34,6 +51,31 @@ function v12OnOpen() {
     .addSeparator()
     .addItem("⚙ Установка V12", "v12Install")
     .addToUi();
+}
+
+/**
+ * «Применить изменения» с обратной связью (V3).
+ *
+ * Вызывается из меню. Применяет все накопленные намерения (v12ApplyChanges)
+ * и показывает сводку: сколько применено / не применено / отложено.
+ */
+function v12ApplyChangesUI() {
+  const result = v12ApplyChanges();
+  const applied = (result && typeof result.drained === "number") ? result.drained : 0;
+  const failed = (result && typeof result.failed === "number") ? result.failed : 0;
+  let msg = "Применено изменений: " + applied;
+  if (failed > 0) {
+    msg += "\nНе применено: " + failed + " (см. лист PENDING_EDITS, колонка «Ошибка»)";
+  }
+  if (result && result.skipped) {
+    msg += "\nСистема занята — повторите через несколько секунд.";
+  }
+  try {
+    SpreadsheetApp.getUi().alert("Применить изменения", msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    // нет UI (запуск из триггера) — результат уже в логах очереди
+  }
+  return result;
 }
 
 /**

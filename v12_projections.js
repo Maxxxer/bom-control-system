@@ -40,22 +40,18 @@ function v12RefreshAllProjections() {
 /**
  * Пересобрать все проекции.
  *
- * ПРОИЗВОДИТЕЛЬНОСТЬ: подбор необработанных правок (harvest) выполняется ДО
- * чтения POSITION_STATE, затем лист читается ОДИН раз и передаётся во все
- * проекции. Ранее каждая проекция читала POSITION_STATE самостоятельно —
- * 5–6 полных чтений на один пересчёт.
+ * V3 — модель «Применить»: единственные входы пересборки — кнопка «Применить
+ * изменения» (v12ApplyChanges) и полная синхронизация (v12RunFullSync).
+ * Подбора необработанных правок из листов (harvest) БОЛЬШЕ НЕТ: правки
+ * пользователя фиксирует очередь PENDING_EDITS, поэтому проекция пересобирается
+ * только из актуального POSITION_STATE и не конкурирует с вводом.
+ *
+ * ПРОИЗВОДИТЕЛЬНОСТЬ: POSITION_STATE читается ОДИН раз и передаётся во все
+ * проекции. Ранее каждая проекция читала лист самостоятельно — 5–6 полных
+ * чтений на один пересчёт.
  */
 function v12RefreshProjections() {
-  // POSITION_STATE читается ОДИН раз: harvest сверяется уже с прочитанными
-  // данными, и повторное чтение делается ТОЛЬКО если harvest реально что-то
-  // исправил (страховка от пропущенного onEdit). Ранее лист читался дважды —
-  // отдельно в harvest и отдельно для проекций (P-7 отчёта №33).
-  let posData = v12ReadSheet("POSITION_STATE");
-  const harvestedDeficit = v12HarvestDeficitInput(null, posData);
-  const harvestedPicking = v12HarvestPickingInput(posData);
-  if (harvestedDeficit || harvestedPicking) {
-    posData = v12ReadSheet("POSITION_STATE");
-  }
+  const posData = v12ReadSheet("POSITION_STATE");
   // Даты ревизий и карта исключённых BOM читаются ОДИН раз на пересчёт и
   // раздаются проекциям (ранее BOM_REVISION читался дважды — в ОТБОРКЕ и в
   // Dashboard; EXCLUDED_BOMS — из Dashboard).
@@ -134,11 +130,6 @@ function v12BuildDeficitRow(r) {
 }
 
 /**
- * Флаг: идёт подбор необработанных правок из листа сводки (защита от рекурсии).
- */
-let _v12Harvesting = false;
-
-/**
  * Разобрать дату из ячейки сводки. Поддерживает Date и формат dd.MM.yyyy
  * (в сводке даты отображаются как «dd.MM.yyyy», JavaScript их так не парсит).
  * Возвращает Date или null.
@@ -149,166 +140,13 @@ function v12ParseSummaryDate(value) {
 }
 
 /**
- * Подобрать необработанные правки из «Сводки дефицитов» в POSITION_STATE.
- *
- * Страховка от пропущенных/задержанных onEdit: значение, введённое в сводку,
- * уже есть в листе — здесь оно переносится в POSITION_STATE ДО перезаписи
- * сводки, поэтому не теряется (и не затирает соседнюю ячейку строки).
- * В обычном состоянии значения совпадают и функция ничего не меняет.
- */
-function v12HarvestDeficitInput(skip, posData) {
-  if (_v12Harvesting) {
-    return false;
-  }
-  _v12Harvesting = true;
-  try {
-    const sheet = getSheetByName(V12_CONFIG.SHEETS.DEFICIT_SUMMARY);
-    if (!sheet) {
-      return false;
-    }
-    const D = V12_CONFIG.DEFICIT_COLUMNS;
-    const P = V12_CONFIG.POSITION_COLUMNS;
-    const M = V12_CONFIG.MATERIAL_COLUMNS;
-    const data = readSheetValues(sheet);
-    if (data.length < 2) {
-      return false;
-    }
-    // posData (опц.) — уже прочитанный POSITION_STATE от вызывающей стороны
-    // (v12RefreshProjections): не читаем лист повторно (P-7 отчёта №33).
-    const index = v12BuildPositionIndex(posData);
-    const posSheet = v12GetSheetByKey("POSITION_STATE");
-    const writes = [];
-    // Складские дельты от «реальной поставки», подобранной из чекбоксов.
-    const warehouseDelta = {};
-    // Колонка, которая только что зафиксирована этой правкой, не подбирается
-    // из листа (иначе сотрёт её же значение, т.к. лист перезаписывается позже).
-    const skipPid = skip && skip.positionId ? normalizeMaterialId(skip.positionId) : "";
-    const skipKey = skip && skip.key ? skip.key : "";
-
-    for (let i = 1; i < data.length; i++) {
-      const pid = normalizeMaterialId(data[i][D.POSITION_ID - 1]);
-      if (!pid) {
-        continue;
-      }
-      const pos = index.get(pid);
-      if (!pos) {
-        continue;
-      }
-      const rowVals = pos.values.slice();
-      let changed = false;
-      let realDelta = 0;
-
-      // ВАЖНО (Вариант A): типизированные поля Сводки («Заказано», «Ожидаемая
-      // дата») БОЛЬШЕ НЕ подхватываются из листа. Их правки фиксирует очередь
-      // PENDING_EDITS (onEdit) и применяет слив — значит, к моменту пересбора
-      // проекций POSITION_STATE уже актуален, а ячейка Сводки может содержать
-      // УСТАРЕВШЕЕ значение (идёт пересборка). Прежний «подхват» (Сводка
-      // авторитетнее позиции) в этом случае ЗАТИРАЛ только что применённое
-      // значение нулём/старым — это и был источник исходного дефекта
-      // («сброс в 0.0»). Очередь — единый источник истины для этих полей.
-      // Подхват «Реальной поставки» сохранён ниже: он строго монотонный («вверх»).
-
-      // Чекбокс «Реальная поставка» — страховка от потери массовых отметок:
-      // если строка отмечена в листе, но поставка ещё не зафиксирована в
-      // POSITION_STATE — фиксируем её. Только положительное направление, чтобы
-      // не сбрасывать уже сохранённые (в т.ч. частичные) поставки.
-      const skipReal = (pid === skipPid && skipKey === "REAL_DELIVERY");
-      if (!skipReal && v12IsChecked(data[i][D.REAL_DELIVERY - 1])) {
-        const required = toNumber(rowVals[P.REQUIRED_QTY - 1]);
-        const currentReal = toNumber(rowVals[P.REAL_DELIVERY_QTY - 1]);
-        if (required > 0 && currentReal < required) {
-          rowVals[P.REAL_DELIVERY_QTY - 1] = required;
-          // Фиксируем дату первой отметки реальной поставки.
-          if (!rowVals[P.REAL_DELIVERY_DATE - 1]) {
-            rowVals[P.REAL_DELIVERY_DATE - 1] = new Date();
-          }
-          realDelta = required - currentReal;
-          changed = true;
-        }
-      }
-
-      if (!changed) {
-        continue;
-      }
-
-      v12ApplyComputedToRow(rowVals);
-      writes.push({ row: pos.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
-      writes.push({ row: pos.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
-      writes.push({ row: pos.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
-      writes.push({ row: pos.row, col: P.REAL_DELIVERY_DATE, value: rowVals[P.REAL_DELIVERY_DATE - 1] });
-      writes.push({ row: pos.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
-      writes.push({ row: pos.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
-      writes.push({ row: pos.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
-      writes.push({ row: pos.row, col: P.UNCOVERED_NEED, value: rowVals[P.UNCOVERED_NEED - 1] });
-      writes.push({ row: pos.row, col: P.OVER_ORDERED_QTY, value: rowVals[P.OVER_ORDERED_QTY - 1] });
-      writes.push({ row: pos.row, col: P.SHORT_DELIVERY_QTY, value: rowVals[P.SHORT_DELIVERY_QTY - 1] });
-      writes.push({ row: pos.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
-      writes.push({ row: pos.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
-      writes.push({ row: pos.row, col: P.UPDATED_AT, value: new Date() });
-
-      if (realDelta !== 0) {
-        const matKey = v12BuildMaterialKey({
-          code: rowVals[P.MATERIAL_CODE - 1],
-          name: rowVals[P.MATERIAL_NAME - 1],
-          model: rowVals[P.MODEL - 1],
-          unit: rowVals[P.UNIT - 1]
-        });
-        warehouseDelta[matKey] = (warehouseDelta[matKey] || 0) + realDelta;
-      }
-    }
-
-    if (writes.length) {
-      batchWrite(posSheet, writes);
-      SpreadsheetApp.flush();
-    }
-
-    // Складские остатки: применить суммарные дельты по materialKey одним батчем.
-    const matKeys = Object.keys(warehouseDelta);
-    if (matKeys.length) {
-      const materialSheet = v12GetSheetByKey("MATERIAL_STATE");
-      const mIdx = v12BuildMaterialIndex();
-      const mWrites = [];
-      matKeys.forEach(function (mk) {
-        const delta = warehouseDelta[mk];
-        if (!delta) {
-          return;
-        }
-        const m = mIdx.get(mk);
-        if (m) {
-          const next = Math.max(0, toNumber(m.values[M.WAREHOUSE_QTY - 1]) + delta);
-          mWrites.push({ row: m.row, col: M.WAREHOUSE_QTY, value: next });
-          mWrites.push({ row: m.row, col: M.UPDATED_AT, value: new Date() });
-        } else {
-          const rowVals2 = new Array(V12_CONFIG.COLUMN_COUNT.MATERIAL_STATE).fill("");
-          rowVals2[M.MATERIAL_KEY - 1] = mk;
-          rowVals2[M.MATERIAL_CODE - 1] = mk;
-          rowVals2[M.WAREHOUSE_QTY - 1] = Math.max(0, delta);
-          rowVals2[M.UPDATED_AT - 1] = new Date();
-          appendRow(materialSheet, rowVals2);
-        }
-      });
-      if (mWrites.length) {
-        batchWrite(materialSheet, mWrites);
-      }
-    }
-    // Признак «harvest что-то исправил» — вызывает перечитывание POSITION_STATE
-    // в v12RefreshProjections (иначе данные проекций остались бы устаревшими).
-    return writes.length > 0;
-  } finally {
-    _v12Harvesting = false;
-  }
-}
-
-/**
  * DEFICIT_SUMMARY: активные (не архив/не удалённые, не переданные производству)
  * позиции для снабжения. Колонки из V12_CONFIG.DEFICIT_COLUMNS.
+ *
+ * V3: подбора необработанных правок из листа (harvest) больше нет — правки
+ * фиксирует очередь PENDING_EDITS, а проекция всегда строится из POSITION_STATE.
  */
 function v12RefreshDeficitSummary(posData) {
-  // При вызове из v12RefreshProjections данные уже прочитаны и harvest уже
-  // выполнен — читаем лист и подбираем правки только при самостоятельном вызове.
-  if (!posData) {
-    v12HarvestDeficitInput();
-  }
   const data = posData || v12ReadSheet("POSITION_STATE");
   const rows = [];
 
@@ -336,15 +174,7 @@ function v12RefreshDeficitSummary(posData) {
  * сводки или порядок строк на листе разошёлся с POSITION_STATE — выполняется
  * безопасный полный пересчёт.
  */
-function v12RefreshDeficitSummaryRow(positionId, committedKey, posData) {
-  // Переносим в POSITION_STATE всё, что уже введено в строку сводки (кроме
-  // только что зафиксированной колонки), чтобы перезапись строки не затёрла
-  // соседнюю ячейку (например, «Заказано», введённое раньше своего onEdit).
-  // Если posData передан вызывающей стороной — harvest уже выполнен, лист
-  // повторно не читаем.
-  if (!posData) {
-    v12HarvestDeficitInput(committedKey ? { positionId: positionId, key: committedKey } : null);
-  }
+function v12RefreshDeficitSummaryRow(positionId, posData) {
   const id = normalizeMaterialId(positionId);
   if (!id) {
     v12RefreshDeficitSummary();
@@ -527,66 +357,6 @@ function v12InstallDeficitCheckboxes(rowCount) {
 }
 
 /**
- * Флаг: идёт подбор необработанных отметок передачи из «Отборки» (защита от рекурсии).
- */
-let _v12HarvestingPicking = false;
-
-/**
- * Подобрать необработанные отметки передачи из «Отборки» (ОТБОРКА).
- *
- * Страховка от потери массовых отметок чекбоксов передачи: если строка отмечена
- * в листе, но передача ещё не зафиксирована — выполняем передачу идемпотентно,
- * без пересчёта проекций (skipRefresh=true); пересчёт делает вызывающая сторона
- * (v12RefreshPicking). Вызывается в начале v12RefreshPicking ДО перезаписи листа.
- */
-function v12HarvestPickingInput(posData) {
-  if (_v12HarvestingPicking) {
-    return false;
-  }
-  _v12HarvestingPicking = true;
-  try {
-    const sheet = getSheetByName(V12_CONFIG.SHEETS.PICKING);
-    if (!sheet) {
-      return false;
-    }
-    const K = V12_CONFIG.PICKING_COLUMNS;
-    const data = readSheetValues(sheet);
-    if (data.length < 2) {
-      return false;
-    }
-    let handedAny = false;
-    // Общие индексы и накопитель дельт на весь проход — чтобы не читать листы
-    // на каждую отмеченную строку (передача через harvest тоже пакетная).
-    // posData (опц.) — уже прочитанный POSITION_STATE от вызывающей стороны
-    // (v12RefreshProjections): не читаем лист повторно (P-7 отчёта №33).
-    const posIndex = v12BuildPositionIndex(posData);
-    const materialIndex = v12BuildMaterialIndex();
-    const ctx = { index: posIndex, materialIndex: materialIndex, warehouseDelta: {} };
-    for (let i = 1; i < data.length; i++) {
-      if (!v12IsChecked(data[i][K.CHECKBOX - 1])) {
-        continue;
-      }
-      const positionId = normalizeMaterialId(data[i][K.POSITION_ID - 1]);
-      if (!positionId) {
-        continue;
-      }
-      // skipRefresh=true — проекции пересчитает вызывающая сторона.
-      v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true, ctx);
-      handedAny = true;
-    }
-    v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex);
-    if (handedAny) {
-      SpreadsheetApp.flush();
-    }
-    // Признак «harvest что-то передал» — вызывает перечитывание POSITION_STATE
-    // в v12RefreshProjections (передача меняет состояние позиций).
-    return handedAny;
-  } finally {
-    _v12HarvestingPicking = false;
-  }
-}
-
-/**
  * Уникальные коды проектов для фильтра ОТБОРКИ.
  *
  * Код проекта = v12ExtractBomProjectCode(BOM_NAME) (часть имени BOM до первого
@@ -663,9 +433,6 @@ function v12InstallPickingBomFilter(codes) {
  * Порядок строк: BOM -> «На складе» сверху -> номер строки в BOM.
  */
 function v12RefreshPicking(posData, revDates) {
-  if (!posData) {
-    v12HarvestPickingInput();
-  }
   const P = V12_CONFIG.POSITION_COLUMNS;
   const K = V12_CONFIG.PICKING_COLUMNS;
   const data = posData || v12ReadSheet("POSITION_STATE");

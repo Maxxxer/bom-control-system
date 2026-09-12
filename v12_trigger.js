@@ -4,11 +4,21 @@
  *
  * FILE: v12_trigger.js
  *
- * Триггеры V12: onEdit + time-based. Замена V11-триггеров.
- * Обрабатывает:
- *   DEFICIT_SUMMARY — заказ/дата/реальная поставка/получено;
- *   ОТБОРКА/PICKING — чекбокс передачи производству;
- *   DASHBOARD — чекбокс «Выполнено».
+ * Триггеры V12: onEdit + time-based (часовая синхронизация источника).
+ *
+ * V3 — модель «Применить». onEdit НИЧЕГО не пересчитывает: правки редактируемых
+ * полей (чекбоксы ОТБОРКИ / WORKING BOM / Сводки и «Заказано» / «Ожидаемая» в
+ * Сводке) он только ФИКСИРУЕТ в очереди PENDING_EDITS. Применение выполняет
+ * пользователь кнопкой «✅ Применить изменения» (v12ApplyChanges).
+ *
+ * Автоприменения (инлайн-слив из onEdit) и минутного фонового триггера БОЛЬШЕ
+ * НЕТ, поэтому фоновая пересборка проекций не конкурирует с набором текста в
+ * ячейке — первопричина «сброса введённых значений» устранена.
+ *
+ * Медленный путь (в блокировке) остался только у правок, которые обязаны
+ * срабатывать немедленно и к пересборке проекций по кнопке не относятся:
+ * физический склад (MATERIAL_STATE), чекбокс «Выполнено» дашборда и фильтр
+ * проекта в ОТБОРКЕ (B1).
  * =====================================================
  */
 
@@ -37,15 +47,15 @@ function v12InstallTriggers() {
     .forSpreadsheet(ss)
     .onEdit()
     .create();
+  // Часовая синхронизация источника BOM (импорт новых BOM — не про правки).
   ScriptApp.newTrigger("v12ScheduledUpdate")
     .timeBased()
     .everyHours(1)
     .create();
-  // Слив очереди правок чекбоксов (Вариант D): раз в минуту.
-  ScriptApp.newTrigger("v12ScheduledQueueDrain")
-    .timeBased()
-    .everyMinutes(V12_CONFIG.SETTINGS.QUEUE_DRAIN_MINUTES)
-    .create();
+  // V3 — модель «Применить»: периодического слива очереди БОЛЬШЕ НЕТ.
+  // Применение намерений выполняет пользователь кнопкой «✅ Применить изменения»
+  // (v12ApplyChanges). При переустановке старый минутный триггер
+  // v12ScheduledQueueDrain удаляется (см. removeV11Triggers).
 }
 
 /**
@@ -64,7 +74,7 @@ function v12OnEdit(e) {
     const S = V12_CONFIG.SHEETS;
 
     // Обрабатываем только листы с разрешёнными правками. Ранний выход для
-    // остальных листов — до захвата блокировки, чтобы её не занимать зря.
+    // остальных листов — до любой работы.
     const isActionable =
       name === S.POSITION_STATE ||
       name === S.MATERIAL_STATE ||
@@ -76,104 +86,93 @@ function v12OnEdit(e) {
       return;
     }
 
-    // === Быстрый путь для чекбоксов (очередь правок, Вариант D) ==========
-    // onEdit для чекбоксов ОТБОРКИ / WORKING BOM / Сводки только ФИКСИРУЕТ
-    // намерение в PENDING_EDITS и выходит — без лока и без тяжёлой работы.
-    // Применение делает фоновый триггер v12ScheduledQueueDrain (раз в минуту)
-    // либо немедленный слив (v12TryInlineDrain), если лок свободен. Это
-    // устраняет окно «Система занята обновлением» и сброс галочки.
+    // === Быстрый путь: фиксация намерения (очередь PENDING_EDITS) =========
+    // Без лока и без тяжёлой работы. Применение (V3) выполняет пользователь
+    // кнопкой «✅ Применить изменения» (v12ApplyChanges).
     if (v12CaptureCheckboxEdit(e, name)) {
-      v12TryInlineDrain();
+      return;   // намерение зафиксировано; применение — по кнопке
+    }
+
+    // === Медленный путь: правки, срабатывающие немедленно ================
+    // POSITION_STATE — ручное редактирование запрещено (кроме Admin).
+    if (name === S.POSITION_STATE) {
+      v12HandlePositionStateEdit(e);
       return;
     }
 
-    const isSingleCell = e.range.getNumRows() === 1 && e.range.getNumColumns() === 1;
-    // В «Сводке дефицитов» и «Отборке» поддерживаем вставку/автозаполнение
-    // диапазона — обрабатываем каждую ячейку. Прочие листы — только одиночные правки.
-    const isSummaryRange = !isSingleCell && name === S.DEFICIT_SUMMARY;
-    const isPickingRange = !isSingleCell && name === S.PICKING;
-    if (!isSingleCell && !isSummaryRange && !isPickingRange) {
+    // ОТБОРКА: смена фильтра проекта в B1 пересобирает лист; остальные колонки
+    // read-only (чекбокс передачи фиксирует очередь — см. быстрый путь).
+    if (name === S.PICKING) {
+      if (e.range.getRow() === 1 && e.range.getColumn() === V12_CONFIG.PICKING_COLUMNS.BOM_NAME) {
+        v12WithEditLock(e, function () { v12RefreshPicking(); });
+        return;
+      }
+      v12RevertEdit(e);
       return;
     }
 
-    // Сериализация правок: одна правка обрабатывается целиком до начала
-    // следующей, чтобы чтение-изменение-запись POSITION_STATE и пересчёт
-    // проекций не накладывались при быстром вводе (иначе значения затираются).
-    // ВАЖНО: правка не отбрасывается по флагу занятости — при плановом
-    // обновлении она дождётся освобождения блокировки и будет обработана.
-    const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
-    if (!lock) {
-      // Блокировку не удалось взять за 10 с — вероятно идёт полная синхронизация
-      // или слив очереди. НИКАКИХ модальных окон: тихо логируем, а для одиночной
-      // ячейки возвращаем прежнее значение, чтобы не осталось «применённое-но-
-      // не-записанное» состояние. (Чекбоксы ОТБОРКИ / WORKING BOM / Сводки этот
-      // путь больше не используют — они идут через очередь, см. выше.)
+    // WORKING BOM: всё read-only, кроме чекбокса передачи (он в очереди).
+    if (name === S.WORKING_BOM) {
+      v12RevertEdit(e);
+      return;
+    }
+
+    // Сводка дефицитов: сюда дошли только правки, НЕ затрагивающие
+    // редактируемых колонок (диапазон без «Заказано»/«Ожидаемой»/«Реальной
+    // поставки»). Откатить диапазон нельзя (нет oldValue) — фиксируем в логе:
+    // read-only колонки восстановятся при ближайшем «Применить изменения».
+    if (name === S.DEFICIT_SUMMARY) {
       logSystem("v12OnEdit",
-        "Лок занят, правка отложена/откатана: " + name +
-        (e.range.getA1Notation ? " " + e.range.getA1Notation() : ""), "WARNING");
-      if (isSingleCell) {
-        v12RevertEdit(e);
-      }
+        "Правка read-only колонок сводки будет восстановлена при применении изменений", "WARNING");
       return;
     }
-    try {
-      // DEFICIT_SUMMARY — вставка/заполнение диапазона (несколько ячеек)
-      if (isSummaryRange) {
-        v12HandleDeficitRangeEdit(e);
-        return;
-      }
 
-      // ОТБОРКА — вставка/заполнение диапазона чекбоксов передачи
-      if (isPickingRange) {
-        v12HandlePickingRangeEdit(e);
+    // DASHBOARD — только чекбокс «Выполнено» одиночной ячейкой.
+    if (name === S.DASHBOARD) {
+      if (e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) {
+        v12RevertEdit(e);
         return;
       }
+      v12WithEditLock(e, function () { v12HandleDashboardEdit(e); });
+      return;
+    }
 
-      // POSITION_STATE и MATERIAL_STATE (физ. склад) — ручное редактирование частично запрещено
-      if (name === S.POSITION_STATE) {
-        v12HandlePositionStateEdit(e);
+    // MATERIAL_STATE (физический склад) — одиночные правки под локом.
+    if (name === S.MATERIAL_STATE) {
+      if (e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) {
         return;
       }
-      if (name === S.MATERIAL_STATE) {
-        v12HandleMaterialStateEdit(e);
-        return;
-      }
-
-      // DASHBOARD — только чекбокс «Выполнено», только при «Готов к производству»
-      if (name === S.DASHBOARD) {
-        v12HandleDashboardEdit(e);
-        return;
-      }
-
-      // DEFICIT_SUMMARY
-      if (name === S.DEFICIT_SUMMARY) {
-        v12HandleDeficitEdit(e);
-        return;
-      }
-
-      // ОТБОРКА
-      if (name === S.PICKING) {
-        // Смена фильтра проекта в ячейке B1 (строка 1, колонка BOM) — разрешённая
-        // правка: пересобираем лист под выбранный проект.
-        if (e.range.getRow() === 1 && e.range.getColumn() === V12_CONFIG.PICKING_COLUMNS.BOM_NAME) {
-          v12RefreshPicking();
-          return;
-        }
-        v12HandlePickingEdit(e);
-        return;
-      }
-
-      // WORKING BOM — только чекбокс передачи
-      if (name === S.WORKING_BOM) {
-        v12HandleWorkingBomEdit(e);
-        return;
-      }
-    } finally {
-      lock.releaseLock();
-      v12FlushAudit();
+      v12WithEditLock(e, function () { v12HandleMaterialStateEdit(e); });
+      return;
     }
   } catch (error) {
     logSystem("v12OnEdit", error.message, error, "ERROR");
+  }
+}
+
+/**
+ * Выполнить немедленную (не через очередь) правку под общескриптовой
+ * блокировкой.
+ *
+ * Если лок не удалось взять за 10 с (идёт «Применить изменения» или полная
+ * синхронизация) — НИКАКИХ модальных окон: тихо логируем и откатываем правку,
+ * чтобы не осталось «применённое-но-не-записанное» состояние.
+ */
+function v12WithEditLock(e, fn) {
+  const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+  if (!lock) {
+    logSystem("v12OnEdit",
+      "Лок занят, правка отложена/откатана: " +
+      (e.range.getA1Notation ? e.range.getA1Notation() : "?"), "WARNING");
+    v12RevertEdit(e);
+    return false;
+  }
+  try {
+    fn();
+    return true;
+  } finally {
+    lock.releaseLock();
+    v12FlushAudit();
   }
 }
 
@@ -248,371 +247,6 @@ function v12HandleDashboardEdit(e) {
 }
 
 /**
- * Потребность (REQUIRED_QTY) позиции из POSITION_STATE — для «Реальной поставки»/«Получено».
- * Колонки «Требуется» в Сводке больше нет, поэтому берём из центрального состояния.
- */
-function v12GetDeficitRequiredQty(positionId, index) {
-  const pos = v12GetPositionById(positionId, index);
-  const P = V12_CONFIG.POSITION_COLUMNS;
-  return pos ? toNumber(pos.values[P.REQUIRED_QTY - 1]) : 0;
-}
-
-/**
- * DEFICIT_SUMMARY: заказ (ORDERED_QTY кол. 9), дата (EXPECTED кол. 10),
- * реальная поставка (REAL_DELIVERY кол. 12). «Получено» убрано — отмечают кладовщики в ОТБОРКЕ.
- */
-function v12HandleDeficitEdit(e) {
-  const D = V12_CONFIG.DEFICIT_COLUMNS;
-  const sheet = e.range.getSheet();
-  const column = e.range.getColumn();
-  const row = e.range.getRow();
-  const positionId = sheet.getRange(row, D.POSITION_ID).getValue();
-  if (!positionId) {
-    return;
-  }
-  // Значение берём из события (снимок на момент правки), а не из e.range.getValue():
-  // при быстром вводе предыдущий пересчёт мог успеть откатить ячейку, и «живое»
-  // чтение вернуло бы уже затёртое значение — тогда правка теряется.
-  const newValue = (e.value !== undefined) ? e.value : e.range.getValue();
-  // Индекс POSITION_STATE строим ОДИН раз на правку и прокидываем в операцию
-  // (иначе каждая операция читает лист заново).
-  const posIndex = v12BuildPositionIndex();
-  if (column === D.ORDERED_QTY) {
-    v12SetOrderedQty(positionId, newValue, posIndex);
-  } else if (column === D.EXPECTED_DATE) {
-    v12SetExpectedDate(positionId, newValue, posIndex);
-  } else if (column === D.REAL_DELIVERY) {
-    // Значение чекбокса из события onEdit приходит и как boolean (true/false),
-    // и как строка ("TRUE"/"FALSE"). Нормализуем — иначе отметка не применяется,
-    // поставка не убирается из сводки, а состояние чекбокса сбрасывается.
-    const checked = v12IsChecked(newValue);
-    try {
-      v12SetRealDeliveryQty(positionId, checked ? v12GetDeficitRequiredQty(positionId, posIndex) : 0, posIndex);
-    } catch (err) {
-      v12RevertEdit(e);
-      try { SpreadsheetApp.getUi().alert("Не удалось отметить поставку: " + err.message); } catch (e2) {}
-    }
-  } else {
-    v12RevertEdit(e);
-    logSystem("v12OnEdit", "В сводке доступны только Заказ/Ожидаемая/Реальная поставка", "WARNING");
-  }
-}
-
-/**
- * DEFICIT_SUMMARY: обработка диапазона (вставка/автозаполнение).
- *
- * Вся группа ячеек обрабатывается за ОДИН проход: POSITION_STATE читается
- * один раз, изменения по всем строкам диапазона собираются и пишутся ОДНИМ
- * батчем, затем делается ОДИН пересчёт проекций. Так обрабатываются ВСЕ
- * строки (а не только первая) и выполнение не упирается в лимит времени.
- */
-function v12HandleDeficitRangeEdit(e) {
-  const D = V12_CONFIG.DEFICIT_COLUMNS;
-  const P = V12_CONFIG.POSITION_COLUMNS;
-  const sheet = e.range.getSheet();
-  const firstRow = e.range.getRow();
-  const firstCol = e.range.getColumn();
-  const numRows = e.range.getNumRows();
-  const numCols = e.range.getNumColumns();
-  // Снимок значений из события (если доступен) — надёжнее живого чтения.
-  const values = (e.values && e.values.length === numRows)
-    ? e.values
-    : e.range.getValues();
-
-  const M = V12_CONFIG.MATERIAL_COLUMNS;
-  const role = v12GetCurrentUserRole();
-  const canOrdered = v12CanEditField(role, "ORDERED_QTY");
-  const canExpected = v12CanEditField(role, "EXPECTED_DATE");
-  const canDelivery = v12CanEditField(role, "REAL_DELIVERY");
-
-  const index = v12BuildPositionIndex();
-  const posSheet = v12GetSheetByKey("POSITION_STATE");
-  const touched = {};   // positionId -> { row, vals, changed, oldOrdered, oldExpected, oldReal, desiredReal }
-  const writes = [];
-  const warehouseDelta = {};   // materialKey -> суммарная дельта склада
-  // Position ID всех строк диапазона читаем ОДНОЙ выборкой (а не по ячейке в цикле).
-  const idColumn = sheet.getRange(firstRow, D.POSITION_ID, numRows, 1).getValues();
-
-  for (let r = 0; r < numRows; r++) {
-    const sheetRow = firstRow + r;
-    const positionId = normalizeMaterialId(idColumn[r][0]);
-    if (!positionId) {
-      continue;
-    }
-    const pos = index.get(positionId);
-    if (!pos) {
-      continue;
-    }
-    let entry = touched[positionId];
-    if (!entry) {
-      entry = {
-        row: pos.row,
-        vals: pos.values.slice(),
-        changed: false,
-        oldOrdered: toNumber(pos.values[P.ORDERED_QTY - 1]),
-        oldExpected: pos.values[P.EXPECTED_DATE - 1],
-        oldReal: toNumber(pos.values[P.REAL_DELIVERY_QTY - 1]),
-        desiredReal: undefined
-      };
-      touched[positionId] = entry;
-    }
-    for (let c = 0; c < numCols; c++) {
-      const column = firstCol + c;
-      const value = values[r][c];
-      if (column === D.ORDERED_QTY && canOrdered) {
-        const q = Math.max(0, toNumber(value));
-        if (q !== toNumber(entry.vals[P.ORDERED_QTY - 1])) {
-          entry.vals[P.ORDERED_QTY - 1] = q;
-          entry.changed = true;
-        }
-      } else if (column === D.EXPECTED_DATE && canExpected) {
-        const d = v12ToDate(value);
-        if (v12DateValue(d) !== v12DateValue(entry.vals[P.EXPECTED_DATE - 1])) {
-          entry.vals[P.EXPECTED_DATE - 1] = d ? d : "";
-          entry.changed = true;
-        }
-      } else if (column === D.REAL_DELIVERY && canDelivery) {
-        // Чекбокс «Реальная поставка»: отмечаем/снимаем полную поставку.
-        // Значение может прийти boolean или строкой ("TRUE"/"FALSE") — нормализуем.
-        const required = toNumber(entry.vals[P.REQUIRED_QTY - 1]);
-        entry.desiredReal = (v12IsChecked(value) && required > 0) ? required : 0;
-      }
-    }
-  }
-
-  Object.keys(touched).forEach(function (pid) {
-    const entry = touched[pid];
-    const rowVals = entry.vals;
-    // Реальная поставка (чекбокс) — применить до расчёта количеств.
-    let deltaReal = 0;
-    if (entry.desiredReal !== undefined && entry.desiredReal !== entry.oldReal) {
-      rowVals[P.REAL_DELIVERY_QTY - 1] = entry.desiredReal;
-      // Дата фактической поставки: первая положительная отметка, сброс при 0.
-      rowVals[P.REAL_DELIVERY_DATE - 1] = entry.desiredReal > 0
-        ? (rowVals[P.REAL_DELIVERY_DATE - 1] || new Date())
-        : "";
-      deltaReal = entry.desiredReal - entry.oldReal;
-      entry.changed = true;
-    }
-    if (!entry.changed) {
-      return;
-    }
-    v12ApplyComputedToRow(rowVals);
-    writes.push({ row: entry.row, col: P.ORDERED_QTY, value: rowVals[P.ORDERED_QTY - 1] });
-    writes.push({ row: entry.row, col: P.EXPECTED_DATE, value: rowVals[P.EXPECTED_DATE - 1] });
-    writes.push({ row: entry.row, col: P.SUPPLY_STATE, value: rowVals[P.SUPPLY_STATE - 1] });
-    writes.push({ row: entry.row, col: P.PRODUCTION_STATE, value: rowVals[P.PRODUCTION_STATE - 1] });
-    writes.push({ row: entry.row, col: P.DEFICIT_QTY, value: rowVals[P.DEFICIT_QTY - 1] });
-    writes.push({ row: entry.row, col: P.UNCOVERED_NEED, value: rowVals[P.UNCOVERED_NEED - 1] });
-    writes.push({ row: entry.row, col: P.OVER_ORDERED_QTY, value: rowVals[P.OVER_ORDERED_QTY - 1] });
-    writes.push({ row: entry.row, col: P.SHORT_DELIVERY_QTY, value: rowVals[P.SHORT_DELIVERY_QTY - 1] });
-    writes.push({ row: entry.row, col: P.AVAILABLE_FOR_PRODUCTION, value: rowVals[P.AVAILABLE_FOR_PRODUCTION - 1] });
-    writes.push({ row: entry.row, col: P.FLAGS, value: rowVals[P.FLAGS - 1] });
-    writes.push({ row: entry.row, col: P.REAL_DELIVERY_QTY, value: rowVals[P.REAL_DELIVERY_QTY - 1] });
-    writes.push({ row: entry.row, col: P.REAL_DELIVERY_DATE, value: rowVals[P.REAL_DELIVERY_DATE - 1] });
-    writes.push({ row: entry.row, col: P.UPDATED_AT, value: new Date() });
-
-    if (deltaReal !== 0) {
-      const matKey = v12BuildMaterialKey({
-        code: rowVals[P.MATERIAL_CODE - 1],
-        name: rowVals[P.MATERIAL_NAME - 1],
-        model: rowVals[P.MODEL - 1],
-        unit: rowVals[P.UNIT - 1]
-      });
-      warehouseDelta[matKey] = (warehouseDelta[matKey] || 0) + deltaReal;
-    }
-
-    const changedOrdered = (toNumber(rowVals[P.ORDERED_QTY - 1]) !== entry.oldOrdered);
-    const changedExpected = (v12DateValue(rowVals[P.EXPECTED_DATE - 1]) !== v12DateValue(entry.oldExpected));
-    if (changedOrdered) {
-      v12Audit({
-        action: V12_CONFIG.AUDIT_ACTIONS.ORDERED_CHANGED,
-        bomId: rowVals[P.BOM_ID - 1],
-        positionId: pid,
-        field: "ORDERED_QTY",
-        oldValue: entry.oldOrdered,
-        newValue: toNumber(rowVals[P.ORDERED_QTY - 1])
-      });
-    }
-    if (changedExpected) {
-      v12Audit({
-        action: V12_CONFIG.AUDIT_ACTIONS.EXPECTED_DATE_CHANGED,
-        bomId: rowVals[P.BOM_ID - 1],
-        positionId: pid,
-        field: "EXPECTED_DATE",
-        oldValue: entry.oldExpected,
-        newValue: rowVals[P.EXPECTED_DATE - 1]
-      });
-    }
-    if (entry.desiredReal !== undefined && entry.desiredReal !== entry.oldReal) {
-      v12Audit({
-        action: V12_CONFIG.AUDIT_ACTIONS.REAL_DELIVERY_CHANGED,
-        bomId: rowVals[P.BOM_ID - 1],
-        positionId: pid,
-        field: "REAL_DELIVERY_QTY",
-        oldValue: entry.oldReal,
-        newValue: entry.desiredReal
-      });
-    }
-  });
-
-  if (writes.length) {
-    batchWrite(posSheet, writes);
-    SpreadsheetApp.flush();
-  }
-
-  // Складские остатки: применить суммарные дельты по materialKey одним батчем.
-  const matKeys = Object.keys(warehouseDelta);
-  if (matKeys.length) {
-    const materialSheet = v12GetSheetByKey("MATERIAL_STATE");
-    const mIdx = v12BuildMaterialIndex();
-    const mWrites = [];
-    matKeys.forEach(function (mk) {
-      const delta = warehouseDelta[mk];
-      if (!delta) {
-        return;
-      }
-      const m = mIdx.get(mk);
-      if (m) {
-        const next = Math.max(0, toNumber(m.values[M.WAREHOUSE_QTY - 1]) + delta);
-        mWrites.push({ row: m.row, col: M.WAREHOUSE_QTY, value: next });
-        mWrites.push({ row: m.row, col: M.UPDATED_AT, value: new Date() });
-      } else {
-        const row = new Array(V12_CONFIG.COLUMN_COUNT.MATERIAL_STATE).fill("");
-        row[M.MATERIAL_KEY - 1] = mk;
-        row[M.MATERIAL_CODE - 1] = mk;
-        row[M.WAREHOUSE_QTY - 1] = Math.max(0, delta);
-        row[M.UPDATED_AT - 1] = new Date();
-        appendRow(materialSheet, row);
-      }
-    });
-    if (mWrites.length) {
-      batchWrite(materialSheet, mWrites);
-    }
-  }
-
-  // Пересчитываем проекции, только если реально что-то изменилось (иначе
-  // диапазонный ввод в read-only колонку/без прав вызывал бы полный пересчёт зря).
-  // Один пересчёт на всю группу — обновляет статус по всем затронутым строкам
-  // и синхронизирует ВСЕ проекции (в т.ч. ОТБОРКА/WORKING BOM).
-  if (writes.length) {
-    v12RefreshProjections();
-  }
-  v12FlushAudit();
-}
-
-/**
- * ОТБОРКА (PICKING): чекбокс передачи производству (кол. 12).
- */
-function v12HandlePickingEdit(e) {
-  const K = V12_CONFIG.PICKING_COLUMNS;
-  const sheet = e.range.getSheet();
-  const column = e.range.getColumn();
-  const row = e.range.getRow();
-  if (column !== K.CHECKBOX) {
-    v12RevertEdit(e);
-    return;
-  }
-  const positionId = sheet.getRange(row, K.POSITION_ID).getValue();
-  // Снимок значения из события (как в Сводке): «живое» чтение ячейки при
-  // быстром вводе может вернуть уже изменённое/откатанное значение.
-  const checked = (e.value !== undefined) ? e.value : e.range.getValue();
-  if (v12IsChecked(checked)) {
-    const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING);
-    if (result.status === "blocked") {
-      v12RevertEdit(e);
-      SpreadsheetApp.getUi().alert("Не удалось передать: " + result.reason);
-    }
-  }
-}
-
-/**
- * ОТБОРКА (PICKING): обработка диапазона чекбоксов передачи (вставка/автозаполнение).
- *
- * Обрабатываются ВСЕ отмеченные строки диапазона; передача выполняется для
- * каждой (проекции пересчитываются один раз в конце — см. skipRefresh).
- * Если строка не может быть передана ("blocked") — её отметка снимается.
- */
-function v12HandlePickingRangeEdit(e) {
-  const K = V12_CONFIG.PICKING_COLUMNS;
-  const sheet = e.range.getSheet();
-  const firstRow = e.range.getRow();
-  const firstCol = e.range.getColumn();
-  const numRows = e.range.getNumRows();
-  const numCols = e.range.getNumColumns();
-  const values = (e.values && e.values.length === numRows) ? e.values : e.range.getValues();
-  let anyHandoff = false;
-
-  // Общие индексы и накопитель складских дельт на весь диапазон: передача
-  // больше не читает POSITION_STATE/MATERIAL_STATE на каждую строку.
-  const posIndex = v12BuildPositionIndex();
-  const materialIndex = v12BuildMaterialIndex();
-  const ctx = { index: posIndex, materialIndex: materialIndex, warehouseDelta: {} };
-  // Position ID всех строк диапазона читаем ОДНОЙ выборкой (а не по ячейке в
-  // цикле) — иначе на диапазон из N строк приходило бы N одиночных чтений.
-  const idColumn = sheet.getRange(firstRow, K.POSITION_ID, numRows, 1).getValues();
-
-  for (let r = 0; r < numRows; r++) {
-    if (firstRow + r === 1) {
-      continue;   // строка заголовка (в т.ч. ячейка фильтра B1) не обрабатывается
-    }
-    for (let c = 0; c < numCols; c++) {
-      if (firstCol + c !== K.CHECKBOX) {
-        continue;
-      }
-      if (!v12IsChecked(values[r][c])) {
-        continue;
-      }
-      const positionId = normalizeMaterialId(idColumn[r][0]);
-      if (!positionId) {
-        continue;
-      }
-      // Пересчёт проекций — один раз после обработки всей группы.
-      const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.PICKING, true, ctx);
-      if (result && result.status === "blocked") {
-        // передать не удалось — снимаем отметку в этой строке
-        sheet.getRange(firstRow + r, K.CHECKBOX).setValue(false);
-      }
-      anyHandoff = true;
-    }
-  }
-
-  v12ApplyWarehouseDeltas(ctx.warehouseDelta, materialIndex);
-
-  if (anyHandoff) {
-    v12RefreshProjections();
-  }
-}
-
-/**
- * WORKING BOM: чекбокс передачи производству (кол. 14).
- */
-function v12HandleWorkingBomEdit(e) {
-  const W = V12_CONFIG.WORKING_BOM_COLUMNS;
-  const sheet = e.range.getSheet();
-  const column = e.range.getColumn();
-  const row = e.range.getRow();
-  // В WORKING BOM разрешён только чекбокс передачи (кол. 14). Остальные
-  // колонки read-only для всех, кроме Admin.
-  if (column !== W.CHECKBOX || row <= 1) {
-    const role = v12GetCurrentUserRole();
-    if (column !== W.CHECKBOX && role !== V12_CONFIG.ROLES.ADMIN) {
-      v12RevertEdit(e);
-    }
-    return;
-  }
-  const positionId = sheet.getRange(row, W.POSITION_ID).getValue();
-  const checked = v12IsChecked((e.value !== undefined) ? e.value : e.range.getValue());
-  if (checked) {
-    const result = v12MarkReceivedByProduction(positionId, V12_CONFIG.SOURCE_UI.WORKING_BOM);
-    if (result && result.status === "blocked") {
-      v12RevertEdit(e);
-      try { SpreadsheetApp.getUi().alert("Не удалось передать: " + result.reason); } catch (e2) {}
-    }
-  }
-}
-
-/**
  * Откат запрещённой ручной правки.
  *
  * Для одиночной ячейки onEdit отдаёт `oldValue` — значение восстанавливается.
@@ -620,8 +254,7 @@ function v12HandleWorkingBomEdit(e) {
  * раньше функция в этом случае молча ничего не делала (баг C-4 отчёта №33),
  * из-за чего запрещённая правка диапазона оставалась применённой без следа.
  * Теперь такой случай явно фиксируется в системном логе (WARNING), чтобы он
- * не оставался «незамеченным» (обработчики диапазонов чекбоксов откатывают
- * свои ячейки самостоятельно — см. v12HandlePickingRangeEdit).
+ * не оставался «незамеченным».
  */
 function v12RevertEdit(e) {
   try {
@@ -646,7 +279,6 @@ function v12RevertEdit(e) {
     logSystem("v12RevertEdit", err.message, err, "ERROR");
   }
 }
-
 /**
  * Плановое обновление: полная синхронизация всех BOM + пересчёт + проекции.
  */

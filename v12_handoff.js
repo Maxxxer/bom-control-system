@@ -29,8 +29,8 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
     v12RequireRole(role, action);
 
     // ctx позволяет при пакетной передаче переиспользовать общие индексы
-    // POSITION_STATE/MATERIAL_STATE и накапливать складские дельты (см.
-    // v12HandlePickingRangeEdit / v12HarvestPickingInput).
+    // POSITION_STATE/MATERIAL_STATE и накапливать складские дельты — так
+    // применяется пачка намерений очереди (см. v12DrainPendingEdits).
     const index = (ctx && ctx.index) || v12BuildPositionIndex();
     const pos = v12GetPositionById(positionId, index);
     if (!pos) {
