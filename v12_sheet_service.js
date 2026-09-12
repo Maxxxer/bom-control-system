@@ -39,6 +39,7 @@ function v12EnsureAllSheets() {
   v12MigratePositionSchema();
   v12MigrateSupplySchema();
   v12FormatSupplySheet();
+  v12FormatDeficitSheet();
   v12FormatAllSheets();
   v12ApplyTableAlignment();
   // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
@@ -203,6 +204,20 @@ function v12FormatSupplySheet() {
   }
   // Автофильтр (сортировка/фильтр по любому столбцу) — удобство работы снабжения.
   v12EnsureSupplyFilter(Math.max(sheet.getLastRow() - 1, 0));
+}
+
+/**
+ * Форматирование листа «Сводка дефицитов»: автофильтр (сортировка/фильтр по
+ * любому столбцу — в т.ч. «Наименование», «Модель», «Крайний срок», «Ожидаемая
+ * поставка»). Вызывается при инициализации (v12EnsureAllSheets); при каждом
+ * пересчёте проекций фильтр обеспечивает v12RefreshDeficitSummary.
+ */
+function v12FormatDeficitSheet() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.DEFICIT_SUMMARY);
+  if (!sheet) {
+    return;
+  }
+  v12EnsureDeficitFilter(Math.max(sheet.getLastRow() - 1, 0));
 }
 
 /**

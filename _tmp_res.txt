@@ -5,5 +5,6 @@ _local_tests/v12_audit_fixes_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_audit_fixes2_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_deficit_status_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_supply_schema_test.js exit=0 fails=0 last=ALL TESTS PASSED
+_local_tests/v12_deficit_filter_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_queue_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_ui_test.js exit=0 fails=0 last=ALL TESTS PASSED

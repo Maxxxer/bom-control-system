@@ -164,6 +164,7 @@ function v12RefreshDeficitSummary(posData) {
   }
   v12InstallDeficitCheckboxes(rows.length);
   v12ApplyDeficitColors(rows);
+  v12EnsureDeficitFilter(rows.length);
 }
 
 /**
@@ -723,21 +724,23 @@ function v12RefreshSupply(posData) {
 }
 
 /**
- * Обеспечить автофильтр на листе СНАБЖЕНИЕ — сортировка и фильтр по любому
- * столбцу (удобство работы снабжения с таблицей).
+ * Обеспечить автофильтр на листе-проекции — сортировка и фильтр по любому
+ * столбцу таблицы (выпадающие списки в строке заголовков).
  *
- * Диапазон автофильтра — строка заголовков + строки данных (rowCount). Если
- * существующий фильтр уже покрывает нужный диапазон — не трогаем его (не
- * сбрасываем пользовательскую сортировку/фильтр при простом пересчёте).
- * Иначе — пересоздаём. В окружениях без фильтров (локальные Node-тесты)
- * функция ничего не делает.
+ * Диапазон автофильтра — строка заголовков (1) + строки данных (rowCount),
+ * колонки 1..cols. Если существующий фильтр уже покрывает нужный диапазон —
+ * НЕ трогаем его (не сбрасываем пользовательскую сортировку/фильтр при простом
+ * пересчёте). Иначе — старый фильтр удаляется и создаётся новый.
+ *
+ * Общий помощник для проекций (СНАБЖЕНИЕ, Сводка дефицитов): диапазон фильтра
+ * зависит только от числа строк данных и ширины таблицы. В окружениях без
+ * фильтров (локальные Node-тесты) функция ничего не делает.
  */
-function v12EnsureSupplyFilter(rowCount) {
-  const sheet = v12GetSheetByKey("SUPPLY");
-  if (typeof sheet.getFilter !== "function") {
+function v12EnsureTableFilter(sheetKey, rowCount, cols) {
+  const sheet = v12GetSheetByKey(sheetKey);
+  if (!sheet || typeof sheet.getFilter !== "function") {
     return;
   }
-  const cols = V12_CONFIG.COLUMN_COUNT.SUPPLY;
   const lastRow = Math.max((rowCount || 0) + 1, 2);
   const existing = sheet.getFilter();
   if (existing) {
@@ -749,6 +752,25 @@ function v12EnsureSupplyFilter(rowCount) {
     existing.remove();
   }
   sheet.getRange(1, 1, lastRow, cols).createFilter();
+}
+
+/**
+ * Обеспечить автофильтр на листе СНАБЖЕНИЕ (сортировка/фильтр по любому
+ * столбцу — удобство работы снабжения с таблицей).
+ */
+function v12EnsureSupplyFilter(rowCount) {
+  v12EnsureTableFilter("SUPPLY", rowCount, V12_CONFIG.COLUMN_COUNT.SUPPLY);
+}
+
+/**
+ * Обеспечить автофильтр на листе «Сводка дефицитов» — сортировка/фильтр по
+ * любому столбцу таблицы (в т.ч. «Наименование», «Модель», «Крайний срок»,
+ * «Ожидаемая поставка»): в строке заголовков появляются выпадающие списки
+ * сортировки. Набор строк сводки при этом не меняется — только порядок,
+ * выбранный пользователем.
+ */
+function v12EnsureDeficitFilter(rowCount) {
+  v12EnsureTableFilter("DEFICIT_SUMMARY", rowCount, V12_CONFIG.COLUMN_COUNT.DEFICIT_SUMMARY);
 }
 
 /**
