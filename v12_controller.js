@@ -4,8 +4,13 @@
  *
  * FILE: v12_controller.js
  *
- * Меню, установка листов, полная синхронизация, диагностика
- * и проверка консистентности (ТЗ №160–161).
+ * Меню, установка листов (+ кнопка «ПРИМЕНИТЬ» в верхнем левом углу
+ * рабочих листов), полная синхронизация, диагностика и проверка
+ * консистентности (ТЗ №160–161).
+ *
+ * Обратная связь пользователю — ВСПЛЫВАЮЩИМИ сообщениями в правом нижнем
+ * углу окна (v12_ui.js, 3 с; ошибки — 8 с). Модальных окон в коде нет,
+ * кроме двух ui.prompt в диалоге «Вернуть из архива» (там нужен ввод).
  * =====================================================
  */
 
@@ -33,12 +38,13 @@ function v12OnOpen() {
     pending = 0;
   }
   const applyLabel = (pending > 0)
-    ? "✅ Применить изменения (" + pending + ")"
-    : "✅ Применить изменения";
+    ? "Применить изменения (" + pending + ")"
+    : "Применить изменения";
 
   SpreadsheetApp.getUi()
     .createMenu("BOM CONTROL V12")
     .addItem(applyLabel, "v12ApplyChangesUI")
+    .addItem("Восстановить кнопку «Применить»", "v12InstallApplyButtonUI")
     .addSeparator()
     .addItem("🔄 Полная синхронизация", "v12RunFullSync")
     .addItem("📊 Обновить проекции", "v12RefreshAllProjections")
@@ -56,24 +62,25 @@ function v12OnOpen() {
 /**
  * «Применить изменения» с обратной связью (V3).
  *
- * Вызывается из меню. Применяет все накопленные намерения (v12ApplyChanges)
- * и показывает сводку: сколько применено / не применено / отложено.
+ * Вызывается из меню и с кнопки «ПРИМЕНИТЬ» на листе. Применяет все накопленные
+ * намерения (v12ApplyChanges) и показывает сводку ВСПЛЫВАЮЩИМ сообщением в
+ * правом нижнем углу окна (3 секунды) — без модальных окон.
  */
 function v12ApplyChangesUI() {
   const result = v12ApplyChanges();
   const applied = (result && typeof result.drained === "number") ? result.drained : 0;
   const failed = (result && typeof result.failed === "number") ? result.failed : 0;
-  let msg = "Применено изменений: " + applied;
-  if (failed > 0) {
-    msg += "\nНе применено: " + failed + " (см. лист PENDING_EDITS, колонка «Ошибка»)";
-  }
   if (result && result.skipped) {
-    msg += "\nСистема занята — повторите через несколько секунд.";
-  }
-  try {
-    SpreadsheetApp.getUi().alert("Применить изменения", msg, SpreadsheetApp.getUi().ButtonSet.OK);
-  } catch (e) {
-    // нет UI (запуск из триггера) — результат уже в логах очереди
+    v12Toast("Система занята — повторите через несколько секунд.");
+  } else if (result && result.error) {
+    v12Toast("Ошибка применения: " + result.error, V12_UI.TOAST_SECONDS_ERROR);
+  } else if (failed > 0) {
+    v12Toast("Применено: " + applied + ", не применено: " + failed +
+      " (см. PENDING_EDITS, колонка «Ошибка»)", V12_UI.TOAST_SECONDS_ERROR);
+  } else if (applied > 0) {
+    v12Toast("Применено изменений: " + applied);
+  } else {
+    v12Toast("Неприменённых изменений нет");
   }
   return result;
 }
@@ -86,11 +93,13 @@ function v12Install() {
   try {
     v12EnsureAllSheets();
     v12InstallTriggers();
+    // Кнопка «Применить» в верхнем левом углу рабочих листов.
+    v12InstallApplyButton();
     logSystem("v12Install", "V12 установлена", "INFO");
-    SpreadsheetApp.getUi().alert("BOM CONTROL SYSTEM V12 установлена");
+    v12Toast("Скрипт выполнен: V12 установлена, кнопка «" + V12_UI.BUTTON_LABEL + "» поставлена");
   } catch (error) {
     logSystem("v12Install", error.message, error, "ERROR");
-    SpreadsheetApp.getUi().alert("Ошибка установки V12: " + error.message);
+    v12Toast("Ошибка установки V12: " + error.message, V12_UI.TOAST_SECONDS_ERROR);
   } finally {
     lock.releaseLock();
     v12FlushAudit();
@@ -206,7 +215,7 @@ function v12PromptReturnFromArchive() {
   }
   const positionId = String(idResponse.getResponseText() || "").trim();
   if (!positionId) {
-    ui.alert("Position ID не указан");
+    v12Toast("Position ID не указан");
     return;
   }
   const reasonResponse = ui.prompt("Возврат из архива", "Причина возврата:", ui.ButtonSet.OK_CANCEL);
@@ -216,9 +225,10 @@ function v12PromptReturnFromArchive() {
   const reason = String(reasonResponse.getResponseText() || "").trim();
   const result = v12ReturnFromArchive(positionId, reason);
   if (result && result.status === "returned") {
-    ui.alert("Позиция возвращена из архива: " + positionId);
+    v12Toast("Позиция возвращена из архива: " + positionId);
   } else {
-    ui.alert("Не удалось вернуть: " + ((result && result.reason) || "неизвестная ошибка"));
+    v12Toast("Не удалось вернуть: " + ((result && result.reason) || "неизвестная ошибка"),
+      V12_UI.TOAST_SECONDS_ERROR);
   }
 }
 
@@ -306,11 +316,9 @@ function v12RunDebug() {
     "\nОшибок: " + report.errors.length +
     (report.errors.length ? "\n\n" + report.errors.join("\n") : "");
   logSystem("v12RunDebug", summary, report, report.errors.length ? "WARNING" : "INFO");
-  try {
-    SpreadsheetApp.getUi().alert(summary);
-  } catch (e) {
-    // нет UI (запуск из триггера) — результат уже в SYSTEM_LOG
-  }
+  // Вместо модального окна — краткая всплывашка; полный отчёт — в SYSTEM_LOG.
+  v12Toast("Тест V12: ошибок " + report.errors.length + " из " + report.tests.length +
+    (report.errors.length ? " — подробности в SYSTEM_LOG" : ""));
   return report;
 }
 
