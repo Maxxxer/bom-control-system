@@ -65,7 +65,7 @@ const V12_CONFIG = {
     PICKING: 12,
     WORKING_BOM: 15,
     SUPPLY: 9,
-    DASHBOARD: 11,
+    DASHBOARD: 9,
     ARCHIVE: 13,
     AUDIT_LOG: 11,
     EVENT_LOG: 7,
@@ -236,7 +236,9 @@ const V12_CONFIG = {
   },
 
   /**
-   * DASHBOARD (11)
+   * DASHBOARD (9). Колонки «Прогресс» и «Обновлено» убраны; «BOM ID» скрыта
+   * визуально (движку нужна для идентификации строки в обработчике «Выполнено»).
+   * «Статус» теперь показывает процент сборки + прогрессбар, а не текст статуса.
    */
   DASHBOARD_COLUMNS: {
     DONE: 1,
@@ -245,11 +247,9 @@ const V12_CONFIG = {
     STATUS: 4,
     TOTAL_POSITIONS: 5,
     COLLECTED_POSITIONS: 6,
-    PROGRESS: 7,
-    DATE_CREATED: 8,
-    DEADLINE: 9,
-    MISSING_ITEMS: 10,
-    UPDATED_AT: 11
+    DATE_CREATED: 7,
+    DEADLINE: 8,
+    MISSING_ITEMS: 9
   },
 
   /**
@@ -435,7 +435,7 @@ const V12_CONFIG = {
     ],
     DASHBOARD: [
       "Выполнено", "BOM ID", "BOM", "Статус", "Позиций", "Собрано",
-      "Прогресс", "Дата создания", "Крайний срок", "Недостающие позиции", "Обновлено"
+      "Дата создания", "Крайний срок", "Недостающие материалы"
     ],
     ARCHIVE: [
       "Дата", "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель",
@@ -550,7 +550,12 @@ const V12_CONFIG = {
     READY: "#D9EAD3",
     NO_REQUIREMENT: "#E7E6E6",
     GRAY: "#D9D9D9",
-    WHITE: "#FFFFFF"
+    WHITE: "#FFFFFF",
+    // Градиент статуса дашборда «от красного к зелёному» по проценту сборки:
+    // 0–50% интерполируется LOW→MID, 50–100% — MID→HIGH.
+    PROGRESS_LOW: "#F4CCCC",
+    PROGRESS_MID: "#FFF2CC",
+    PROGRESS_HIGH: "#D9EAD3"
   },
 
   /**

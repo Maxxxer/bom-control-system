@@ -38,8 +38,10 @@ function v12EnsureAllSheets() {
   v12MigratePickingSchema();
   v12MigratePositionSchema();
   v12MigrateSupplySchema();
+  v12MigrateDashboardSchema();
   v12FormatSupplySheet();
   v12FormatDeficitSheet();
+  v12FormatDashboardSheet();
   v12FormatAllSheets();
   v12ApplyTableAlignment();
   // Фильтр ОТБОРКИ по проекту (B1) — после миграции, т.к. она перезаписывает
@@ -178,6 +180,64 @@ function v12MigrateSupplySchema() {
 }
 
 /**
+ * Устаревшие заголовки Dashboard, удаляемые миграцией: колонки «Прогресс» и
+ * «Обновлено» из канона убраны, «Недостающие позиции» переименована в
+ * «Недостающие материалы».
+ */
+const V12_DASHBOARD_LEGACY_HEADERS = ["Прогресс", "Обновлено"];
+
+/**
+ * Миграция листа Dashboard под новую схему (9 колонок):
+ *   - удаляет устаревшие колонки «Прогресс» и «Обновлено»;
+ *   - приводит строку заголовков к канону (в т.ч. «Недостающие материалы»);
+ *   - скрывает колонку «BOM ID» (движку нужна для идентификации строки);
+ *   - сбрасывает старые текстовые правила условного форматирования статуса
+ *     (теперь цвет статуса — заливка по проценту сборки, от красного к зелёному).
+ * Тело листа не трогаем — оно пересобирается v12RefreshDashboard.
+ */
+function v12MigrateDashboardSchema() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.DASHBOARD);
+  if (!sheet || typeof sheet.deleteColumn !== "function") {
+    return;
+  }
+  const expected = V12_CONFIG.HEADERS.DASHBOARD.length;
+  // Порядок колонок меняется после каждого удаления — ищем заголовки заново
+  // и всегда удаляем самый левый устаревший столбец.
+  let safety = 0;
+  while (safety < 10) {
+    safety++;
+    const lastCol = sheet.getLastColumn();
+    if (lastCol <= 0) {
+      break;
+    }
+    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    let legacyIndex = -1;
+    V12_DASHBOARD_LEGACY_HEADERS.forEach(function (name) {
+      const i = header.indexOf(name);
+      if (i !== -1 && (legacyIndex === -1 || i < legacyIndex)) {
+        legacyIndex = i;
+      }
+    });
+    if (legacyIndex === -1) {
+      break;
+    }
+    sheet.deleteColumn(legacyIndex + 1);
+  }
+  // Канонический заголовок (после удаления всех устаревших колонок).
+  sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.DASHBOARD]);
+  sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
+  // «BOM ID» скрываем (движку нужна — идентификация строки для «Выполнено»);
+  // сначала показываем все колонки, чтобы миграция была идемпотентной.
+  if (typeof sheet.showColumns === "function" && typeof sheet.hideColumns === "function") {
+    sheet.showColumns(1, sheet.getMaxColumns());
+    sheet.hideColumns(V12_CONFIG.DASHBOARD_COLUMNS.BOM_ID);
+  }
+  if (typeof sheet.setConditionalFormatRules === "function") {
+    sheet.setConditionalFormatRules([]);
+  }
+}
+
+/**
  * Ширина колонки «Проекты» листа СНАБЖЕНИЕ (px) — под многострочный список
  * проектов формата «<дефицит> - <номер> - <крайний срок>».
  */
@@ -221,6 +281,33 @@ function v12FormatDeficitSheet() {
 }
 
 /**
+ * Ширина колонки «Недостающие материалы» листа Dashboard (px) — под
+ * многострочный список «количество - модель - ожидаемый срок поставки».
+ */
+const V12_DASHBOARD_MISSING_COL_WIDTH = 320;
+
+/**
+ * Форматирование листа Dashboard: колонка «Недостающие материалы» — с переносом
+ * текста (многострочная ячейка) и увеличенной шириной. Вызывается при
+ * инициализации (v12EnsureAllSheets), а НЕ на каждом пересчёте проекций (дорогие
+ * операции уровня листа).
+ */
+function v12FormatDashboardSheet() {
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.DASHBOARD);
+  if (!sheet) {
+    return;
+  }
+  const col = V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS;
+  const range = sheet.getRange(1, col, Math.max(sheet.getMaxRows(), 2), 1);
+  if (typeof range.setWrapStrategy === "function" && SpreadsheetApp.WrapStrategy) {
+    range.setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
+  }
+  if (typeof sheet.setColumnWidth === "function") {
+    sheet.setColumnWidth(col, V12_DASHBOARD_MISSING_COL_WIDTH);
+  }
+}
+
+/**
  * Колонки таблиц, содержимое которых выравнивается ПО ЦЕНТРУ (количества,
  * ед.изм., даты, служебные статусы/чекбоксы). Остальные колонки листа
  * (наименования, модели, проекты, коды) выравниваются СЛЕВА. По вертикали
@@ -233,7 +320,7 @@ const V12_ALIGN_CENTER_COLUMNS = {
   DEFICIT_SUMMARY: [3, 7, 8, 9, 10, 11, 12, 13, 14],
   PICKING: [3, 7, 8, 9, 10, 11, 12],
   WORKING_BOM: [3, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-  DASHBOARD: [1, 4, 5, 6, 7, 8, 9, 11],
+  DASHBOARD: [1, 4, 5, 6, 7, 8],
   MATERIAL_STATE: [5, 6, 7, 8, 9],
   ARCHIVE: [1, 4, 8, 9, 10, 12]
 };

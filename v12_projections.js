@@ -18,19 +18,6 @@
  */
 
 /**
- * Кэш «уже применённого UI» по проекциям (число строк). Позволяет не
- * пересоздавать conditional-formatting правила на каждом пересчёте — это
- * дорогой вызов уровня листа.
- *
- * Замечание: в Google Apps Script модуль-глобалы НЕ переживают отдельные
- * запуски (каждый триггер/меню — новый контекст), поэтому кэш фактически
- * действует лишь в пределах одного исполнения. data-validation (чекбоксы
- * Сводки/ОТБОРКИ) здесь не кэшируется намеренно: её владелец —
- * v12Install*Checkboxes — восстанавливает валидацию безусловно.
- */
-const _v12ProjectionUiState = {};
-
-/**
  * Пересчитать и записать ВСЕ проекции (после массовых операций).
  */
 function v12RefreshAllProjections() {
@@ -870,7 +857,12 @@ function v12BuildSupplyProjectsText(projectsMap) {
 
 /**
  * Агрегация по BOM: подсчёт позиций и BOM-статус (К2).
- * Возвращает Map<bomId, { total, collected, notOrdered, partial, late, onTime, errors, status, missing }>.
+ * Возвращает Map<bomId, { total, collected, notOrdered, partial, late, onTime, errors, missing, minDeadline }>.
+ *
+ * missing — список недостающих материалов BOM (не переданные производству
+ * позиции с дефицитом > 0, а также позиции с ошибкой данных). Каждый элемент:
+ * { qty, model, expectedDate, code, name }. Из него строится столбец
+ * «Недостающие материалы» и hover-подсказка «Статус».
  */
 function v12AggregateBomStates(posData) {
   const P = V12_CONFIG.POSITION_COLUMNS;
@@ -907,7 +899,7 @@ function v12AggregateBomStates(posData) {
 
     if (validation === V12_CONFIG.VALIDATION_STATUS.ERROR) {
       b.errors++;
-      b.missing.push({ code: r[P.MATERIAL_CODE - 1], name: r[P.MATERIAL_NAME - 1], reason: "Ошибка данных" });
+      b.missing.push(v12BuildMissingEntry(r));
       continue;
     }
     if (production === V12_CONFIG.PRODUCTION_STATE.RECEIVED) {
@@ -917,15 +909,12 @@ function v12AggregateBomStates(posData) {
     switch (supply) {
       case V12_CONFIG.SUPPLY_STATE.NOT_ORDERED:
         b.notOrdered++;
-        b.missing.push({ code: r[P.MATERIAL_CODE - 1], name: r[P.MATERIAL_NAME - 1], reason: "Не заказано" });
         break;
       case V12_CONFIG.SUPPLY_STATE.PARTIALLY_ORDERED:
         b.partial++;
-        b.missing.push({ code: r[P.MATERIAL_CODE - 1], name: r[P.MATERIAL_NAME - 1], reason: "Заказано частично" });
         break;
       case V12_CONFIG.SUPPLY_STATE.PARTIALLY_DELIVERED:
         b.partial++;
-        b.missing.push({ code: r[P.MATERIAL_CODE - 1], name: r[P.MATERIAL_NAME - 1], reason: "Поставлено частично" });
         break;
       case V12_CONFIG.SUPPLY_STATE.ORDERED: {
         // Позиция заказана и ещё не собрана: если ожидаемый приход позже
@@ -942,8 +931,59 @@ function v12AggregateBomStates(posData) {
       default:
         b.onTime++;
     }
+    // Недостающий материал: позиция ещё не передана производству и материала
+    // не хватает (дефицит > 0). Собираем «количество - модель - ожидаемый срок».
+    if (toNumber(r[P.DEFICIT_QTY - 1]) > 0) {
+      b.missing.push(v12BuildMissingEntry(r));
+    }
   }
   return bomMap;
+}
+
+/**
+ * Запись недостающего материала для дашборда.
+ * qty — недостающее количество (дефицит позиции); model — модель;
+ * expectedDate — ожидаемый срок поставки (может быть пустым).
+ */
+function v12BuildMissingEntry(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  return {
+    qty: toNumber(r[P.DEFICIT_QTY - 1]),
+    model: r[P.MODEL - 1],
+    expectedDate: r[P.EXPECTED_DATE - 1],
+    code: r[P.MATERIAL_CODE - 1],
+    name: r[P.MATERIAL_NAME - 1]
+  };
+}
+
+/**
+ * Текст недостающих материалов: по строке на позицию в формате
+ * «<количество> - <модель> - <ожидаемый срок поставки>» (пример:
+ * «4 - AB-12 - 20.09.2026»). Формат «dd.MM.yyyy» — через v12FormatDateOnly.
+ *
+ * Сортировка по ожидаемому сроку поставки ПО УБЫВАНИЮ (от самого позднего к
+ * самому раннему). Позиции без распознанного срока — в конце (в порядке модели).
+ */
+function v12BuildMissingItemsText(missing) {
+  if (!missing || !missing.length) {
+    return "";
+  }
+  const list = missing.slice();
+  list.sort(function (a, b) {
+    const da = v12ToDate(a.expectedDate);
+    const db = v12ToDate(b.expectedDate);
+    // Без даты — в конец: в сортировке по убыванию минус-бесконечность уходит вниз.
+    const ta = da ? da.getTime() : -Infinity;
+    const tb = db ? db.getTime() : -Infinity;
+    if (ta !== tb) {
+      return tb - ta;
+    }
+    return String(a.model).localeCompare(String(b.model), "ru");
+  });
+  return list.map(function (m) {
+    const date = v12FormatDateOnly(m.expectedDate);
+    return date ? (m.qty + " - " + m.model + " - " + date) : (m.qty + " - " + m.model);
+  }).join("\n");
 }
 
 /**
@@ -980,30 +1020,25 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   const bomIds = Object.keys(agg);
   const revDates = revDatesIn || v12BuildRevisionDateMap();
   const rows = [];
+  const statusColors = [];
 
   bomIds.forEach(function (bomId) {
     const a = agg[bomId];
-    const status = v12ComputeBomStatus(a);
     const progress = a.total > 0 ? Math.round((a.collected / a.total) * 100) : 0;
-    const missingText = a.missing.length
-      ? a.missing.map(function (m) {
-          return (m.code || m.name) + " (" + m.reason + ")";
-        }).join("; ")
-      : "";
+    const missingText = v12BuildMissingItemsText(a.missing);
     const done = excluded[bomId] === true;
     rows.push([
       done,
       bomId,
       a.bomName,
-      status,
+      v12DashboardStatusText(progress),
       a.total,
       a.collected,
-      progress,
-      revDates[bomId] || "",
-      a.minDeadline || "",
-      missingText,
-      new Date()
+      v12FormatDateOnly(revDates[bomId]),
+      v12FormatDateOnly(a.minDeadline),
+      missingText
     ]);
+    statusColors.push(v12DashboardPercentColor(progress));
   });
 
   v12ClearBody("DASHBOARD");
@@ -1011,7 +1046,7 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
     v12WriteRows("DASHBOARD", 2, rows);
   }
   v12InstallDashboardCheckboxes(rows.length);
-  v12ApplyDashboardColors();
+  v12ApplyDashboardStatusColors(statusColors);
   v12SetupDashboardNotes(rows);
 }
 
@@ -1054,34 +1089,83 @@ function v12InstallDashboardCheckboxes(rowCount) {
 }
 
 /**
- * Условное форматирование статусной колонки DASHBOARD.
+ * Число сегментов прогрессбара в столбце «Статус».
  */
-function v12ApplyDashboardColors() {
+const V12_DASHBOARD_BAR_SEGMENTS = 10;
+
+/**
+ * Текст столбца «Статус» дашборда: процент сборки + прогрессбар.
+ * Формат: «45% █████░░░░░» (заполнено округлённо до сегментов).
+ */
+function v12DashboardStatusText(percent) {
+  const p = Math.max(0, Math.min(100, toNumber(percent)));
+  const filled = Math.round((p / 100) * V12_DASHBOARD_BAR_SEGMENTS);
+  const bar =
+    new Array(filled + 1).join("\u2588") +
+    new Array(V12_DASHBOARD_BAR_SEGMENTS - filled + 1).join("\u2591");
+  return p + "% " + bar;
+}
+
+/**
+ * Цвет статуса дашборда по проценту сборки: «от красного к зелёному».
+ * 0–50% — PROGRESS_LOW → PROGRESS_MID; 50–100% — PROGRESS_MID → PROGRESS_HIGH.
+ */
+function v12DashboardPercentColor(percent) {
+  const C = V12_CONFIG.COLORS;
+  const p = Math.max(0, Math.min(100, toNumber(percent)));
+  if (p <= 50) {
+    return v12InterpolateColor(C.PROGRESS_LOW, C.PROGRESS_MID, p / 50);
+  }
+  return v12InterpolateColor(C.PROGRESS_MID, C.PROGRESS_HIGH, (p - 50) / 50);
+}
+
+/**
+ * Линейная интерполяция двух HEX-цветов (t: 0 → from, 1 → to).
+ */
+function v12InterpolateColor(fromHex, toHex, t) {
+  const a = v12HexToRgb(fromHex);
+  const b = v12HexToRgb(toHex);
+  const k = Math.max(0, Math.min(1, t));
+  return v12RgbToHex(
+    Math.round(a.r + (b.r - a.r) * k),
+    Math.round(a.g + (b.g - a.g) * k),
+    Math.round(a.b + (b.b - a.b) * k)
+  );
+}
+
+/**
+ * HEX-строка («#RRGGBB» или «#RGB») → { r, g, b }.
+ */
+function v12HexToRgb(hex) {
+  const s = String(hex || "").replace("#", "");
+  const full = s.length === 3 ? s.replace(/(.)/g, "$1$1") : s;
+  const n = parseInt(full, 16) || 0;
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/**
+ * { r, g, b } → HEX-строка «#RRGGBB» (верхний регистр).
+ */
+function v12RgbToHex(r, g, b) {
+  const part = function (v) {
+    return ("0" + Math.max(0, Math.min(255, v)).toString(16)).slice(-2);
+  };
+  return ("#" + part(r) + part(g) + part(b)).toUpperCase();
+}
+
+/**
+ * Заливка столбца «Статус» DASHBOARD рассчитанными цветами (по строке на BOM).
+ * Цвет отражает степень готовности проекта (процент сборки) — от красного к
+ * зелёному. Заливка ставится напрямую (без conditional formatting), поэтому
+ * старые текстовые правила статуса удаляются миграцией дашборда.
+ */
+function v12ApplyDashboardStatusColors(colors) {
+  if (!colors || !colors.length) {
+    return;
+  }
   const sheet = v12GetSheetByKey("DASHBOARD");
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return;
-  }
-  // Условное форматирование — дорогая операция уровня листа. Пересоздаём
-  // правила только если число строк изменилось (иначе они уже актуальны).
-  if (_v12ProjectionUiState.dashboardColorRows === lastRow) {
-    return;
-  }
-  _v12ProjectionUiState.dashboardColorRows = lastRow;
-  const range = sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.STATUS, lastRow - 1, 1);
-  const rules = [];
-  const BS = V12_CONFIG.BOM_STATUS;
-  const BSC = V12_CONFIG.BOM_STATUS_COLOR;
-  Object.keys(BSC).forEach(function (label) {
-    rules.push(
-      SpreadsheetApp.newConditionalFormatRule()
-        .whenTextContains(label)
-        .setBackground(V12_CONFIG.COLORS[BSC[label]])
-        .setRanges([range])
-        .build()
-    );
-  });
-  sheet.setConditionalFormatRules(rules);
+  const range = sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.STATUS, colors.length, 1);
+  range.setBackgrounds(colors.map(function (c) { return [c]; }));
 }
 
 /**
@@ -1090,9 +1174,7 @@ function v12ApplyDashboardColors() {
 function v12SetupDashboardNotes(rows) {
   const sheet = v12GetSheetByKey("DASHBOARD");
   const notes = rows.map(function (r) {
-    return [r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1]
-      ? "Недостающие позиции:\n" + r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1]
-      : ""];
+    return [r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1] || ""];
   });
   if (notes.length) {
     sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.STATUS, notes.length, 1).setNotes(notes);

@@ -236,14 +236,31 @@ function v12HandleDashboardEdit(e) {
     return;
   }
   const bomId = sheet.getRange(row, D.BOM_ID).getValue();
-  const status = sheet.getRange(row, D.STATUS).getValue();
   const bomChecked = v12IsChecked(e.range.getValue());
-  if (bomChecked && status !== V12_CONFIG.BOM_STATUS.READY) {
+  // Готовность считаем из состояния (колонка «Статус» теперь показывает процент
+  // сборки, а не текст статуса): «Выполнено» доступно только когда BOM «Готов к
+  // производству» (все позиции переданы производству).
+  if (bomChecked && !v12IsBomReadyForDone(bomId)) {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "«Выполнено» можно отметить только при «Готов к производству»: " + bomId, "WARNING");
     return;
   }
   v12SetBomDone(bomId, bomChecked);
+}
+
+/**
+ * Готов ли BOM к отметке «Выполнено»: все его позиции переданы производству
+ * (BOM-статус «Готов к производству»). Считается из POSITION_STATE, а не из
+ * текста ячейки «Статус».
+ */
+function v12IsBomReadyForDone(bomId) {
+  const id = normalizeMaterialId(bomId);
+  if (!id) {
+    return false;
+  }
+  const agg = v12AggregateBomStates();
+  const a = agg[id];
+  return !!a && v12ComputeBomStatus(a) === V12_CONFIG.BOM_STATUS.READY;
 }
 
 /**
