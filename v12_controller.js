@@ -44,6 +44,7 @@ function v12OnOpen() {
   SpreadsheetApp.getUi()
     .createMenu("BOM CONTROL V12")
     .addItem(applyLabel, "v12ApplyChangesUI")
+    .addItem("♻ Пересобрать очередь (по галочкам)", "v12RebuildPendingFromCheckedUI")
     .addItem("Восстановить кнопку «Применить»", "v12InstallApplyButtonUI")
     .addSeparator()
     .addItem("🔄 Полная синхронизация", "v12RunFullSync")
@@ -83,6 +84,43 @@ function v12ApplyChangesUI() {
     v12Toast("Неприменённых изменений нет");
   }
   return result;
+}
+
+/**
+ * «Пересобрать очередь» (пункт меню) с обратной связью.
+ *
+ * Приводит множество HANDOFF-намерений листа PENDING_EDITS к каноническому виду
+ * по ФАКТИЧЕСКИ стоящим галочкам ОТБОРКИ и WORKING BOM: схлопывает возможные
+ * дубли и ДОБИРАЕТ отмеченные позиции, по которым не пришло событие onEdit
+ * (Google «глотает» всплески при массовой отметке). Так лист очереди становится
+ * точным отражением отмеченных галочек ещё ДО нажатия «Применить».
+ *
+ * В норме вызывается автоматически при каждой правке чекбокса
+ * (см. v12CaptureCheckboxEdit → v12ReconcilePendingHandoffs); пункт меню нужен
+ * для ручного контроля и для случая, когда последнее событие onEdit было
+ * потеряно платформой.
+ *
+ * Возвращает { added, pending } либо null, если очередь занята.
+ */
+function v12RebuildPendingFromCheckedUI() {
+  let added;
+  try {
+    added = v12ReconcilePendingHandoffs();
+  } catch (e) {
+    logSystem("v12RebuildPendingFromCheckedUI", e.message, e, "ERROR");
+    flushSystemLog();
+    v12Toast("Не удалось пересобрать очередь: " + e.message, V12_UI.TOAST_SECONDS_ERROR);
+    return null;
+  }
+  if (added === null) {
+    v12Toast("Очередь занята (идёт применение/синхронизация) — повторите через несколько секунд.");
+    return null;
+  }
+  const pending = v12CountPendingEdits();
+  v12UpdatePendingIndicator(pending);
+  v12Toast("Очередь пересобрана: дополнено " + added +
+    ", всего в очереди " + pending + " намерений");
+  return { added: added, pending: pending };
 }
 
 /**

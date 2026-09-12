@@ -14,7 +14,15 @@
  *        «пропажи»), Edit ID берётся из одной базы на весь захват;
  *   F6 — повторные записи НЕ перезатирают друг друга (все ключи сохранены);
  *   F7 — при занятом локе (идёт Apply) намерение НЕ пишется молча — безопасный
- *        отказ (очередь не портится), вместо гоночной перезаписи.
+ *        отказ (очередь не портится), вместо гоночной перезаписи;
+ *   F8 — реконсиляция: галочка стоит БЕЗ строки в очереди -> передача;
+ *   F9 — реконсиляция НЕ дублирует уже зафиксированное намерение;
+ *   F10 — САМОВОССТАНОВЛЕНИЕ захвата: «доехало» 1 событие из 5 -> в очереди
+ *         СРАЗУ все 5 отмеченных (пересборка по фактическим галочкам), при
+ *         Apply переданы все 5;
+ *   F11 — пересборка идемпотентна и схлопывает дубли;
+ *   F12 — последовательные доехавшие события не плодят дубли;
+ *   F13 — снятие галочки не воскрешается пересборкой (HANDOFF=false).
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script.
  * Запуск: node _local_tests/v12_queue_capture_fix_test.js
@@ -309,9 +317,10 @@ check("F9: применено ровно одно намерение", drainD.dr
 check("F9: склад списан ОДИН раз (C2 = 40, не 30)", whQty("C2"), 40);
 check("F9: позиция передана", psCell("BOM1:C2", P.RECEIVED_BY_PRODUCTION), true);
 
-console.log("=== F10: точный захват (без дублей) + добор потерянных на сливе ===");
-// Точный захват фиксирует ТОЛЬКО строки события (поэтому дублей нет), а
-// потерянные события восстанавливаются пересборкой по галочкам на сливе.
+console.log("=== F10: САМОВОССТАНОВЛЕНИЕ — доехало 1 событие, в очереди СРАЗУ ВСЕ 5 ===");
+// 5 галочек стоят в листе, но onEdit «доехал» только для 1 строки. Захват
+// самовосстанавливается: пересборка по фактическим галочкам СРАЗУ добирает все
+// отмеченные позиции — лист очереди отражает 5, ещё ДО «Применить».
 resetPositions();
 resetQueue();
 resetPicking();
@@ -321,14 +330,14 @@ for (let i = 1; i <= 5; i++) {
   PK._data.push(pickRow("BOM1:C" + i));
   PK._setCell(i + 1, K.CHECKBOX, true);                  // все 5 отмечены
 }
-// «Доехало» только событие для 2 строк (остальные onEdit потеряны Google).
-N.v12OnEdit(rangeEvent(PK, 2, 2, K.CHECKBOX, [["TRUE"], ["TRUE"]]));
-check("F10: точный захват дал 2 строки (и не создал дублей)", bodyRows(), 2);
-// Слив: пересборка доберёт недостающие 3, затем передаст все 5.
+// «Доехало» только событие для 1 строки (остальные onEdit потеряны Google).
+N.v12OnEdit(rangeEvent(PK, 2, 1, K.CHECKBOX, [["TRUE"]]));
+check("F10: в очереди СРАЗУ ВСЕ 5 позиций (самовосстановление)", bodyRows(), 5);
+// Слив подтверждает: передаются все 5 отмеченных позиций.
 N.v12DrainPendingEdits();
 let received = 0;
 for (let i = 1; i <= 5; i++) { if (psCell("BOM1:C" + i, P.RECEIVED_BY_PRODUCTION) === true) { received++; } }
-check("F10: переданы ВСЕ 5 позиций (потерянные восстановлены)", received, 5);
+check("F10: переданы ВСЕ 5 позиций", received, 5);
 
 console.log("=== F11: пересборка идемпотентна и схлопывает дубли ===");
 resetPositions();
@@ -344,6 +353,38 @@ N.v12RebuildPendingFromChecked();
 check("F11: после пересборки ровно 1 живая строка", pendingRows().length, 1);
 N.v12RebuildPendingFromChecked();
 check("F11: повторная пересборка не плодит дубли", pendingRows().length, 1);
+
+console.log("=== F12: последовательные доехавшие события не плодят дубли ===");
+resetPositions();
+resetQueue();
+resetPicking();
+setMaterial({ "C1": 50, "C2": 50, "C3": 50 });
+for (let i = 1; i <= 3; i++) {
+  PS._data.push(mkPosition("C" + i, i, 10, 10));
+  PK._data.push(pickRow("BOM1:C" + i));
+  PK._setCell(i + 1, K.CHECKBOX, true);                  // все 3 отмечены
+}
+// Два события подряд (каждое запускает самовосстановление по всем галочкам).
+N.v12OnEdit(rangeEvent(PK, 2, 1, K.CHECKBOX, [["TRUE"]]));
+N.v12OnEdit(rangeEvent(PK, 3, 1, K.CHECKBOX, [["TRUE"]]));
+check("F12: живых намерений ровно 3 (без дублей)", pendingRows().length, 3);
+check("F12: всего строк 3", bodyRows(), 3);
+
+console.log("=== F13: снятие галочки не воскрешается пересборкой ===");
+resetPositions();
+resetQueue();
+resetPicking();
+PK._data.push(pickRow("BOM1:C1"));
+PK._setCell(2, K.CHECKBOX, true);
+N.v12OnEdit(rangeEvent(PK, 2, 1, K.CHECKBOX, [["TRUE"]]));   // поставили галочку
+check("F13: намерение зафиксировано", pendingRows().length, 1);
+PK._setCell(2, K.CHECKBOX, false);                           // сняли галочку в листе
+N.v12OnEdit(rangeEvent(PK, 2, 1, K.CHECKBOX, [["FALSE"]]));  // событие «снятие»
+{
+  const intents = N.v12ResolvePendingIntents(QS._data);
+  check("F13: ровно одно намерение", intents.length, 1);
+  check("F13: значение = false (снятие, не воскрешено)", intents[0].value, false);
+}
 
 console.log("");
 if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }

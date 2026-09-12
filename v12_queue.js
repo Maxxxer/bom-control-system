@@ -153,7 +153,15 @@ function v12EnqueuePendingRows(rowArrays) {
   if (!rowArrays || !rowArrays.length) {
     return;
   }
-  const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+  // Лок с одним коротким повтором: сглаживает конкуренцию с параллельным onEdit
+  // или идущим «Применить»/полным синком, не теряя намерение «с первого раза».
+  let lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+  if (!lock) {
+    if (typeof Utilities !== "undefined" && Utilities.sleep) {
+      Utilities.sleep(300);
+    }
+    lock = acquireScriptLock({ tryOnly: true, timeoutMs: 5000 });
+  }
   if (!lock) {
     logSystem("v12EnqueuePendingRows",
       "Очередь занята (идёт применение/синхронизация) — намерение не зафиксировано", "WARNING");
@@ -310,8 +318,8 @@ function v12CaptureCheckboxEdit(e, sheetName) {
   // Значения берём из события (e.value/e.values) — снимок на момент правки.
   // Фиксируем СТРОГО строки этого события: каждое событие добавляет/обновляет
   // только свои ключи (upsert идемпотентен) — поэтому перекрывающиеся onEdit не
-  // могут создать дубли. Пропущенные события (Google «глотает» всплески)
-  // восстанавливаются пересборкой очереди по галочкам — v12RebuildPendingFromChecked.
+  // могут создать дубли. Пропущенные события (Google «глотает» всплески) тут же
+  // восстанавливаются пересборкой очереди по галочкам — v12ReconcilePendingHandoffs.
   const values = singleCell
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
@@ -342,6 +350,12 @@ function v12CaptureCheckboxEdit(e, sheetName) {
   if (pendingRows.length) {
     v12EnqueuePendingRows(pendingRows);
   }
+  // САМОВОССТАНОВЛЕНИЕ очереди: пересобираем множество HANDOFF-намерений по
+  // фактическому состоянию галочек — схлопываем возможные дубли и ДОБИРАЕМ
+  // отмеченные позиции, по которым события onEdit были потеряны Google.
+  // Благодаря этому лист PENDING_EDITS отражает ВСЕ отмеченные галочки СРАЗУ
+  // (ещё до «Применить»), а не только те события, что успели «доехать».
+  v12ReconcilePendingHandoffs();
   // Правка относится к чекбокс-колонке — считаем её обработанной здесь,
   // даже если строк без Position ID не оказалось.
   return true;
@@ -852,12 +866,20 @@ function v12RebuildPendingFromChecked() {
 
   const appends = [];
   const actor = v12CurrentActor();
+  // Один Edit ID-база на всю пересборку; генерируется ЛЕНИВО — только когда
+  // реально есть что добавлять (иначе лишний RPC Utilities.getUuid() на пачке
+  // без потерянных галочек).
+  let editIdBase = "";
   Object.keys(desired).forEach(function (key) {
     if (seen[key]) {
       return;
     }
     const c = desired[key];
-    appends.push(v12BuildPendingRow(c.source, c.pid, F, true, actor));
+    if (!editIdBase) {
+      editIdBase = generateEventId();
+    }
+    appends.push(v12BuildPendingRow(c.source, c.pid, F, true, actor,
+      editIdBase + "-rb" + (appends.length + 1)));
   });
 
   if (writes.length) {
@@ -870,6 +892,34 @@ function v12RebuildPendingFromChecked() {
     SpreadsheetApp.flush();
   }
   return appends.length;
+}
+
+/**
+ * Идемпотентная ПЕРЕСБОРКА очереди HANDOFF по фактическим галочкам — ПОД ЛОКОМ.
+ *
+ * Вызывается из захвата правки чекбокса (после фиксации строк события), чтобы
+ * лист очереди САМОВОССТАНАВЛИВАЛСЯ: если Google «проглотил» часть событий при
+ * массовой отметке, любое следующее доехавшее событие пересобирает множество
+ * HANDOFF-намерений по фактическому состоянию галочек — добирает отмеченные без
+ * строки и схлопывает дубли. Так PENDING_EDITS отражает ВСЕ отмеченные позиции
+ * ещё ДО «Применить», а не только пришедшие события.
+ *
+ * Возвращает число добавленных строк или null, если лок занят (пересборка
+ * отложена — намерения не теряются, их добьёт следующее событие или Apply).
+ */
+function v12ReconcilePendingHandoffs() {
+  const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+  if (!lock) {
+    logSystem("v12ReconcilePendingHandoffs",
+      "Очередь занята (идёт применение/синхронизация) — пересборка отложена", "WARNING");
+    flushSystemLog();
+    return null;
+  }
+  try {
+    return v12RebuildPendingFromChecked();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
