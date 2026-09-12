@@ -237,9 +237,8 @@ function v12HandleDashboardEdit(e) {
   }
   const bomId = sheet.getRange(row, D.BOM_ID).getValue();
   const bomChecked = v12IsChecked(e.range.getValue());
-  // Готовность считаем из состояния (колонка «Статус» теперь показывает процент
-  // сборки, а не текст статуса): «Выполнено» доступно только когда BOM «Готов к
-  // производству» (все позиции переданы производству).
+  // Готовность считаем из состояния (не из текста колонки «Статус»): «Выполнено»
+  // доступно только когда BOM скомплектован — все позиции переданы производству.
   if (bomChecked && !v12IsBomReadyForDone(bomId)) {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "«Выполнено» можно отметить только при «Готов к производству»: " + bomId, "WARNING");
@@ -250,8 +249,8 @@ function v12HandleDashboardEdit(e) {
 
 /**
  * Готов ли BOM к отметке «Выполнено»: все его позиции переданы производству
- * (BOM-статус «Готов к производству»). Считается из POSITION_STATE, а не из
- * текста ячейки «Статус».
+ * (BOM-статус «Скомплектован, готов к работе»). Считается из POSITION_STATE,
+ * а не из текста ячейки «Статус».
  */
 function v12IsBomReadyForDone(bomId) {
   const id = normalizeMaterialId(bomId);

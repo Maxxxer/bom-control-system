@@ -114,6 +114,9 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
 vm.runInThisContext(src, { filename: "v12-bundle-queue.js" });
 const N = globalThis.__V12;
 const C = N.V12_CONFIG;
+// RBAC: тестовому пользователю даём роль ADMIN — иначе с настроенным V12_ROLE_MAP
+// (реальные роли) операции отклоняются по правам, хотя тест не про RBAC.
+V12_ROLE_MAP[globalThis.__testUser || "test@example.com"] = C.ROLES.ADMIN;
 const P = C.POSITION_COLUMNS;
 const Q = C.PENDING_EDIT_COLUMNS;
 const K = C.PICKING_COLUMNS;

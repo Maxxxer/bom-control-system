@@ -230,6 +230,52 @@ function v12ApplyDeficitColorForRow(sheetRow, status) {
 }
 
 /**
+ * Исход снабжения позиции (единая логика для «Сводки дефицитов» и статуса BOM):
+ *   NOT_ORDERED — нет заказа или нет ожидаемой даты (заказ не оформлен);
+ *   PARTIAL — заказано меньше дефицита;
+ *   ON_TIME — заказано полностью, срок поставки ≤ крайний срок;
+ *   LATE — заказано полностью, срок поставки > крайний срок.
+ */
+const V12_PROCUREMENT_OUTCOME = {
+  NOT_ORDERED: "NOT_ORDERED",
+  PARTIAL: "PARTIAL",
+  ON_TIME: "ON_TIME",
+  LATE: "LATE"
+};
+
+/**
+ * Определить исход снабжения позиции по её количеству заказа, дефициту и датам.
+ * Заказ считается оформленным только когда введены И количество, И ожидаемая
+ * дата поставки; иначе позиция «не заказана».
+ */
+function v12ProcurementOutcome(row) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  const O = V12_PROCUREMENT_OUTCOME;
+  const ordered = toNumber(row[P.ORDERED_QTY - 1]);
+  const deficit = toNumber(row[P.DEFICIT_QTY - 1]);
+  const expected = row[P.EXPECTED_DATE - 1];
+  const deadline = row[P.DEADLINE - 1];
+
+  // Заказ не оформлен или не указана ожидаемая дата поставки — «не заказано».
+  if (ordered <= 0 || !expected) {
+    return O.NOT_ORDERED;
+  }
+  // Толерантный разбор дат: ячейка может содержать Date, ISO-строку или «dd.MM.yyyy».
+  const expDate = v12ParseSummaryDate(expected);
+  const deadDate = v12ParseSummaryDate(deadline);
+  const exp = expDate ? expDate.getTime() : NaN;
+  const dead = deadDate ? deadDate.getTime() : NaN;
+  // Даты не распознаны (нет валидного срока поставки) — «не заказано».
+  if (isNaN(exp) || isNaN(dead)) {
+    return O.NOT_ORDERED;
+  }
+  if (ordered < deficit) {
+    return O.PARTIAL;
+  }
+  return exp <= dead ? O.ON_TIME : O.LATE;
+}
+
+/**
  * Статус «Сводки дефицитов». Заказ считается оформленным только когда введены
  * И количество заказа, И ожидаемая дата поставки; иначе позиция «Не заказано».
  *   нет заказа или нет ожидаемой даты → «Не заказано»;
@@ -242,28 +288,18 @@ function v12DeficitStatusDisplay(row) {
   if (row[P.VALIDATION_STATUS - 1] === V12_CONFIG.VALIDATION_STATUS.ERROR) {
     return "Ошибка данных";
   }
-  const ordered = toNumber(row[P.ORDERED_QTY - 1]);
-  const deficit = toNumber(row[P.DEFICIT_QTY - 1]);
-  const expected = row[P.EXPECTED_DATE - 1];
-  const deadline = row[P.DEADLINE - 1];
-
-  // Заказ не оформлен или не указана ожидаемая дата поставки — «Не заказано».
-  if (ordered <= 0 || !expected) {
+  const O = V12_PROCUREMENT_OUTCOME;
+  const outcome = v12ProcurementOutcome(row);
+  if (outcome === O.NOT_ORDERED) {
     return "Не заказано";
   }
-  // Толерантный разбор дат: ячейка может содержать Date, ISO-строку или «dd.MM.yyyy».
-  const expDate = v12ParseSummaryDate(expected);
-  const deadDate = v12ParseSummaryDate(deadline);
-  const exp = expDate ? expDate.getTime() : NaN;
-  const dead = deadDate ? deadDate.getTime() : NaN;
-  // Даты не распознаны (нет валидного срока поставки) — «Не заказано».
-  if (isNaN(exp) || isNaN(dead)) {
-    return "Не заказано";
-  }
-  if (ordered < deficit) {
+  if (outcome === O.PARTIAL) {
     return "Заказано частично";
   }
-  return exp <= dead ? "Ожидание поставки (в Срок)" : "Ожидание поставки (Опаздывает)";
+  if (outcome === O.LATE) {
+    return "Ожидание поставки (Опаздывает)";
+  }
+  return "Ожидание поставки (в Срок)";
 }
 
 /**
@@ -857,15 +893,25 @@ function v12BuildSupplyProjectsText(projectsMap) {
 
 /**
  * Агрегация по BOM: подсчёт позиций и BOM-статус (К2).
- * Возвращает Map<bomId, { total, collected, notOrdered, partial, late, onTime, errors, missing, minDeadline }>.
+ * Возвращает Map<bomId, { total, collected, onShelf, notOrdered, partial, late,
+ *                          onTime, errors, missing, minDeadline, maxReceivedAt }>.
  *
- * missing — список недостающих материалов BOM (не переданные производству
- * позиции с дефицитом > 0, а также позиции с ошибкой данных). Каждый элемент:
- * { qty, model, expectedDate, code, name }. Из него строится столбец
- * «Недостающие материалы» и hover-подсказка «Статус».
+ *   total     — всего позиций BOM;
+ *   collected — получено производством (productionState = RECEIVED);
+ *   onShelf   — на складе, ждёт отборки (productionState = READY_FOR_HANDOFF);
+ *   notOrdered — в снабжении: не заказано / заказано частично / нет ожидаемой даты;
+ *   late      — заказано полностью, но срок поставки позже крайнего срока;
+ *   onTime    — заказано полностью и срок поставки ≤ крайнего срока;
+ *   errors    — позиции с ошибкой данных BOM;
+ *   missing   — список недостающих материалов BOM. Каждый элемент:
+ *               { qty, model, expectedDate, code, name };
+ *   maxReceivedAt — дата/время получения последней позиции (для отметки
+ *               «Скомплектовано»).
  */
 function v12AggregateBomStates(posData) {
   const P = V12_CONFIG.POSITION_COLUMNS;
+  const PS = V12_CONFIG.PRODUCTION_STATE;
+  const O = V12_PROCUREMENT_OUTCOME;
   const data = posData || v12ReadSheet("POSITION_STATE");
   const bomMap = {};
 
@@ -882,9 +928,9 @@ function v12AggregateBomStates(posData) {
     if (!bomMap[bomId]) {
       bomMap[bomId] = {
         bomName: r[P.BOM_NAME - 1],
-        total: 0, collected: 0, notOrdered: 0, partial: 0,
+        total: 0, collected: 0, onShelf: 0, notOrdered: 0, partial: 0,
         late: 0, onTime: 0, errors: 0, missing: [],
-        minDeadline: null
+        minDeadline: null, maxReceivedAt: null
       };
     }
     const b = bomMap[bomId];
@@ -893,46 +939,46 @@ function v12AggregateBomStates(posData) {
     if (deadline && (b.minDeadline === null || new Date(b.minDeadline) > new Date(deadline))) {
       b.minDeadline = deadline;
     }
-    const supply = r[P.SUPPLY_STATE - 1];
     const production = r[P.PRODUCTION_STATE - 1];
     const validation = r[P.VALIDATION_STATUS - 1];
 
+    // Позиция с ошибкой данных BOM — технический статус «Ошибка данных».
     if (validation === V12_CONFIG.VALIDATION_STATUS.ERROR) {
       b.errors++;
       b.missing.push(v12BuildMissingEntry(r));
       continue;
     }
-    if (production === V12_CONFIG.PRODUCTION_STATE.RECEIVED) {
+    // Получено производством — позиция закрыта. Запоминаем время последней
+    // передачи (по нему строится отметка «Скомплектовано»).
+    if (production === PS.RECEIVED) {
       b.collected++;
+      const at = v12ToDate(r[P.RECEIVED_BY_PRODUCTION_AT - 1]);
+      if (at && (b.maxReceivedAt === null || at.getTime() > b.maxReceivedAt.getTime())) {
+        b.maxReceivedAt = at;
+      }
       continue;
     }
-    switch (supply) {
-      case V12_CONFIG.SUPPLY_STATE.NOT_ORDERED:
-        b.notOrdered++;
-        break;
-      case V12_CONFIG.SUPPLY_STATE.PARTIALLY_ORDERED:
-        b.partial++;
-        break;
-      case V12_CONFIG.SUPPLY_STATE.PARTIALLY_DELIVERED:
-        b.partial++;
-        break;
-      case V12_CONFIG.SUPPLY_STATE.ORDERED: {
-        // Позиция заказана и ещё не собрана: если ожидаемый приход позже
-        // крайнего срока — BOM «опаздывает» (иначе статус WAITING_LATE недостижим).
-        const exp = v12ToDate(r[P.EXPECTED_DATE - 1]);
-        const dead = v12ToDate(r[P.DEADLINE - 1]);
-        if (exp && dead && exp.getTime() > dead.getTime()) {
-          b.late++;
-        } else {
-          b.onTime++;
-        }
-        break;
-      }
-      default:
-        b.onTime++;
+    // На складе, ждёт отборки — материал доступен, но ещё не передан в
+    // производство. Такие позиции НЕ считаются недостающими.
+    if (production === PS.READY_FOR_HANDOFF) {
+      b.onShelf++;
+      continue;
     }
-    // Недостающий материал: позиция ещё не передана производству и материала
-    // не хватает (дефицит > 0). Собираем «количество - модель - ожидаемый срок».
+    // Позиция ещё в снабжении — исход по той же логике, что и статус строки
+    // «Сводки дефицитов» (v12ProcurementOutcome).
+    const outcome = v12ProcurementOutcome(r);
+    if (outcome === O.NOT_ORDERED) {
+      b.notOrdered++;
+    } else if (outcome === O.PARTIAL) {
+      b.notOrdered++;
+      b.partial++;
+    } else if (outcome === O.LATE) {
+      b.late++;
+    } else {
+      b.onTime++;
+    }
+    // Недостающий материал: материала не хватает (дефицит > 0). Собираем
+    // «количество - модель - ожидаемый срок».
     if (toNumber(r[P.DEFICIT_QTY - 1]) > 0) {
       b.missing.push(v12BuildMissingEntry(r));
     }
@@ -987,21 +1033,24 @@ function v12BuildMissingItemsText(missing) {
 }
 
 /**
- * Определить BOM-статус по агрегату (К2).
+ * Определить BOM-статус по агрегату.
+ *
+ * Приоритет: ошибки → все собраны → все на складе → есть незаказанные →
+ * хотя бы одна поставка опаздывает → (иначе) поставка в срок.
  */
 function v12ComputeBomStatus(agg) {
   const BS = V12_CONFIG.BOM_STATUS;
   if (agg.errors > 0) {
     return BS.ERROR;
   }
-  if (agg.collected === agg.total && agg.total > 0) {
+  if (agg.total > 0 && agg.collected === agg.total) {
     return BS.READY;
   }
-  if (agg.notOrdered === agg.total) {
-    return BS.NOT_PROCESSED;
+  if (agg.total > 0 && agg.collected + agg.onShelf === agg.total) {
+    return BS.ON_SHELF;
   }
-  if (agg.notOrdered > 0 || agg.partial > 0) {
-    return BS.PARTIAL_SELECTED;
+  if (agg.notOrdered > 0) {
+    return BS.NOT_ORDERED;
   }
   if (agg.late > 0) {
     return BS.WAITING_LATE;
@@ -1011,7 +1060,7 @@ function v12ComputeBomStatus(agg) {
 
 /**
  * DASHBOARD: сводка по BOM. Чекбокс «Выполнено» (DONE) активен только
- * при «Готов к производству» (ТЗ №53).
+ * при полной комплектации BOM (все позиции получены производством).
  */
 function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   const D = V12_CONFIG.DASHBOARD_COLUMNS;
@@ -1024,21 +1073,22 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
 
   bomIds.forEach(function (bomId) {
     const a = agg[bomId];
-    const progress = a.total > 0 ? Math.round((a.collected / a.total) * 100) : 0;
-    const missingText = v12BuildMissingItemsText(a.missing);
+    const status = v12ComputeBomStatus(a);
+    const missingText = v12BuildDashboardMissingCell(a);
     const done = excluded[bomId] === true;
     rows.push([
       done,
       bomId,
       a.bomName,
-      v12DashboardStatusText(progress),
+      status,
       a.total,
+      a.onShelf,
       a.collected,
       v12FormatDateOnly(revDates[bomId]),
       v12FormatDateOnly(a.minDeadline),
       missingText
     ]);
-    statusColors.push(v12DashboardPercentColor(progress));
+    statusColors.push(v12BomStatusColor(status));
   });
 
   v12ClearBody("DASHBOARD");
@@ -1089,75 +1139,56 @@ function v12InstallDashboardCheckboxes(rowCount) {
 }
 
 /**
- * Число сегментов прогрессбара в столбце «Статус».
+ * Цвет заливки столбца «Статус» дашборда по тексту статуса BOM.
+ * Значение статуса → ключ цвета в BOM_STATUS_COLOR → HEX в COLORS.
+ * Неизвестный статус → белый.
  */
-const V12_DASHBOARD_BAR_SEGMENTS = 10;
-
-/**
- * Текст столбца «Статус» дашборда: процент сборки + прогрессбар.
- * Формат: «45% █████░░░░░» (заполнено округлённо до сегментов).
- */
-function v12DashboardStatusText(percent) {
-  const p = Math.max(0, Math.min(100, toNumber(percent)));
-  const filled = Math.round((p / 100) * V12_DASHBOARD_BAR_SEGMENTS);
-  const bar =
-    new Array(filled + 1).join("\u2588") +
-    new Array(V12_DASHBOARD_BAR_SEGMENTS - filled + 1).join("\u2591");
-  return p + "% " + bar;
-}
-
-/**
- * Цвет статуса дашборда по проценту сборки: «от красного к зелёному».
- * 0–50% — PROGRESS_LOW → PROGRESS_MID; 50–100% — PROGRESS_MID → PROGRESS_HIGH.
- */
-function v12DashboardPercentColor(percent) {
+function v12BomStatusColor(status) {
+  const key = V12_CONFIG.BOM_STATUS_COLOR[status];
   const C = V12_CONFIG.COLORS;
-  const p = Math.max(0, Math.min(100, toNumber(percent)));
-  if (p <= 50) {
-    return v12InterpolateColor(C.PROGRESS_LOW, C.PROGRESS_MID, p / 50);
+  return (key && C[key]) ? C[key] : C.WHITE;
+}
+
+/**
+ * Формат «дата и время» (dd.MM.yyyy HH:mm) — для отметки «Скомплектовано».
+ * Принимает Date, «dd.MM.yyyy», ISO-строку или числовой серийный номер Sheets.
+ */
+function v12FormatDateTime(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
   }
-  return v12InterpolateColor(C.PROGRESS_MID, C.PROGRESS_HIGH, (p - 50) / 50);
+  const d = v12ToDate(value);
+  if (!d) {
+    return String(value);
+  }
+  const dd = ("0" + d.getDate()).slice(-2);
+  const mm = ("0" + (d.getMonth() + 1)).slice(-2);
+  const yyyy = d.getFullYear();
+  const hh = ("0" + d.getHours()).slice(-2);
+  const mi = ("0" + d.getMinutes()).slice(-2);
+  return dd + "." + mm + "." + yyyy + " " + hh + ":" + mi;
 }
 
 /**
- * Линейная интерполяция двух HEX-цветов (t: 0 → from, 1 → to).
+ * Ячейка «Недостающие материалы» дашборда.
+ *
+ * Пока BOM собран не полностью — список недостач (v12BuildMissingItemsText).
+ * Когда ВСЕ позиции BOM получены производством — вместо списка выводится
+ * отметка «Скомплектовано - <дата и время получения последней позиции>».
  */
-function v12InterpolateColor(fromHex, toHex, t) {
-  const a = v12HexToRgb(fromHex);
-  const b = v12HexToRgb(toHex);
-  const k = Math.max(0, Math.min(1, t));
-  return v12RgbToHex(
-    Math.round(a.r + (b.r - a.r) * k),
-    Math.round(a.g + (b.g - a.g) * k),
-    Math.round(a.b + (b.b - a.b) * k)
-  );
-}
-
-/**
- * HEX-строка («#RRGGBB» или «#RGB») → { r, g, b }.
- */
-function v12HexToRgb(hex) {
-  const s = String(hex || "").replace("#", "");
-  const full = s.length === 3 ? s.replace(/(.)/g, "$1$1") : s;
-  const n = parseInt(full, 16) || 0;
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-}
-
-/**
- * { r, g, b } → HEX-строка «#RRGGBB» (верхний регистр).
- */
-function v12RgbToHex(r, g, b) {
-  const part = function (v) {
-    return ("0" + Math.max(0, Math.min(255, v)).toString(16)).slice(-2);
-  };
-  return ("#" + part(r) + part(g) + part(b)).toUpperCase();
+function v12BuildDashboardMissingCell(a) {
+  if (a.total > 0 && a.collected === a.total) {
+    const dt = v12FormatDateTime(a.maxReceivedAt);
+    return dt ? ("Скомплектовано - " + dt) : "Скомплектовано";
+  }
+  return v12BuildMissingItemsText(a.missing);
 }
 
 /**
  * Заливка столбца «Статус» DASHBOARD рассчитанными цветами (по строке на BOM).
- * Цвет отражает степень готовности проекта (процент сборки) — от красного к
- * зелёному. Заливка ставится напрямую (без conditional formatting), поэтому
- * старые текстовые правила статуса удаляются миграцией дашборда.
+ * Цвет отражает состояние BOM (см. BOM_STATUS_COLOR). Заливка ставится напрямую
+ * (без conditional formatting), поэтому старые текстовые правила статуса
+ * удаляются миграцией дашборда.
  */
 function v12ApplyDashboardStatusColors(colors) {
   if (!colors || !colors.length) {

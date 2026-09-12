@@ -13,6 +13,10 @@
 /** Маппинг email → роль. Заполняется владельцем. */
 const V12_ROLE_MAP = {
   // "email@example.com": V12_CONFIG.ROLES.ADMIN
+  "maksim.salavei@gmail.com":V12_CONFIG.ROLES.ECONOMIST,
+  "6458771go@gmail.com":V12_CONFIG.ROLES.PROCUREMENT,
+  "6458771go@gmail.com":V12_CONFIG.ROLES.WAREHOUSE,
+  "6458771go@gmail.com":V12_CONFIG.ROLES.VIEWER,
 };
 
 /**

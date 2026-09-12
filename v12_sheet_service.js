@@ -187,12 +187,14 @@ function v12MigrateSupplySchema() {
 const V12_DASHBOARD_LEGACY_HEADERS = ["Прогресс", "Обновлено"];
 
 /**
- * Миграция листа Dashboard под новую схему (9 колонок):
+ * Миграция листа Dashboard под новую схему (10 колонок):
  *   - удаляет устаревшие колонки «Прогресс» и «Обновлено»;
- *   - приводит строку заголовков к канону (в т.ч. «Недостающие материалы»);
+ *   - вставляет колонку «На складе» сразу после «Позиций», если её ещё нет
+ *     (листы прежней схемы на 9 колонок);
+ *   - приводит строку заголовков к канону (в т.ч. «На складе»);
  *   - скрывает колонку «BOM ID» (движку нужна для идентификации строки);
  *   - сбрасывает старые текстовые правила условного форматирования статуса
- *     (теперь цвет статуса — заливка по проценту сборки, от красного к зелёному).
+ *     (цвет статуса — прямая заливка по состоянию BOM).
  * Тело листа не трогаем — оно пересобирается v12RefreshDashboard.
  */
 function v12MigrateDashboardSchema() {
@@ -200,6 +202,7 @@ function v12MigrateDashboardSchema() {
   if (!sheet || typeof sheet.deleteColumn !== "function") {
     return;
   }
+  const D = V12_CONFIG.DASHBOARD_COLUMNS;
   const expected = V12_CONFIG.HEADERS.DASHBOARD.length;
   // Порядок колонок меняется после каждого удаления — ищем заголовки заново
   // и всегда удаляем самый левый устаревший столбец.
@@ -223,7 +226,26 @@ function v12MigrateDashboardSchema() {
     }
     sheet.deleteColumn(legacyIndex + 1);
   }
-  // Канонический заголовок (после удаления всех устаревших колонок).
+  // Вставляем колонку «На складе» сразу после «Позиций», если её ещё нет
+  // (лист прежней схемы на 9 колонок). Идемпотентно: если заголовок «На складе»
+  // уже есть — не трогаем.
+  const headerLastCol = sheet.getLastColumn();
+  if (headerLastCol > 0) {
+    const header = sheet.getRange(1, 1, 1, headerLastCol).getValues()[0];
+    const onShelfName = V12_CONFIG.HEADERS.DASHBOARD[D.ON_SHELF - 1];
+    if (header.indexOf(onShelfName) === -1) {
+      const collectedName = V12_CONFIG.HEADERS.DASHBOARD[D.COLLECTED_POSITIONS - 1];
+      let insertAt = D.ON_SHELF;
+      const collectedCol = header.indexOf(collectedName);
+      if (collectedCol !== -1) {
+        insertAt = collectedCol + 1;
+      }
+      if (typeof sheet.insertColumnBefore === "function") {
+        sheet.insertColumnBefore(insertAt);
+      }
+    }
+  }
+  // Канонический заголовок (после удаления устаревших и вставки «На складе»).
   sheet.getRange(1, 1, 1, expected).setValues([V12_CONFIG.HEADERS.DASHBOARD]);
   sheet.getRange(1, 1, 1, expected).setFontWeight("bold");
   // «BOM ID» скрываем (движку нужна — идентификация строки для «Выполнено»);
@@ -320,7 +342,7 @@ const V12_ALIGN_CENTER_COLUMNS = {
   DEFICIT_SUMMARY: [3, 7, 8, 9, 10, 11, 12, 13, 14],
   PICKING: [3, 7, 8, 9, 10, 11, 12],
   WORKING_BOM: [3, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-  DASHBOARD: [1, 4, 5, 6, 7, 8],
+  DASHBOARD: [1, 4, 5, 6, 7, 8, 9],
   MATERIAL_STATE: [5, 6, 7, 8, 9],
   ARCHIVE: [1, 4, 8, 9, 10, 12]
 };
