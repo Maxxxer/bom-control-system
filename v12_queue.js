@@ -216,6 +216,10 @@ function v12EnqueuePendingRows(rowArrays) {
     if (updates.length) {
       batchWrite(sheet, updates);
     }
+    // Сбрасываем буфер записи ПОД локом: чтобы ПЕРЕКРЫВАЮЩЕЕСЯ исполнение
+    // (следующий быстрый onEdit) гарантированно увидело только что записанные
+    // строки и обновило их upsert-ом, а не добавило дубли.
+    SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }
@@ -303,9 +307,11 @@ function v12CaptureCheckboxEdit(e, sheetName) {
   const firstRow = range.getRow();
   const numRows = range.getNumRows();
   const singleCell = (numRows === 1 && numCols === 1);
-  // Для одиночной ячейки берём значение из события (e.value) — это снимок на
-  // момент правки; getValues() для 1x1 не требуется. Для диапазона — e.values
-  // либо живое чтение диапазона.
+  // Значения берём из события (e.value/e.values) — снимок на момент правки.
+  // Фиксируем СТРОГО строки этого события: каждое событие добавляет/обновляет
+  // только свои ключи (upsert идемпотентен) — поэтому перекрывающиеся onEdit не
+  // могут создать дубли. Пропущенные события (Google «глотает» всплески)
+  // восстанавливаются пересборкой очереди по галочкам — v12RebuildPendingFromChecked.
   const values = singleCell
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
@@ -313,7 +319,7 @@ function v12CaptureCheckboxEdit(e, sheetName) {
   const actor = getCurrentUser();
   // Один Edit ID на весь захват (без RPC на каждую строку).
   const editIdBase = generateEventId();
-  // Position ID всех строк читаем ОДНОЙ выборкой (а не по ячейке в цикле).
+  // Position ID строк диапазона читаем ОДНОЙ выборкой.
   const idColumn = sheet.getRange(firstRow, keyCol, numRows, 1).getValues();
 
   const pendingRows = [];
@@ -753,6 +759,120 @@ function v12ReconcileCheckedHandoffs(queueData) {
 }
 
 /**
+ * Собрать список фактически отмеченных галочек передачи ({ source, pid }).
+ * Источники: ОТБОРКА и WORKING BOM.
+ */
+function v12CollectCheckedHandoffs() {
+  const out = [];
+  const targets = [
+    { sheetKey: "PICKING", source: V12_CONFIG.SOURCE_UI.PICKING,
+      idCol: V12_CONFIG.PICKING_COLUMNS.POSITION_ID,
+      checkCol: V12_CONFIG.PICKING_COLUMNS.CHECKBOX },
+    { sheetKey: "WORKING_BOM", source: V12_CONFIG.SOURCE_UI.WORKING_BOM,
+      idCol: V12_CONFIG.WORKING_BOM_COLUMNS.POSITION_ID,
+      checkCol: V12_CONFIG.WORKING_BOM_COLUMNS.CHECKBOX }
+  ];
+  targets.forEach(function (t) {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS[t.sheetKey]);
+    if (!sheet) {
+      return;
+    }
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      return;
+    }
+    const ids = sheet.getRange(2, t.idCol, lastRow - 1, 1).getValues();
+    const checks = sheet.getRange(2, t.checkCol, lastRow - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      const pid = normalizeMaterialId(ids[i][0]);
+      if (!pid || !v12IsChecked(checks[i][0])) {
+        continue;
+      }
+      out.push({ source: t.source, pid: pid });
+    }
+  });
+  return out;
+}
+
+/**
+ * ИДЕМПОТЕНТНАЯ ПЕРЕСБОРКА очереди намерений HANDOFF по фактическим галочкам.
+ *
+ * Приводит множество PENDING-намерений HANDOFF к каноническому виду:
+ *   - по каждому ключу SOURCE|POSITION_ID|FIELD оставляет РОВНО ОДНУ строку
+ *     (лишние дубли помечаются DONE) — устраняет «задваивание»;
+ *   - отмеченные галочки, для которых PENDING-строки нет, ДОБАВЛЯЮТСЯ —
+ *     устраняет «пропажу» потерянных onEdit.
+ *
+ * НЕ отменяет существующие намерения: очередь авторитетна (снятие галочки
+ * фиксируется точным захватом значением false). Функция только схлопывает
+ * дубли и добирает отмеченные, поэтому её безопасно звать многократно.
+ * Намерения других полей (Заказано/Ожидаемая/Реальная поставка) не трогаются.
+ *
+ * Возвращает число добавленных строк.
+ */
+function v12RebuildPendingFromChecked() {
+  const sheet = v12GetSheetByKey("PENDING_EDITS");
+  const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
+  const ST = V12_CONFIG.PENDING_STATUS;
+  const F = V12_CONFIG.PENDING_FIELD.HANDOFF;
+
+  // Желаемое множество HANDOFF-намерений по фактически отмеченным галочкам.
+  const desired = {};
+  v12CollectCheckedHandoffs().forEach(function (c) {
+    desired[c.source + "|" + c.pid + "|" + F] = c;
+  });
+
+  const data = readSheetValues(sheet);
+  const writes = [];
+  const keepRow = {};
+  const seen = {};
+  const now = new Date();
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (String(r[Q.STATUS - 1]).trim() !== ST.PENDING) {
+      continue;
+    }
+    const pid = normalizeMaterialId(r[Q.POSITION_ID - 1]);
+    if (!pid) {
+      continue;
+    }
+    const source = String(r[Q.SOURCE - 1] || "").trim();
+    const field = String(r[Q.FIELD - 1] || "").trim();
+    const key = source + "|" + pid + "|" + field;
+    const rowNum = i + 1;
+    if (seen[key]) {
+      // Дубль: предыдущую оставляем недействительной, оставляем последнюю.
+      writes.push({ row: keepRow[key], col: Q.STATUS, value: ST.DONE });
+      writes.push({ row: keepRow[key], col: Q.PROCESSED_AT, value: now });
+      writes.push({ row: keepRow[key], col: Q.ERROR, value: "дубль (схлопнуто пересборкой)" });
+    }
+    seen[key] = true;
+    keepRow[key] = rowNum;
+  }
+
+  const appends = [];
+  const actor = v12CurrentActor();
+  Object.keys(desired).forEach(function (key) {
+    if (seen[key]) {
+      return;
+    }
+    const c = desired[key];
+    appends.push(v12BuildPendingRow(c.source, c.pid, F, true, actor));
+  });
+
+  if (writes.length) {
+    batchWrite(sheet, writes);
+  }
+  if (appends.length) {
+    writeValues(sheet, sheet.getLastRow() + 1, 1, appends);
+  }
+  if (writes.length || appends.length) {
+    SpreadsheetApp.flush();
+  }
+  return appends.length;
+}
+
+/**
  * Применить одно намерение очереди к состоянию позиции (пакетно).
  *
  * Расчёт, аудит, историю и складские дельты выполняют ОПЕРАЦИИ снабжения
@@ -817,13 +937,16 @@ function v12DrainPendingEdits() {
     return { drained: 0, skipped: true };
   }
   try {
+    // Приводим очередь к каноническому виду по фактическим галочкам: схлопываем
+    // дубли по ключу и добираем отмеченные без строки. Так слив детерминирован —
+    // ни дублей, ни потерь — независимо от того, сколько событий onEdit доехало.
+    v12RebuildPendingFromChecked();
+
     const sheet = v12GetSheetByKey("PENDING_EDITS");
     const data = readSheetValues(sheet);
     const pendingRows = v12CollectPendingRowNumbers(data);
 
-    // Намерения очереди + синтетические намерения по установленным галочкам,
-    // для которых строки в очереди нет (потерянный onEdit).
-    const intents = v12ResolvePendingIntents(data).concat(v12ReconcileCheckedHandoffs(data));
+    const intents = v12ResolvePendingIntents(data);
     if (!intents.length) {
       return { drained: 0 };
     }

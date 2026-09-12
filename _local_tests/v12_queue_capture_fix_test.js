@@ -105,7 +105,7 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
   + "\n;globalThis.__V12 = { V12_CONFIG: V12_CONFIG, V12_ROLE_MAP: V12_ROLE_MAP,"
   + " v12BuildPositionRow: v12BuildPositionRow, v12OnEdit: v12OnEdit,"
   + " v12EnqueuePendingEdit: v12EnqueuePendingEdit, v12EnqueuePendingRows: v12EnqueuePendingRows,"
-  + " v12BuildPendingRow: v12BuildPendingRow,"
+  + " v12BuildPendingRow: v12BuildPendingRow, v12RebuildPendingFromChecked: v12RebuildPendingFromChecked,"
   + " v12DrainPendingEdits: v12DrainPendingEdits, v12HasPendingEdits: v12HasPendingEdits,"
   + " v12CountPendingEdits: v12CountPendingEdits, v12ResolvePendingIntents: v12ResolvePendingIntents };";
 
@@ -308,6 +308,42 @@ const drainD = N.v12DrainPendingEdits();
 check("F9: применено ровно одно намерение", drainD.drained, 1);
 check("F9: склад списан ОДИН раз (C2 = 40, не 30)", whQty("C2"), 40);
 check("F9: позиция передана", psCell("BOM1:C2", P.RECEIVED_BY_PRODUCTION), true);
+
+console.log("=== F10: точный захват (без дублей) + добор потерянных на сливе ===");
+// Точный захват фиксирует ТОЛЬКО строки события (поэтому дублей нет), а
+// потерянные события восстанавливаются пересборкой по галочкам на сливе.
+resetPositions();
+resetQueue();
+resetPicking();
+setMaterial({ "C1": 50, "C2": 50, "C3": 50, "C4": 50, "C5": 50 });
+for (let i = 1; i <= 5; i++) {
+  PS._data.push(mkPosition("C" + i, i, 10, 10));         // available=10 >= required=10
+  PK._data.push(pickRow("BOM1:C" + i));
+  PK._setCell(i + 1, K.CHECKBOX, true);                  // все 5 отмечены
+}
+// «Доехало» только событие для 2 строк (остальные onEdit потеряны Google).
+N.v12OnEdit(rangeEvent(PK, 2, 2, K.CHECKBOX, [["TRUE"], ["TRUE"]]));
+check("F10: точный захват дал 2 строки (и не создал дублей)", bodyRows(), 2);
+// Слив: пересборка доберёт недостающие 3, затем передаст все 5.
+N.v12DrainPendingEdits();
+let received = 0;
+for (let i = 1; i <= 5; i++) { if (psCell("BOM1:C" + i, P.RECEIVED_BY_PRODUCTION) === true) { received++; } }
+check("F10: переданы ВСЕ 5 позиций (потерянные восстановлены)", received, 5);
+
+console.log("=== F11: пересборка идемпотентна и схлопывает дубли ===");
+resetPositions();
+resetQueue();
+resetPicking();
+PK._data.push(pickRow("BOM1:C1"));
+PK._setCell(2, K.CHECKBOX, true);
+// имитируем уже накопившиеся дубли одного ключа
+QS._data.push(N.v12BuildPendingRow("PICKING", "BOM1:C1", "HANDOFF", true, "u"));
+QS._data.push(N.v12BuildPendingRow("PICKING", "BOM1:C1", "HANDOFF", true, "u"));
+check("F11: до пересборки 2 строки (дубль)", pendingRows().length, 2);
+N.v12RebuildPendingFromChecked();
+check("F11: после пересборки ровно 1 живая строка", pendingRows().length, 1);
+N.v12RebuildPendingFromChecked();
+check("F11: повторная пересборка не плодит дубли", pendingRows().length, 1);
 
 console.log("");
 if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }
