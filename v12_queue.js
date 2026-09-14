@@ -468,6 +468,13 @@ function v12CaptureDeficitEdit(e) {
   if (pendingRows.length) {
     v12EnqueuePendingRows(pendingRows);
   }
+  // САМОВОССТАНОВЛЕНИЕ очереди (как в захвате HANDOFF): при массовой отметке
+  // «пробелом» Google присылает ОДНО событие, поэтому любая доехавшая правка
+  // редактируемой колонки Сводки пересобирает множество намерений по
+  // ФАКТИЧЕСКИМ галочкам «Реальная поставка» — добирает отмеченные позиции без
+  // строки в очереди. Без этого при выделении нескольких чекбоксов «Реальная
+  // поставка» в очередь попала бы только одна позиция.
+  v12ReconcilePendingHandoffs();
   return true;
 }
 
@@ -672,7 +679,9 @@ function v12PurgeDonePendingEdits(maxAgeDays) {
 }
 
 /**
- * Есть ли УСТАНОВЛЕННЫЕ галочки «Отметка получено» в ОТБОРКЕ / WORKING BOM.
+ * Есть ли УСТАНОВЛЕННЫЕ редактируемые чекбоксы, которых ещё нет в очереди:
+ *   HANDOFF «Отметка получено»          — ОТБОРКА / WORKING BOM;
+ *   REAL_DELIVERY «Реальная поставка»   — Сводка дефицитов.
  *
  * Дешёвый предфильтр для слива: если очередь пуста, но галочки стоят — слив
  * всё равно нужен (страховка от потерянных onEdit, см. v12ReconcileCheckedHandoffs).
@@ -680,7 +689,8 @@ function v12PurgeDonePendingEdits(maxAgeDays) {
 function v12HasCheckedHandoffs() {
   const targets = [
     { sheetKey: "PICKING", checkCol: V12_CONFIG.PICKING_COLUMNS.CHECKBOX },
-    { sheetKey: "WORKING_BOM", checkCol: V12_CONFIG.WORKING_BOM_COLUMNS.CHECKBOX }
+    { sheetKey: "WORKING_BOM", checkCol: V12_CONFIG.WORKING_BOM_COLUMNS.CHECKBOX },
+    { sheetKey: "DEFICIT_SUMMARY", checkCol: V12_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY }
   ];
   for (let t = 0; t < targets.length; t++) {
     const sheet = getSheetByName(V12_CONFIG.SHEETS[targets[t].sheetKey]);
@@ -809,18 +819,54 @@ function v12CollectCheckedHandoffs() {
 }
 
 /**
- * ИДЕМПОТЕНТНАЯ ПЕРЕСБОРКА очереди намерений HANDOFF по фактическим галочкам.
+ * Собрать список фактически отмеченных чекбоксов «Реальная поставка»
+ * ({ source, pid }) в «Сводке дефицитов».
  *
- * Приводит множество PENDING-намерений HANDOFF к каноническому виду:
+ * Аналог v12CollectCheckedHandoffs для колонки REAL_DELIVERY (Сводка, кол. 12):
+ * проекция всегда пишет в неё false, поэтому стоящая галочка = намерение
+ * снабженца «материал пришёл полностью».
+ */
+function v12CollectCheckedRealDeliveries() {
+  const out = [];
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.DEFICIT_SUMMARY);
+  if (!sheet) {
+    return out;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return out;
+  }
+  const D = V12_CONFIG.DEFICIT_COLUMNS;
+  const ids = sheet.getRange(2, D.POSITION_ID, lastRow - 1, 1).getValues();
+  const checks = sheet.getRange(2, D.REAL_DELIVERY, lastRow - 1, 1).getValues();
+  for (let i = 0; i < ids.length; i++) {
+    const pid = normalizeMaterialId(ids[i][0]);
+    if (!pid || !v12IsChecked(checks[i][0])) {
+      continue;
+    }
+    out.push({ source: V12_CONFIG.SOURCE_UI.DEFICIT_SUMMARY, pid: pid });
+  }
+  return out;
+}
+
+/**
+ * ИДЕМПОТЕНТНАЯ ПЕРЕСБОРКА очереди чекбокс-намерений по фактическим галочкам.
+ *
+ * Охватывает редактируемые чекбокс-колонки:
+ *   HANDOFF «Отметка получено»          — ОТБОРКА / WORKING BOM;
+ *   REAL_DELIVERY «Реальная поставка»   — Сводка дефицитов.
+ *
+ * Приводит множество PENDING-намерений этих полей к каноническому виду:
  *   - по каждому ключу SOURCE|POSITION_ID|FIELD оставляет РОВНО ОДНУ строку
  *     (лишние дубли помечаются DONE) — устраняет «задваивание»;
  *   - отмеченные галочки, для которых PENDING-строки нет, ДОБАВЛЯЮТСЯ —
- *     устраняет «пропажу» потерянных onEdit.
+ *     устраняет «пропажу» потерянных onEdit и «схлопывание» массовой отметки
+ *     в одну позицию.
  *
  * НЕ отменяет существующие намерения: очередь авторитетна (снятие галочки
  * фиксируется точным захватом значением false). Функция только схлопывает
  * дубли и добирает отмеченные, поэтому её безопасно звать многократно.
- * Намерения других полей (Заказано/Ожидаемая/Реальная поставка) не трогаются.
+ * Типизированные поля (Заказано/Ожидаемая) не трогаются.
  *
  * Возвращает число добавленных строк.
  */
@@ -829,11 +875,15 @@ function v12RebuildPendingFromChecked() {
   const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
   const ST = V12_CONFIG.PENDING_STATUS;
   const F = V12_CONFIG.PENDING_FIELD.HANDOFF;
+  const RD = V12_CONFIG.PENDING_FIELD.REAL_DELIVERY;
 
-  // Желаемое множество HANDOFF-намерений по фактически отмеченным галочкам.
+  // Желаемое множество чекбокс-намерений по фактически отмеченным галочкам.
   const desired = {};
   v12CollectCheckedHandoffs().forEach(function (c) {
-    desired[c.source + "|" + c.pid + "|" + F] = c;
+    desired[c.source + "|" + c.pid + "|" + F] = { source: c.source, pid: c.pid, field: F };
+  });
+  v12CollectCheckedRealDeliveries().forEach(function (c) {
+    desired[c.source + "|" + c.pid + "|" + RD] = { source: c.source, pid: c.pid, field: RD };
   });
 
   const data = readSheetValues(sheet);
@@ -878,7 +928,7 @@ function v12RebuildPendingFromChecked() {
     if (!editIdBase) {
       editIdBase = generateEventId();
     }
-    appends.push(v12BuildPendingRow(c.source, c.pid, F, true, actor,
+    appends.push(v12BuildPendingRow(c.source, c.pid, c.field, true, actor,
       editIdBase + "-rb" + (appends.length + 1)));
   });
 
@@ -895,14 +945,16 @@ function v12RebuildPendingFromChecked() {
 }
 
 /**
- * Идемпотентная ПЕРЕСБОРКА очереди HANDOFF по фактическим галочкам — ПОД ЛОКОМ.
+ * Идемпотентная ПЕРЕСБОРКА очереди чекбокс-намерений (HANDOFF + REAL_DELIVERY)
+ * по фактическим галочкам — ПОД ЛОКОМ.
  *
  * Вызывается из захвата правки чекбокса (после фиксации строк события), чтобы
  * лист очереди САМОВОССТАНАВЛИВАЛСЯ: если Google «проглотил» часть событий при
- * массовой отметке, любое следующее доехавшее событие пересобирает множество
- * HANDOFF-намерений по фактическому состоянию галочек — добирает отмеченные без
- * строки и схлопывает дубли. Так PENDING_EDITS отражает ВСЕ отмеченные позиции
- * ещё ДО «Применить», а не только пришедшие события.
+ * массовой отметке (в т.ч. когда выделение нескольких чекбоксов и «пробел»
+ * пришли ОДНИМ событием), любое следующее доехавшее событие пересобирает
+ * множество намерений по фактическому состоянию галочек — добирает отмеченные
+ * без строки и схлопывает дубли. Так PENDING_EDITS отражает ВСЕ отмеченные
+ * позиции ещё ДО «Применить», а не только пришедшие события.
  *
  * Возвращает число добавленных строк или null, если лок занят (пересборка
  * отложена — намерения не теряются, их добьёт следующее событие или Apply).

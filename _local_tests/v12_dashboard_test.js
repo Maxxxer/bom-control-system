@@ -2,7 +2,7 @@
  * ЛОКАЛЬНЫЙ тест дашборда V12 (колонка «Статус» + «На складе»).
  *
  * Проверяет:
- *   D) Схема дашборда: 10 колонок, «На складе» после «Позиций»,
+ *   D) Схема дашборда: 11 колонок, «На складе» после «Позиций»,
  *      «Недостающие материалы» последняя, нет «Прогресс»/«Обновлено»;
  *   E) Цвет статуса BOM по состоянию (BOM_STATUS_COLOR);
  *   F) Текст «Недостающие материалы»: список недостач и отметка «Скомплектовано»;
@@ -159,12 +159,12 @@ function statusOf(data) {
 
 // ---------- D) Схема ----------
 console.log("=== D: схема Dashboard ===");
-check("D1: COLUMN_COUNT.DASHBOARD = 10", C.COLUMN_COUNT.DASHBOARD, 10);
-check("D2: HEADERS.DASHBOARD длина = 10", C.HEADERS.DASHBOARD.length, 10);
-check("D3: последний заголовок = «Недостающие материалы»", C.HEADERS.DASHBOARD[9], "Недостающие материалы");
+check("D1: COLUMN_COUNT.DASHBOARD = 11", C.COLUMN_COUNT.DASHBOARD, 11);
+check("D2: HEADERS.DASHBOARD длина = 11", C.HEADERS.DASHBOARD.length, 11);
+check("D3: последний заголовок = «Недостающие материалы»", C.HEADERS.DASHBOARD[10], "Недостающие материалы");
 check("D4: ON_SHELF = 6", D.ON_SHELF, 6);
 check("D5: заголовок колонки 6 = «На складе»", C.HEADERS.DASHBOARD[5], "На складе");
-check("D6: MISSING_ITEMS = 10", D.MISSING_ITEMS, 10);
+check("D6: MISSING_ITEMS = 11", D.MISSING_ITEMS, 11);
 check("D7: нет ключа PROGRESS", Object.prototype.hasOwnProperty.call(D, "PROGRESS"), false);
 check("D8: нет ключа UPDATED_AT", Object.prototype.hasOwnProperty.call(D, "UPDATED_AT"), false);
 

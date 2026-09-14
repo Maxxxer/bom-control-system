@@ -930,6 +930,7 @@ function v12AggregateBomStates(posData) {
         bomName: r[P.BOM_NAME - 1],
         total: 0, collected: 0, onShelf: 0, notOrdered: 0, partial: 0,
         late: 0, onTime: 0, errors: 0, missing: [],
+        onShelfEntries: [], supplyEntries: [], awaitingSupply: 0,
         minDeadline: null, maxReceivedAt: null
       };
     }
@@ -959,14 +960,18 @@ function v12AggregateBomStates(posData) {
       continue;
     }
     // На складе, ждёт отборки — материал доступен, но ещё не передан в
-    // производство. Такие позиции НЕ считаются недостающими.
+    // производство. Такие позиции НЕ считаются недостающими. Для подсказки
+    // «На складе» собираем количество (требуется) и фактическую дату поставки.
     if (production === PS.READY_FOR_HANDOFF) {
       b.onShelf++;
+      b.onShelfEntries.push(v12BuildShelfEntry(r));
       continue;
     }
     // Позиция ещё в снабжении — исход по той же логике, что и статус строки
     // «Сводки дефицитов» (v12ProcurementOutcome).
     const outcome = v12ProcurementOutcome(r);
+    b.awaitingSupply++;
+    b.supplyEntries.push(v12BuildSupplyEntry(r, outcome));
     if (outcome === O.NOT_ORDERED) {
       b.notOrdered++;
     } else if (outcome === O.PARTIAL) {
@@ -1000,6 +1005,106 @@ function v12BuildMissingEntry(r) {
     code: r[P.MATERIAL_CODE - 1],
     name: r[P.MATERIAL_NAME - 1]
   };
+}
+
+/**
+ * Запись позиции «на складе» для подсказки столбца «На складе».
+ * qty — требуемое количество; model — модель;
+ * expectedDate — фактическая дата поставки (REAL_DELIVERY_DATE).
+ */
+function v12BuildShelfEntry(r) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  return {
+    qty: toNumber(r[P.REQUIRED_QTY - 1]),
+    model: r[P.MODEL - 1],
+    expectedDate: r[P.REAL_DELIVERY_DATE - 1]
+  };
+}
+
+/**
+ * Запись позиции снабжения для подсказки столбца «Ожидается поставка».
+ * qty — дефицит (недостающее количество); model — модель;
+ * expectedDate — ожидаемая дата поставки; outcome — исход снабжения
+ * (V12_PROCUREMENT_OUTCOME), по нему позиция группируется в подсказке.
+ */
+function v12BuildSupplyEntry(r, outcome) {
+  const P = V12_CONFIG.POSITION_COLUMNS;
+  return {
+    qty: toNumber(r[P.DEFICIT_QTY - 1]),
+    model: r[P.MODEL - 1],
+    expectedDate: r[P.EXPECTED_DATE - 1],
+    outcome: outcome
+  };
+}
+
+/**
+ * Порядок и подписи групп подсказки «Ожидается поставка» (только позиции
+ * снабжения). Совпадает с исходами v12ProcurementOutcome.
+ */
+const V12_SUPPLY_ENTRY_GROUPS = [
+  { outcome: "NOT_ORDERED", label: "Не заказано" },
+  { outcome: "PARTIAL", label: "Заказано частично" },
+  { outcome: "ON_TIME", label: "Ожидается поставка (в срок)" },
+  { outcome: "LATE", label: "Ожидается поставка (опаздывает)" }
+];
+
+/**
+ * Компаратор записей по ожидаемой дате ПО УБЫВАНИЮ (самый поздний сверху),
+ * при равных датах — по модели. Записи без распознанной даты — в конце.
+ */
+function v12CompareByExpectedDateDesc(a, b) {
+  const da = v12ToDate(a.expectedDate);
+  const db = v12ToDate(b.expectedDate);
+  const ta = da ? da.getTime() : -Infinity;
+  const tb = db ? db.getTime() : -Infinity;
+  if (ta !== tb) {
+    return tb - ta;
+  }
+  return String(a.model).localeCompare(String(b.model), "ru");
+}
+
+/**
+ * Строка подсказки для одной позиции: «<количество> - <модель> - <дата>»
+ * (пример: «4 - AB-12 - 20.09.2026»). Без распознанной даты — «<количество> - <модель>».
+ */
+function v12FormatItemLine(entry) {
+  const date = v12FormatDateOnly(entry.expectedDate);
+  return date ? (entry.qty + " - " + entry.model + " - " + date) : (entry.qty + " - " + entry.model);
+}
+
+/**
+ * Текст подсказки столбца «На складе»: по строке на позицию
+ * «<требуется> - <модель> - <дата поставки>», сортировка по дате убыв.
+ */
+function v12BuildShelfItemsText(entries) {
+  if (!entries || !entries.length) {
+    return "";
+  }
+  const list = entries.slice();
+  list.sort(v12CompareByExpectedDateDesc);
+  return list.map(v12FormatItemLine).join("\n");
+}
+
+/**
+ * Текст подсказки столбца «Ожидается поставка»: позиции снабжения,
+ * сгруппированные по статусу (Не заказано / Заказано частично /
+ * Ожидается поставка (в срок) / Ожидается поставка (опаздывает)),
+ * внутри группы — строки «<дефицит> - <модель> - <дата>» по дате убыв.
+ */
+function v12BuildSupplyItemsText(entries) {
+  if (!entries || !entries.length) {
+    return "";
+  }
+  const blocks = [];
+  V12_SUPPLY_ENTRY_GROUPS.forEach(function (group) {
+    const items = entries.filter(function (e) { return e.outcome === group.outcome; });
+    if (!items.length) {
+      return;
+    }
+    items.sort(v12CompareByExpectedDateDesc);
+    blocks.push(group.label + ":\n" + items.map(v12FormatItemLine).join("\n"));
+  });
+  return blocks.join("\n");
 }
 
 /**
@@ -1070,6 +1175,8 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   const revDates = revDatesIn || v12BuildRevisionDateMap();
   const rows = [];
   const statusColors = [];
+  const shelfNotes = [];
+  const awaitingNotes = [];
 
   bomIds.forEach(function (bomId) {
     const a = agg[bomId];
@@ -1083,12 +1190,15 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
       status,
       a.total,
       a.onShelf,
+      a.awaitingSupply,
       a.collected,
       v12FormatDateOnly(revDates[bomId]),
       v12FormatDateOnly(a.minDeadline),
       missingText
     ]);
     statusColors.push(v12BomStatusColor(status));
+    shelfNotes.push(v12BuildShelfItemsText(a.onShelfEntries));
+    awaitingNotes.push(v12BuildSupplyItemsText(a.supplyEntries));
   });
 
   v12ClearBody("DASHBOARD");
@@ -1097,7 +1207,7 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   }
   v12InstallDashboardCheckboxes(rows.length);
   v12ApplyDashboardStatusColors(statusColors);
-  v12SetupDashboardNotes(rows);
+  v12SetupDashboardNotes(rows, shelfNotes, awaitingNotes);
 }
 
 /**
@@ -1200,14 +1310,31 @@ function v12ApplyDashboardStatusColors(colors) {
 }
 
 /**
- * Hover-подсказки (ноты) на статус DASHBOARD — «недостающие позиции».
+ * Hover-подсказки (ноты) DASHBOARD.
+ *
+ *   «Статус» и «Недостающие материалы» — список недостающих позиций;
+ *   «На складе» — позиции на складе «<требуется> - <модель> - <дата поставки>»;
+ *   «Ожидается поставка» — позиции снабжения, сгруппированные по статусу
+ *     «<дефицит> - <модель> - <ожидаемая дата поставки>».
+ *
+ * Тексты нот «На складе» и «Ожидается поставка» приходят массивами
+ * (shelfTexts/awaitingTexts), выровненными по rows; пустой текст очищает
+ * подсказку ячейки.
  */
-function v12SetupDashboardNotes(rows) {
+function v12SetupDashboardNotes(rows, shelfTexts, awaitingTexts) {
   const sheet = v12GetSheetByKey("DASHBOARD");
-  const notes = rows.map(function (r) {
-    return [r[V12_CONFIG.DASHBOARD_COLUMNS.MISSING_ITEMS - 1] || ""];
-  });
-  if (notes.length) {
-    sheet.getRange(2, V12_CONFIG.DASHBOARD_COLUMNS.STATUS, notes.length, 1).setNotes(notes);
+  const D = V12_CONFIG.DASHBOARD_COLUMNS;
+  if (!rows || !rows.length) {
+    return;
+  }
+  const statusNotes = rows.map(function (r) { return [r[D.MISSING_ITEMS - 1] || ""]; });
+  sheet.getRange(2, D.STATUS, rows.length, 1).setNotes(statusNotes);
+  if (shelfTexts && shelfTexts.length === rows.length) {
+    sheet.getRange(2, D.ON_SHELF, rows.length, 1)
+      .setNotes(shelfTexts.map(function (t) { return [t || ""]; }));
+  }
+  if (awaitingTexts && awaitingTexts.length === rows.length) {
+    sheet.getRange(2, D.AWAITING_SUPPLY, rows.length, 1)
+      .setNotes(awaitingTexts.map(function (t) { return [t || ""]; }));
   }
 }
