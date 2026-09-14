@@ -103,6 +103,7 @@ function v12BuildDeficitRow(r) {
     r[P.BOM_NAME - 1],
     r[P.BOM_ROW - 1],
     r[P.MATERIAL_CODE - 1],
+    r[P.MANUFACTURER - 1] || "",
     r[P.MATERIAL_NAME - 1],
     r[P.MODEL - 1],
     r[P.UNIT - 1],
@@ -497,14 +498,15 @@ function v12RefreshPicking(posData, revDates) {
         bomName,
         r[P.BOM_ROW - 1],
         r[P.MATERIAL_CODE - 1],
+        r[P.MANUFACTURER - 1] || "",
         r[P.MATERIAL_NAME - 1],
         r[P.MODEL - 1],
         r[P.UNIT - 1],
         r[P.REQUIRED_QTY - 1],
         r[P.AVAILABLE_FOR_PRODUCTION - 1],
         v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-        v12PickingDeliveryDate(r, bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]), // «Дата поставки» (кол. 11)
-        false // CHECKBOX
+        v12PickingDeliveryDate(r, bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]), // «Дата поставки» (кол. 12)
+        false // CHECKBOX (кол. 13)
       ],
       color: v12PickingRowColor(r)
     });
@@ -653,6 +655,7 @@ function v12RefreshWorkingBOM(posData) {
       r[P.BOM_NAME - 1],
       r[P.BOM_ROW - 1],
       r[P.MATERIAL_CODE - 1],
+      r[P.MANUFACTURER - 1] || "",
       r[P.MATERIAL_NAME - 1],
       r[P.MODEL - 1],
       r[P.UNIT - 1],
@@ -662,8 +665,8 @@ function v12RefreshWorkingBOM(posData) {
       r[P.AVAILABLE_FOR_PRODUCTION - 1],
       r[P.RECEIVED_BY_PRODUCTION_QTY - 1],
       v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-      false, // CHECKBOX (кол. 14)
-      new Date() // UPDATED_AT (кол. 15)
+      false, // CHECKBOX (кол. 15)
+      new Date() // UPDATED_AT (кол. 16)
     ]);
   }
 
@@ -712,11 +715,13 @@ function v12RefreshSupply(posData) {
       code: r[P.MATERIAL_CODE - 1],
       name: r[P.MATERIAL_NAME - 1],
       model: r[P.MODEL - 1],
-      unit: r[P.UNIT - 1]
+      unit: r[P.UNIT - 1],
+      manufacturer: r[P.MANUFACTURER - 1]
     });
     if (!agg[key]) {
       agg[key] = {
         code: r[P.MATERIAL_CODE - 1],
+        manufacturer: r[P.MANUFACTURER - 1] || "",
         name: r[P.MATERIAL_NAME - 1],
         model: r[P.MODEL - 1],
         unit: r[P.UNIT - 1],
@@ -734,7 +739,7 @@ function v12RefreshSupply(posData) {
 
   const rows = Object.keys(agg).map(function (key) {
     const a = agg[key];
-    return [key, a.code, a.name, a.model, a.unit,
+    return [key, a.code, a.manufacturer, a.name, a.model, a.unit,
       a.deficit, a.ordered, a.realDelivery,
       v12BuildSupplyProjectsText(a.projects)];
   });
@@ -1003,7 +1008,8 @@ function v12BuildMissingEntry(r) {
     model: r[P.MODEL - 1],
     expectedDate: r[P.EXPECTED_DATE - 1],
     code: r[P.MATERIAL_CODE - 1],
-    name: r[P.MATERIAL_NAME - 1]
+    name: r[P.MATERIAL_NAME - 1],
+    manufacturer: r[P.MANUFACTURER - 1] || ""
   };
 }
 

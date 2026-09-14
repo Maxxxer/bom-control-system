@@ -34,7 +34,8 @@ function v12DetectBOMChanges(bomName, source, existing) {
 
   materials.forEach(function (mat) {
     const materialKey = v12BuildMaterialKey({
-      code: mat.code, name: mat.name, model: mat.model, unit: mat.unit
+      code: mat.code, name: mat.name, model: mat.model, unit: mat.unit,
+      manufacturer: mat.manufacturer
     });
     // Генерируем, учитывая уже занятые в этом проходе
     const positionId = v12GeneratePositionId(bomName, materialKey, seenIds);
@@ -51,7 +52,8 @@ function v12DetectBOMChanges(bomName, source, existing) {
         oldValue: "",
         newValue: JSON.stringify({
           row: mat.row, code: mat.code, name: mat.name, model: mat.model,
-          unit: mat.unit, requiredQty: mat.requiredQty, reservedQty: mat.reservedQty,
+          unit: mat.unit, manufacturer: mat.manufacturer,
+          requiredQty: mat.requiredQty, reservedQty: mat.reservedQty,
           deadline: mat.deadline
         })
       });
@@ -94,6 +96,15 @@ function v12DetectBOMChanges(bomName, source, existing) {
         field: "MODEL",
         oldValue: oldRow[P.MODEL - 1],
         newValue: mat.model
+      });
+    }
+    if (v12Norm(oldRow[P.MANUFACTURER - 1]) !== v12Norm(mat.manufacturer)) {
+      changes.push({
+        type: V12_CONFIG.EVENTS.MATERIAL_CHANGED,
+        positionId: positionId,
+        field: "MANUFACTURER",
+        oldValue: oldRow[P.MANUFACTURER - 1],
+        newValue: mat.manufacturer
       });
     }
     if (v12Norm(oldRow[P.UNIT - 1]) !== v12Norm(mat.unit)) {
@@ -172,6 +183,7 @@ function v12ApplySourceRevision(registry, changeSet, index) {
         name: data.name,
         model: data.model,
         unit: data.unit,
+        manufacturer: data.manufacturer,
         requiredQty: data.requiredQty,
         reservedQty: data.reservedQty,
         deadline: data.deadline
@@ -200,6 +212,7 @@ function v12ApplySourceRevision(registry, changeSet, index) {
       "RESERVED_QTY": "RESERVED_QTY",
       "MATERIAL_NAME": "MATERIAL_NAME",
       "MODEL": "MODEL",
+      "MANUFACTURER": "MANUFACTURER",
       "UNIT": "UNIT",
       "DEADLINE": "DEADLINE"
     };

@@ -89,8 +89,13 @@ function v12ReadSourceBOM(file) {
 }
 
 /**
- * Парсинг строк исходного BOM в канонический вид (ТЗ №8):
- * Строка, Код, Наименование, Модель, Ед.изм, Требуется, Зарезервировано, Срок.
+ * Парсинг строк исходного BOM в канонический вид:
+ * № п/п, Наименование, Модель, Ед.изм, Производитель, Артикул,
+ * Кол-во, Зарезервировано, Крайний срок поставки.
+ *
+ * Алиасы заголовков сохраняют обратную совместимость: старые BOM
+ * («Строка», «Код», «Требуется», «Крайний срок») читаются наравне
+ * с новыми («№ п/п», «Артикул», «Кол-во», «Крайний срок поставки»).
  */
 function v12ParseSourceRows(rows) {
   if (!rows || rows.length < 2) {
@@ -98,14 +103,15 @@ function v12ParseSourceRows(rows) {
   }
   const header = rows[0].map(function (h) { return normalizeMaterialId(h); });
   const idx = {
-    row: v12FindHeader(header, ["Строка", "BOM_ROW", "№"]),
-    code: v12FindHeader(header, ["Код", "Код материала", "CODE"]),
+    row: v12FindHeader(header, ["№ п/п", "№п/п", "Строка", "BOM_ROW", "№"]),
+    code: v12FindHeader(header, ["Артикул", "Код", "Код материала", "CODE"]),
     name: v12FindHeader(header, ["Наименование", "Название", "NAME"]),
     model: v12FindHeader(header, ["Модель", "MODEL"]),
     unit: v12FindHeader(header, ["Ед.изм", "Ед. изм", "UNIT"]),
-    qty: v12FindHeader(header, ["Требуется", "Количество", "REQUIRED", "QTY"]),
+    manufacturer: v12FindHeader(header, ["Производитель", "Производитель (бренд)", "MANUFACTURER", "Произв."]),
+    qty: v12FindHeader(header, ["Кол-во", "Количество", "Требуется", "REQUIRED", "QTY"]),
     reserved: v12FindHeader(header, ["Зарезервировано", "RESERVED"]),
-    deadline: v12FindHeader(header, ["Крайний срок", "Срок", "DEADLINE"])
+    deadline: v12FindHeader(header, ["Крайний срок поставки", "Крайний срок", "Срок", "DEADLINE"])
   };
   if (idx.row === -1 || idx.name === -1) {
     return [];
@@ -123,6 +129,7 @@ function v12ParseSourceRows(rows) {
       name: name,
       model: idx.model !== -1 ? String(r[idx.model] || "").trim() : "",
       unit: idx.unit !== -1 ? String(r[idx.unit] || "").trim() : "",
+      manufacturer: idx.manufacturer !== -1 ? String(r[idx.manufacturer] || "").trim() : "",
       requiredQty: idx.qty !== -1 ? toNumber(r[idx.qty]) : 0,
       reservedQty: idx.reserved !== -1 ? toNumber(r[idx.reserved]) : 0,
       deadline: idx.deadline !== -1 ? r[idx.deadline] : ""

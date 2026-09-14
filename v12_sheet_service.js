@@ -39,6 +39,12 @@ function v12EnsureAllSheets() {
   v12MigratePositionSchema();
   v12MigrateSupplySchema();
   v12MigrateDashboardSchema();
+  // Приводим заголовки ВСЕХ листов к текущему канону (переименования
+  // «Код»→«Артикул», «Строка»→«№ п/п», «Требуется»→«Кол-во» и новые
+  // колонки «Производитель») и сбрасываем «фантомные» чекбоксы там, где
+  // позиция чекбокс-колонки изменилась.
+  v12MigrateCanonicalHeaders();
+  v12ClearPhantomValidations();
   v12FormatSupplySheet();
   v12FormatDeficitSheet();
   v12FormatDashboardSheet();
@@ -260,6 +266,62 @@ function v12MigrateDashboardSchema() {
 }
 
 /**
+ * Миграция заголовков всех листов V12 к текущему канону (V12_CONFIG.HEADERS).
+ *
+ * Для листов-проекций (Сводка дефицитов, ОТБОРКА, WORKING BOM, СНАБЖЕНИЕ)
+ * меняется состав/порядок колонок — тело пересобирается проекцией, поэтому
+ * дополнительно сбрасываем data-validation (см. v12ClearPhantomValidations):
+ * в старых схемах чекбокс стоял в другой колонке и без сброса остался бы
+ * поверх текста.
+ *
+ * Для persistent-листов (POSITION_STATE, MATERIAL_STATE, ARCHIVE) новые
+ * колонки добавлены В КОНЕЦ, поэтому переписывается только строка заголовков —
+ * данные строк не сдвигаются.
+ */
+function v12MigrateCanonicalHeaders() {
+  Object.keys(V12_CONFIG.SHEETS).forEach(function (key) {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS[key]);
+    if (!sheet) {
+      return;
+    }
+    const canonical = V12_CONFIG.HEADERS[key];
+    if (!canonical || !canonical.length) {
+      return;
+    }
+    const lastCol = Math.max(sheet.getLastColumn(), canonical.length);
+    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    let same = true;
+    for (let i = 0; i < canonical.length; i++) {
+      const cell = (header[i] === undefined || header[i] === null) ? "" : String(header[i]);
+      if (cell !== canonical[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      return;
+    }
+    sheet.getRange(1, 1, 1, canonical.length).setValues([canonical]);
+    sheet.getRange(1, 1, 1, canonical.length).setFontWeight("bold");
+  });
+}
+
+/**
+ * Сброс «фантомных» чекбоксов у листов, где позиция чекбокс-колонки
+ * изменилась (Сводка дефицитов 12→13, ОТБОРКА 12→13, WORKING BOM 14→15).
+ * Каждый лист сам переустанавливает свои чекбоксы при ближайшем пересчёте
+ * проекций (v12Install*Checkboxes), фильтр ОТБОРКИ — v12InstallPickingBomFilter.
+ */
+function v12ClearPhantomValidations() {
+  ["DEFICIT_SUMMARY", "PICKING", "WORKING_BOM"].forEach(function (key) {
+    const sheet = getSheetByName(V12_CONFIG.SHEETS[key]);
+    if (sheet && sheet.getMaxRows() > 0) {
+      sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
+    }
+  });
+}
+
+/**
  * Ширина колонки «Проекты» листа СНАБЖЕНИЕ (px) — под многострочный список
  * проектов формата «<дефицит> - <номер> - <крайний срок>».
  */
@@ -338,13 +400,23 @@ function v12FormatDashboardSheet() {
  * Ключ — ключ листа из V12_CONFIG.SHEETS; значение — номера колонок (1-based).
  */
 const V12_ALIGN_CENTER_COLUMNS = {
-  SUPPLY: [5, 6, 7, 8],
-  DEFICIT_SUMMARY: [3, 7, 8, 9, 10, 11, 12, 13, 14],
-  PICKING: [3, 7, 8, 9, 10, 11, 12],
-  WORKING_BOM: [3, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  // SUPPLY: Ед.изм(6), Всего дефицит(7), Всего заказано(8), Всего поставлено(9)
+  SUPPLY: [6, 7, 8, 9],
+  // DEFICIT: № п/п(3), Ед.изм(8), Дефицит(9), Заказано(10), Ожидаемая(11),
+  // Крайний срок(12), Реальная поставка(13), Непокрытая(14), Статус(15)
+  DEFICIT_SUMMARY: [3, 8, 9, 10, 11, 12, 13, 14, 15],
+  // PICKING: № п/п(3), Ед.изм(8), Кол-во(9), Доступно(10), Состояние(11),
+  // Дата поставки(12), Отметка получено(13)
+  PICKING: [3, 8, 9, 10, 11, 12, 13],
+  // WORKING BOM: № п/п(3), Ед.изм(8), Кол-во(9), Зарезервировано(10),
+  // Реальная поставка(11), Доступно(12), Передано(13), ProductionState(14),
+  // Отметка получено(15), Обновлено(16)
+  WORKING_BOM: [3, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   DASHBOARD: [1, 4, 5, 6, 7, 8, 9],
   MATERIAL_STATE: [5, 6, 7, 8, 9],
-  ARCHIVE: [1, 4, 8, 9, 10, 12]
+  // ARCHIVE: Дата(1), № п/п(4), Ед.изм(9), Передано(10), Дата передачи(11),
+  // Источник(13)
+  ARCHIVE: [1, 4, 9, 10, 11, 13]
 };
 
 /**

@@ -12,18 +12,32 @@
  */
 
 /**
- * Построить materialKey по ТЗ №68–71 (К5):
- *   если есть code -> code; иначе name|model|unit.
+ * Построить materialKey по ТЗ №68–71 (К5).
+ *
+ * Ключ материала = «артикул + производитель»: если заполнен артикул (code),
+ * ключ = `code|manufacturer` (это разделяет одинаковые артикулы разных
+ * производителей). Если артикул пуст — fallback `name|model|manufacturer|unit`
+ * (производитель включён в fallback, чтобы не склеивать разные бренды).
  */
 function v12BuildMaterialKey(parts) {
   const code = String((parts && parts.code) || "").trim();
+  const manufacturer = String((parts && parts.manufacturer) || "").trim();
   if (code) {
-    return code;
+    // Артикул + производитель. Если производитель не заполнен — ключ остаётся
+    // артикулом (обратная совместимость с ключами до появления производителя).
+    return manufacturer ? (code + "|" + manufacturer) : code;
   }
   const name = String((parts && parts.name) || "").trim();
   const model = String((parts && parts.model) || "").trim();
   const unit = String((parts && parts.unit) || "").trim();
-  return [name, model, unit].join("|");
+  // Fallback: имя|модель[|производитель]|ед.изм. Производитель добавляется
+  // только если заполнен — иначе ключ совпадает с дореформенным.
+  const segments = [name, model];
+  if (manufacturer) {
+    segments.push(manufacturer);
+  }
+  segments.push(unit);
+  return segments.join("|");
 }
 
 /**

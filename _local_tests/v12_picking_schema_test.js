@@ -139,14 +139,15 @@ const LEGACY_13 = ["Position ID", "BOM", "Строка", "Код", "Наимен
   "Ожидаемая поставка", "Отметка получено", "Обновлено"];
 
 console.log("=== C1: конфиг колонок ОТБОРКИ ===");
-check("COLUMN_COUNT.PICKING = 12", C.COLUMN_COUNT.PICKING, 12);
-check("HEADERS.PICKING.length = 12", CANON.length, 12);
-check("PICKING_COLUMNS.EXPECTED_DATE = 11", C.PICKING_COLUMNS.EXPECTED_DATE, 11);
-check("PICKING_COLUMNS.CHECKBOX = 12", C.PICKING_COLUMNS.CHECKBOX, 12);
+check("COLUMN_COUNT.PICKING = 13", C.COLUMN_COUNT.PICKING, 13);
+check("HEADERS.PICKING.length = 13", CANON.length, 13);
+check("PICKING_COLUMNS.EXPECTED_DATE = 12", C.PICKING_COLUMNS.EXPECTED_DATE, 12);
+check("PICKING_COLUMNS.CHECKBOX = 13", C.PICKING_COLUMNS.CHECKBOX, 13);
+check("PICKING_COLUMNS.MANUFACTURER = 5", C.PICKING_COLUMNS.MANUFACTURER, 5);
 check("PICKING_COLUMNS.UPDATED_AT отсутствует", C.PICKING_COLUMNS.UPDATED_AT, undefined);
-check("HEADERS.PICKING[9] = «Состояние поставки»", CANON[9], "Состояние поставки");
-check("HEADERS.PICKING[10] = «Дата поставки»", CANON[10], "Дата поставки");
-check("HEADERS.PICKING[11] = «Отметка получено»", CANON[11], "Отметка получено");
+check("HEADERS.PICKING[10] = «Состояние поставки»", CANON[10], "Состояние поставки");
+check("HEADERS.PICKING[11] = «Дата поставки»", CANON[11], "Дата поставки");
+check("HEADERS.PICKING[12] = «Отметка получено»", CANON[12], "Отметка получено");
 check("HEADERS.PICKING без «ProductionState»", CANON.indexOf("ProductionState"), -1);
 check("HEADERS.PICKING без «Ожидаемая поставка»", CANON.indexOf("Ожидаемая поставка"), -1);
 check("HEADERS.PICKING без «Обновлено»", CANON.indexOf("Обновлено"), -1);
@@ -159,10 +160,12 @@ check("Legacy-13 = 13 колонок (setup sanity)", LEGACY_13.length, 13);
 
 // КОНФИГ POSITION_STATE: добавлена колонка «Дата поставки» (REAL_DELIVERY_DATE).
 console.log("=== C1b: конфиг POSITION_STATE (REAL_DELIVERY_DATE) ===");
-check("COLUMN_COUNT.POSITION_STATE = 31", C.COLUMN_COUNT.POSITION_STATE, 31);
+check("COLUMN_COUNT.POSITION_STATE = 32", C.COLUMN_COUNT.POSITION_STATE, 32);
 check("POSITION_COLUMNS.REAL_DELIVERY_DATE = 31", C.POSITION_COLUMNS.REAL_DELIVERY_DATE, 31);
-check("HEADERS.POSITION_STATE.length = 31", C.HEADERS.POSITION_STATE.length, 31);
+check("POSITION_COLUMNS.MANUFACTURER = 32", C.POSITION_COLUMNS.MANUFACTURER, 32);
+check("HEADERS.POSITION_STATE.length = 32", C.HEADERS.POSITION_STATE.length, 32);
 check("HEADERS.POSITION_STATE[30] = «Дата поставки»", C.HEADERS.POSITION_STATE[30], "Дата поставки");
+check("HEADERS.POSITION_STATE[31] = «Производитель»", C.HEADERS.POSITION_STATE[31], "Производитель");
 
 // Остальные листы пустые (по заголовку), чтобы refresh не падал.
 ["POSITION_STATE", "DEFICIT_SUMMARY", "MATERIAL_STATE", "SUPPLY", "DASHBOARD", "BOM_REVISION", "EXCLUDED_BOMS", "AUDIT_LOG", "ARCHIVE", "MATERIAL_HISTORY", "WORKING_BOM"]
@@ -183,46 +186,46 @@ console.log("=== C2: миграция схемы 15 -> 12 ===");
   N.v12MigratePickingSchema();
 
   const header = PK._data[0];
-  check("заголовок = 12 колонок", header.length, 12);
+  check("заголовок = 13 колонок", header.length, 13);
   check("«Зарезервировано» удалён", header.indexOf("Зарезервировано"), -1);
   check("«Передано (кол-во)» удалён", header.indexOf("Передано (кол-во)"), -1);
   check("«Складской остаток» удалён", header.indexOf("Складской остаток"), -1);
   check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
-  check("кол. 12 = «Отметка получено»", header[11], "Отметка получено");
-  check("кол. 11 = «Дата поставки»", header[10], "Дата поставки");
+  check("кол. 13 = «Отметка получено»", header[12], "Отметка получено");
+  check("кол. 12 = «Дата поставки»", header[11], "Дата поставки");
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
-  check("физически последняя колонка = 12", PK.getLastColumn(), 12);
+  check("физически последняя колонка = 13", PK.getLastColumn(), 13);
 }
 
-console.log("=== C3: миграция схемы 14 -> 12 ===");
+console.log("=== C3: миграция схемы 14 -> 13 ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, LEGACY_14);
   N.v12MigratePickingSchema();
   const header = PK._data[0];
-  check("заголовок = 12 колонок", header.length, 12);
+  check("заголовок = 13 колонок", header.length, 13);
   check("«Зарезервировано» удалён", header.indexOf("Зарезервировано"), -1);
   check("«Складской остаток» удалён", header.indexOf("Складской остаток"), -1);
   check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
 }
 
-console.log("=== C3b: миграция схемы 13 -> 12 (канон прошлой версии) ===");
+console.log("=== C3b: миграция схемы 13 -> 13 (канон прошлой версии) ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, LEGACY_13);
   N.v12MigratePickingSchema();
   const header = PK._data[0];
-  check("заголовок = 12 колонок", header.length, 12);
+  check("заголовок = 13 колонок", header.length, 13);
   check("«Ожидаемая поставка» заменена на «Дата поставки»", header.indexOf("Ожидаемая поставка"), -1);
   check("«ProductionState» заменён на «Состояние поставки»", header.indexOf("ProductionState"), -1);
   check("«Обновлено» удалён", header.indexOf("Обновлено"), -1);
   check("заголовок совпал с каноном", JSON.stringify(header), JSON.stringify(CANON));
 }
 
-console.log("=== C4: миграция идемпотентна (12 -> 12, no-op) ===");
+console.log("=== C4: миграция идемпотентна (13 -> 13, no-op) ===");
 {
   const PK = makeSheet(C.SHEETS.PICKING, CANON);
   N.v12MigratePickingSchema();
-  check("заголовок не изменился (12 колонок)", PK._data[0].length, 12);
+  check("заголовок не изменился (13 колонок)", PK._data[0].length, 13);
   check("заголовок совпал с каноном", JSON.stringify(PK._data[0]), JSON.stringify(CANON));
 }
 
@@ -242,11 +245,11 @@ console.log("=== C5: проекция v12RefreshPicking пишет 12 колон
   const K = C.PICKING_COLUMNS;
   check("в ОТБОРКЕ 1 строка данных", PK._data.length, 2);
   const row = PK._data[1];
-  check("тело строки = 12 колонок", row.length, 12);
+  check("тело строки = 13 колонок", row.length, 13);
   check("кол. 1 = Position ID", row[K.POSITION_ID - 1], "BOM1:C1");
-  check("кол. 10 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
-  check("кол. 11 = «05.09.2026» (ожидаемая, факт. нет)", row[K.EXPECTED_DATE - 1], "05.09.2026");
-  check("кол. 12 = чекбокс false", row[K.CHECKBOX - 1], false);
+  check("кол. 11 = «На складе»", row[K.PRODUCTION_STATE - 1], "На складе");
+  check("кол. 12 = «05.09.2026» (ожидаемая, факт. нет)", row[K.EXPECTED_DATE - 1], "05.09.2026");
+  check("кол. 13 = чекбокс false", row[K.CHECKBOX - 1], false);
 }
 
 console.log("=== C5b: у товара на складе «Дата поставки» = дата реальной поставки ===");

@@ -59,14 +59,14 @@ const V12_CONFIG = {
    */
   COLUMN_COUNT: {
     BOM_REGISTRY: 12,
-    POSITION_STATE: 31,
-    MATERIAL_STATE: 9,
-    DEFICIT_SUMMARY: 14,
-    PICKING: 12,
-    WORKING_BOM: 15,
-    SUPPLY: 9,
+    POSITION_STATE: 32,
+    MATERIAL_STATE: 10,
+    DEFICIT_SUMMARY: 15,
+    PICKING: 13,
+    WORKING_BOM: 16,
+    SUPPLY: 10,
     DASHBOARD: 11,
-    ARCHIVE: 13,
+    ARCHIVE: 14,
     AUDIT_LOG: 11,
     EVENT_LOG: 7,
     SYSTEM_LOG: 5,
@@ -96,10 +96,12 @@ const V12_CONFIG = {
   },
 
   /**
-   * POSITION_STATE (31)
+   * POSITION_STATE (32)
    * Центральное операционное состояние позиции.
    * Колонка REAL_DELIVERY_DATE (31) — дата, которой позиция была отмечена
    * как реальная поставка (используется в ОТБОРКЕ для материала на складе).
+   * Колонка MANUFACTURER (32) — производитель материала (из BOM), добавлена
+   * в конец, чтобы не сдвигать существующие индексы 1..31.
    */
   POSITION_COLUMNS: {
     POSITION_ID: 1,
@@ -132,11 +134,14 @@ const V12_CONFIG = {
     AVAILABLE_FOR_PRODUCTION: 28,
     FLAGS: 29,
     UPDATED_AT: 30,
-    REAL_DELIVERY_DATE: 31
+    REAL_DELIVERY_DATE: 31,
+    MANUFACTURER: 32
   },
 
   /**
-   * MATERIAL_STATE (9) — физический склад, НЕ источник потребности.
+   * MATERIAL_STATE (10) — физический склад, НЕ источник потребности.
+   * Колонка MANUFACTURER (10) — производитель материала (из BOM), добавлена
+   * в конец, чтобы не сдвигать существующие индексы 1..9.
    */
   MATERIAL_COLUMNS: {
     MATERIAL_KEY: 1,
@@ -147,29 +152,32 @@ const V12_CONFIG = {
     WAREHOUSE_QTY: 6,
     RESERVED_QTY: 7,
     FREE_QTY: 8,
-    UPDATED_AT: 9
+    UPDATED_AT: 9,
+    MANUFACTURER: 10
   },
 
   /**
-   * DEFICIT_SUMMARY (14) — проекция для снабжения (заказ, даты, поставка).
+   * DEFICIT_SUMMARY (15) — проекция для снабжения (заказ, даты, поставка).
    * Только позиции, материал которых ещё не приехал (availableForProduction < required).
    * Дефицит (кол. DEFICIT_QTY) = max(0, required − reserved).
+   * Колонка MANUFACTURER (5) — производитель (из BOM), сразу после «Артикул».
    */
   DEFICIT_COLUMNS: {
     POSITION_ID: 1,
     BOM_NAME: 2,
     BOM_ROW: 3,
     MATERIAL_CODE: 4,
-    MATERIAL_NAME: 5,
-    MODEL: 6,
-    UNIT: 7,
-    DEFICIT_QTY: 8,
-    ORDERED_QTY: 9,
-    EXPECTED_DATE: 10,
-    DEADLINE: 11,
-    REAL_DELIVERY: 12,
-    UNCOVERED_NEED: 13,
-    STATUS: 14
+    MANUFACTURER: 5,
+    MATERIAL_NAME: 6,
+    MODEL: 7,
+    UNIT: 8,
+    DEFICIT_QTY: 9,
+    ORDERED_QTY: 10,
+    EXPECTED_DATE: 11,
+    DEADLINE: 12,
+    REAL_DELIVERY: 13,
+    UNCOVERED_NEED: 14,
+    STATUS: 15
   },
 
   /**
@@ -183,14 +191,15 @@ const V12_CONFIG = {
     BOM_NAME: 2,
     BOM_ROW: 3,
     MATERIAL_CODE: 4,
-    MATERIAL_NAME: 5,
-    MODEL: 6,
-    UNIT: 7,
-    REQUIRED_QTY: 8,
-    AVAILABLE_FOR_PRODUCTION: 9,
-    PRODUCTION_STATE: 10,
-    EXPECTED_DATE: 11,
-    CHECKBOX: 12
+    MANUFACTURER: 5,
+    MATERIAL_NAME: 6,
+    MODEL: 7,
+    UNIT: 8,
+    REQUIRED_QTY: 9,
+    AVAILABLE_FOR_PRODUCTION: 10,
+    PRODUCTION_STATE: 11,
+    EXPECTED_DATE: 12,
+    CHECKBOX: 13
   },
 
   /**
@@ -202,17 +211,18 @@ const V12_CONFIG = {
     BOM_NAME: 2,
     BOM_ROW: 3,
     MATERIAL_CODE: 4,
-    MATERIAL_NAME: 5,
-    MODEL: 6,
-    UNIT: 7,
-    REQUIRED_QTY: 8,
-    RESERVED_QTY: 9,
-    REAL_DELIVERY_QTY: 10,
-    AVAILABLE_FOR_PRODUCTION: 11,
-    RECEIVED_BY_PRODUCTION_QTY: 12,
-    PRODUCTION_STATE: 13,
-    CHECKBOX: 14,
-    UPDATED_AT: 15
+    MANUFACTURER: 5,
+    MATERIAL_NAME: 6,
+    MODEL: 7,
+    UNIT: 8,
+    REQUIRED_QTY: 9,
+    RESERVED_QTY: 10,
+    REAL_DELIVERY_QTY: 11,
+    AVAILABLE_FOR_PRODUCTION: 12,
+    RECEIVED_BY_PRODUCTION_QTY: 13,
+    PRODUCTION_STATE: 14,
+    CHECKBOX: 15,
+    UPDATED_AT: 16
   },
 
   /**
@@ -226,13 +236,14 @@ const V12_CONFIG = {
   SUPPLY_COLUMNS: {
     MATERIAL_KEY: 1,
     MATERIAL_CODE: 2,
-    MATERIAL_NAME: 3,
-    MODEL: 4,
-    UNIT: 5,
-    TOTAL_DEFICIT: 6,
-    TOTAL_ORDERED: 7,
-    TOTAL_REAL_DELIVERY: 8,
-    PROJECTS: 9
+    MANUFACTURER: 3,
+    MATERIAL_NAME: 4,
+    MODEL: 5,
+    UNIT: 6,
+    TOTAL_DEFICIT: 7,
+    TOTAL_ORDERED: 8,
+    TOTAL_REAL_DELIVERY: 9,
+    PROJECTS: 10
   },
 
   /**
@@ -274,7 +285,8 @@ const V12_CONFIG = {
     RECEIVED_BY_PRODUCTION_AT: 10,
     RECEIVED_BY_PRODUCTION_USER: 11,
     SOURCE_UI: 12,
-    HISTORY: 13
+    HISTORY: 13,
+    MANUFACTURER: 14
   },
 
   /**
@@ -407,35 +419,38 @@ const V12_CONFIG = {
       "Последняя синхронизация", "Dirty", "Обновлено"
     ],
     POSITION_STATE: [
-      "Position ID", "BOM ID", "Ревизия", "BOM", "Строка", "Код", "Наименование",
-      "Модель", "Ед.изм", "Требуется", "Зарезервировано", "Заказано", "Поставлено",
-      "Ожидаемая поставка", "Крайний срок", "Передано производству (кол-во)",
+      "Position ID", "BOM ID", "Ревизия", "BOM", "№ п/п", "Артикул", "Наименование",
+      "Модель", "Ед.изм", "Кол-во", "Зарезервировано", "Заказано", "Реальная поставка",
+      "Ожидаемая поставка", "Крайний срок поставки", "Передано производству (кол-во)",
       "Передано производству", "Дата передачи", "Кто передал", "Валидация",
       "Жизненный цикл", "SupplyState", "ProductionState", "Дефицит",
       "Непокрытая потребность", "Перезаказ", "Недопоставка",
-      "Доступно для производства", "Флаги", "Обновлено", "Дата поставки"
+      "Доступно для производства", "Флаги", "Обновлено", "Дата поставки",
+      "Производитель"
     ],
     MATERIAL_STATE: [
-      "Material Key", "Код", "Наименование", "Модель", "Ед.изм",
-      "Складской остаток", "Зарезервировано (контроль)", "Свободно", "Обновлено"
+      "Material Key", "Артикул", "Наименование", "Модель", "Ед.изм",
+      "Складской остаток", "Зарезервировано (контроль)", "Свободно", "Обновлено",
+      "Производитель"
     ],
     DEFICIT_SUMMARY: [
-      "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
-      "Дефицит", "Заказано", "Ожидаемая поставка", "Крайний срок", "Реальная поставка",
-      "Непокрытая потребность", "Статус"
+      "Position ID", "BOM", "№ п/п", "Артикул", "Производитель", "Наименование",
+      "Модель", "Ед.изм", "Дефицит", "Заказано", "Ожидаемая поставка",
+      "Крайний срок поставки", "Реальная поставка", "Непокрытая потребность", "Статус"
     ],
     PICKING: [
-      "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
-      "Требуется", "Доступно для производства", "Состояние поставки",
+      "Position ID", "BOM", "№ п/п", "Артикул", "Производитель", "Наименование",
+      "Модель", "Ед.изм", "Кол-во", "Доступно для производства", "Состояние поставки",
       "Дата поставки", "Отметка получено"
     ],
     WORKING_BOM: [
-      "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель", "Ед.изм",
-      "Требуется", "Зарезервировано", "Поставлено", "Доступно для производства",
-      "Передано производству", "ProductionState", "Отметка получено", "Обновлено"
+      "Position ID", "BOM", "№ п/п", "Артикул", "Производитель", "Наименование",
+      "Модель", "Ед.изм", "Кол-во", "Зарезервировано", "Реальная поставка",
+      "Доступно для производства", "Передано производству", "ProductionState",
+      "Отметка получено", "Обновлено"
     ],
     SUPPLY: [
-      "Material Key", "Код", "Наименование", "Модель", "Ед.изм",
+      "Material Key", "Артикул", "Производитель", "Наименование", "Модель", "Ед.изм",
       "Всего дефицит", "Всего заказано", "Всего поставлено",
       "Проекты"
     ],
@@ -445,9 +460,9 @@ const V12_CONFIG = {
       "Недостающие материалы"
     ],
     ARCHIVE: [
-      "Дата", "Position ID", "BOM", "Строка", "Код", "Наименование", "Модель",
+      "Дата", "Position ID", "BOM", "№ п/п", "Артикул", "Наименование", "Модель",
       "Ед.изм", "Передано (кол-во)", "Дата передачи", "Кто передал",
-      "Источник (UI)", "История"
+      "Источник (UI)", "История", "Производитель"
     ],
     AUDIT_LOG: [
       "Дата", "Operation ID", "Пользователь", "Действие", "BOM ID",

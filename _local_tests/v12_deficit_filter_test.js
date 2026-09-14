@@ -148,10 +148,11 @@ function setPositions(list) {
 }
 
 console.log("=== F1: сортируемые столбцы входят в диапазон фильтра ===");
-check("DEFICIT_COLUMNS.MATERIAL_NAME = 5 (Наименование)", D.MATERIAL_NAME, 5);
-check("DEFICIT_COLUMNS.MODEL = 6 (Модель)", D.MODEL, 6);
-check("DEFICIT_COLUMNS.EXPECTED_DATE = 10 (Ожидаемая поставка)", D.EXPECTED_DATE, 10);
-check("DEFICIT_COLUMNS.DEADLINE = 11 (Крайний срок)", D.DEADLINE, 11);
+check("DEFICIT_COLUMNS.MATERIAL_NAME = 6 (Наименование)", D.MATERIAL_NAME, 6);
+check("DEFICIT_COLUMNS.MODEL = 7 (Модель)", D.MODEL, 7);
+check("DEFICIT_COLUMNS.MANUFACTURER = 5 (Производитель)", D.MANUFACTURER, 5);
+check("DEFICIT_COLUMNS.EXPECTED_DATE = 11 (Ожидаемая поставка)", D.EXPECTED_DATE, 11);
+check("DEFICIT_COLUMNS.DEADLINE = 12 (Крайний срок поставки)", D.DEADLINE, 12);
 check("ширина таблицы (COLUMN_COUNT.DEFICIT_SUMMARY) покрывает все 4 столбца",
   C.COLUMN_COUNT.DEFICIT_SUMMARY >= D.DEADLINE, true);
 

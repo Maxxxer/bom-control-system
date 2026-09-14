@@ -58,6 +58,7 @@ function v12BuildPositionRow(bomId, sourceMaterial, positionId, sourceRevision, 
   row[P.MATERIAL_NAME - 1] = sourceMaterial.name || "";
   row[P.MODEL - 1] = sourceMaterial.model || "";
   row[P.UNIT - 1] = sourceMaterial.unit || "";
+  row[P.MANUFACTURER - 1] = sourceMaterial.manufacturer || "";
   row[P.REQUIRED_QTY - 1] = toNumber(sourceMaterial.requiredQty);
   row[P.RESERVED_QTY - 1] = toNumber(sourceMaterial.reservedQty);
   row[P.ORDERED_QTY - 1] = ordered;

@@ -68,7 +68,8 @@ function v12MarkReceivedByProduction(positionId, sourceUI, skipRefresh, ctx) {
       code: row[P.MATERIAL_CODE - 1],
       name: row[P.MATERIAL_NAME - 1],
       model: row[P.MODEL - 1],
-      unit: row[P.UNIT - 1]
+      unit: row[P.UNIT - 1],
+      manufacturer: row[P.MANUFACTURER - 1]
     });
 
     const receivedAt = new Date();
@@ -189,7 +190,8 @@ function v12ArchivePosition(positionId, sourceUI, index, ctx) {
     row[P.RECEIVED_BY_PRODUCTION_AT - 1],
     row[P.RECEIVED_BY_PRODUCTION_USER - 1],
     sourceUI || "",
-    JSON.stringify(history)
+    JSON.stringify(history),
+    row[P.MANUFACTURER - 1] || ""
   ];
 
   if (ctx) {
@@ -233,7 +235,8 @@ function v12ReturnFromArchive(positionId, reason) {
       code: row[P.MATERIAL_CODE - 1],
       name: row[P.MATERIAL_NAME - 1],
       model: row[P.MODEL - 1],
-      unit: row[P.UNIT - 1]
+      unit: row[P.UNIT - 1],
+      manufacturer: row[P.MANUFACTURER - 1]
     });
     const bomId = row[P.BOM_ID - 1];
 

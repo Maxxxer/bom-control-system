@@ -212,7 +212,8 @@ function v12SetRealDeliveryQty(positionId, qty, index, ctx) {
     code: row[P.MATERIAL_CODE - 1],
     name: row[P.MATERIAL_NAME - 1],
     model: row[P.MODEL - 1],
-    unit: row[P.UNIT - 1]
+    unit: row[P.UNIT - 1],
+    manufacturer: row[P.MANUFACTURER - 1]
   });
   const delta = newQty - oldQty;
 

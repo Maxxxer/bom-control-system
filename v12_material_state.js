@@ -29,10 +29,15 @@ function v12AggregateReservations(positionData) {
       code: rows[i][P.MATERIAL_CODE - 1],
       name: rows[i][P.MATERIAL_NAME - 1],
       model: rows[i][P.MODEL - 1],
-      unit: rows[i][P.UNIT - 1]
+      unit: rows[i][P.UNIT - 1],
+      manufacturer: rows[i][P.MANUFACTURER - 1]
     });
     if (!agg[key]) {
-      agg[key] = { reservedQty: 0, requiredQty: 0 };
+      agg[key] = {
+        reservedQty: 0, requiredQty: 0,
+        code: rows[i][P.MATERIAL_CODE - 1],
+        manufacturer: rows[i][P.MANUFACTURER - 1] || ""
+      };
     }
     agg[key].reservedQty += toNumber(rows[i][P.RESERVED_QTY - 1]);
     agg[key].requiredQty += toNumber(rows[i][P.REQUIRED_QTY - 1]);
@@ -75,6 +80,8 @@ function v12RecalculateWarehouseConsistency() {
       const sheet = v12GetSheetByKey("MATERIAL_STATE");
       const row = new Array(V12_CONFIG.COLUMN_COUNT.MATERIAL_STATE).fill("");
       row[M.MATERIAL_KEY - 1] = key;
+      row[M.MATERIAL_CODE - 1] = agg[key].code || "";
+      row[M.MANUFACTURER - 1] = agg[key].manufacturer || "";
       row[M.RESERVED_QTY - 1] = reserved;
       row[M.FREE_QTY - 1] = 0;
       row[M.UPDATED_AT - 1] = new Date();
