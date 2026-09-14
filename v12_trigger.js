@@ -225,6 +225,7 @@ function v12HandleMaterialStateEdit(e) {
 
 /**
  * Dashboard: только чекбокс «Выполнено», и только при «Готов к производству».
+ * Отмечать его вправе только PRODUCTION и ADMIN (право DASHBOARD_CHECKBOX).
  */
 function v12HandleDashboardEdit(e) {
   const D = V12_CONFIG.DASHBOARD_COLUMNS;
@@ -233,6 +234,16 @@ function v12HandleDashboardEdit(e) {
   if (e.range.getColumn() !== D.DONE || e.range.getRow() <= 1) {
     v12RevertEdit(e);
     logSystem("v12OnEdit", "В дашборде разрешён только чекбокс «Выполнено»", "WARNING");
+    return;
+  }
+  // RBAC: чекбокс «Выполнено» отмечает производство (PRODUCTION) и админ.
+  // onEdit исполняется от имени редактора, поэтому роль берётся для живого
+  // пользователя (без actor-override).
+  const role = v12GetCurrentUserRole();
+  if (!v12CanEditField(role, "DASHBOARD_CHECKBOX")) {
+    v12RevertEdit(e);
+    logSystem("v12HandleDashboardEdit",
+      "Нет права на изменение чекбокса «Выполнено» для роли '" + role + "' (" + getCurrentUser() + ")", "WARNING");
     return;
   }
   const bomId = sheet.getRange(row, D.BOM_ID).getValue();
