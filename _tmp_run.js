@@ -14,7 +14,8 @@ const tests = [
   "_local_tests/v12_queue_capture_fix_test.js",
   "_local_tests/v12_row_color_reset_test.js",
   "_local_tests/v12_deficit_checkbox_capture_test.js",
-  "_local_tests/v12_roles_test.js"
+  "_local_tests/v12_roles_test.js",
+  "_local_tests/v12_dashboard_checkbox_test.js"
 ];
 const files = [
   "v12_config.js", "utils.js", "sheet_service.js", "v12_utils.js", "v12_calculate.js",
@@ -31,12 +32,16 @@ for (const f of files) {
 }
 report += "node --check: файлов=" + files.length + " ошибок=" + syntaxBad + "\n";
 for (const t of tests) {
-  const r = spawnSync(process.execPath, [t], { encoding: "utf8" });
+  // Жёсткий таймаут: зависший тест НЕ должен блокировать весь набор —
+  // он будет убит и помечен TIMEOUT (иначе прогон виснет навсегда).
+  const r = spawnSync(process.execPath, [t], { encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
   const stdout = r.stdout || "";
   const lines = stdout.split("\n");
   const fails = lines.filter(function (l) { return l.indexOf("FAIL") === 0; });
   const last = lines.filter(Boolean).pop() || "";
-  report += t + " exit=" + r.status + " fails=" + fails.length + " last=" + last + "\n";
+  const timedOut = !!(r.error && String(r.error.code) === "ETIMEDOUT") || r.signal === "SIGKILL";
+  report += t + " exit=" + r.status + (timedOut ? " TIMEOUT" : "") +
+    " fails=" + fails.length + " last=" + last + "\n";
   fails.forEach(function (f) { report += "  " + f + "\n"; });
   if (r.stderr && r.stderr.trim()) { report += "  STDERR: " + r.stderr.trim().split("\n").slice(0, 3).join(" | ") + "\n"; }
 }

@@ -133,6 +133,11 @@ N.V12_UI.BUTTON_SHEETS.forEach(function (key) { sheets[C.SHEETS[key]] = makeShee
 const DEFICIT = C.SHEETS.DEFICIT_SUMMARY;
 const PICKING = C.SHEETS.PICKING;
 const WORKING = C.SHEETS.WORKING_BOM;
+const DASHBOARD = C.SHEETS.DASHBOARD;
+// Число/список листов с кнопкой берём из конфигурации: Dashboard добавлен в
+// список (чекбокс «Выполнено» применяется этой же кнопкой).
+const BUTTON_COUNT = N.V12_UI.BUTTON_SHEETS.length;
+const BUTTON_SHEET_NAMES = N.V12_UI.BUTTON_SHEETS.map(function (key) { return C.SHEETS[key]; });
 
 // ---------- A) картинка-кнопка ----------
 console.log("=== A: PNG кнопки из base64 ===");
@@ -179,10 +184,10 @@ state.columnWidths.length = 0;
 logEntries.length = 0;
 const installResult = N.v12InstallApplyButton();
 
-check("C1: установлено на 3 листа", installResult.installed.length, 3);
+check("C1: установлено на каждый рабочий лист", installResult.installed.length, BUTTON_COUNT);
 check("C2: непривязанных нет", installResult.unbound.length, 0);
-check("C3: картинок ровно 3", state.images.length, 3);
-check("C4: колонка A расширена на 3 листах", state.columnWidths.length, 3);
+check("C3: картинок столько же, сколько листов", state.images.length, BUTTON_COUNT);
+check("C4: колонка A расширена на каждом листе", state.columnWidths.length, BUTTON_COUNT);
 check("C5: ширина колонки", state.columnWidths[0].width, N.V12_UI.BUTTON_COLUMN_WIDTH);
 check("C6: колонка A", state.columnWidths[0].col, 1);
 
@@ -194,8 +199,10 @@ check("C10: назначен скрипт v12ApplyChangesUI", onDeficit.getScrip
 check("C11: ширина картинки", onDeficit.width, N.V12_UI.BUTTON_WIDTH);
 check("C12: высота картинки", onDeficit.height, N.V12_UI.BUTTON_HEIGHT);
 check("C13: alt-подпись", onDeficit.altDesc, N.V12_UI.BUTTON_ALT);
-check("C14: кнопки на всех трёх листах", state.images.map(function (i) { return i.sheet; }).sort().join("|"),
-  [DEFICIT, PICKING, WORKING].sort().join("|"));
+check("C14: кнопки на всех рабочих листах (включая Dashboard)",
+  state.images.map(function (i) { return i.sheet; }).sort().join("|"),
+  BUTTON_SHEET_NAMES.slice().sort().join("|"));
+check("C14b: Dashboard в списке листов с кнопкой", BUTTON_SHEET_NAMES.indexOf(DASHBOARD) >= 0, true);
 check("C15: лог об установке", logEntries.length >= 1 && logEntries[0].level, "INFO");
 
 // ---------- D) идемпотентность ----------
@@ -204,8 +211,8 @@ const secondInstall = N.v12InstallApplyButton();
 check("D1: после повтора на каждом листе одна кнопка",
   sheets[DEFICIT].getImages().length + ":" + sheets[PICKING].getImages().length + ":" + sheets[WORKING].getImages().length,
   "1:1:1");
-check("D2: повтор тоже отчитался об установке", secondInstall.installed.length, 3);
-check("D3: старые кнопки удалены (3 удаления)", state.images.filter(function (i) { return i.removed; }).length, 3);
+check("D2: повтор тоже отчитался об установке", secondInstall.installed.length, BUTTON_COUNT);
+check("D3: старые кнопки удалены", state.images.filter(function (i) { return i.removed; }).length, BUTTON_COUNT);
 
 // ---------- E) привязка скрипта не подтвердилась ----------
 console.log("=== E: unbound, если скрипт не назначился ===");
@@ -214,7 +221,7 @@ state.images.length = 0;
 state.columnWidths.length = 0;
 logEntries.length = 0;
 const unboundResult = N.v12InstallApplyButton();
-check("E1: все листы в unbound", unboundResult.unbound.length, 3);
+check("E1: все листы в unbound", unboundResult.unbound.length, BUTTON_COUNT);
 check("E2: installed пуст", unboundResult.installed.length, 0);
 check("E3: WARNING в логе", logEntries.length ? logEntries[0].level : "", "WARNING");
 state.assignSticks = true;
@@ -234,7 +241,7 @@ check("F4: чужая картинка на месте", foreignSheet.getImages(
 
 state.images.length = 0;
 N.v12InstallApplyButton();
-check("F5: v12RemoveApplyButton удаляет все 3 кнопки", N.v12RemoveApplyButton(), 3);
+check("F5: v12RemoveApplyButton удаляет все кнопки", N.v12RemoveApplyButton(), BUTTON_COUNT);
 check("F6: листы очищены", sheets[DEFICIT].getImages().length, 0);
 
 // ---------- G/H) пункт меню ----------
@@ -242,7 +249,7 @@ console.log("=== G: пункт меню «Восстановить кнопку�
 state.images.length = 0;
 state.toasts.length = 0;
 const uiResult = N.v12InstallApplyButtonUI();
-check("G1: вернул результат установки", uiResult && uiResult.installed.length, 3);
+check("G1: вернул результат установки", uiResult && uiResult.installed.length, BUTTON_COUNT);
 check("G2: всплывающее сообщение показано", state.toasts.length, 1);
 check("G3: в сообщении перечислены листы", state.toasts[0].msg.indexOf(DEFICIT) >= 0, true);
 check("G4: таймаут успеха 3 с", state.toasts[0].sec, 3);

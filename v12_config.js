@@ -249,6 +249,10 @@ const V12_CONFIG = {
   /**
    * DASHBOARD (11). Колонки «Прогресс» и «Обновлено» убраны; «BOM ID» скрыта
    * визуально (движку нужна для идентификации строки в обработчике «Выполнено»).
+   * Чекбокс «Выполнено» (DONE) обрабатывается ТАК ЖЕ, как чекбоксы Сводки:
+   * правка фиксируется в очереди (PENDING_EDITS, поле DASHBOARD_DONE) и
+   * применяется кнопкой «ПРИМЕНИТЬ»; отмеченный BOM убирается из активного
+   * дашборда (переходит в EXCLUDED_BOMS).
    * «Статус» показывает текстовое состояние BOM (см. BOM_STATUS) с цветовой
    * раскраской по состоянию (BOM_STATUS_COLOR). «На складе» — количество
    * позиций BOM, готовых к отборке, но ещё не переданных производству.
@@ -371,11 +375,11 @@ const V12_CONFIG = {
    * первичный источник истины: значение не теряется, даже если колонку/ячейку
    * перезапишет пересборка проекции.
    *
-   * Охват: чекбоксы ОТБОРКИ / WORKING BOM / Сводки (HANDOFF, REAL_DELIVERY) и
-   * типизированные поля Сводки дефицитов — «Заказано» (ORDERED_QTY) и
-   * «Ожидаемая поставка» (EXPECTED_DATE). Поэтому колонка VALUE хранит не
-   * только boolean (чекбоксы), но и число (ORDERED_QTY) либо дату
-   * (EXPECTED_DATE) — интерпретация зависит от поля FIELD.
+   * Охват: чекбоксы ОТБОРКИ / WORKING BOM / Сводки (HANDOFF, REAL_DELIVERY),
+   * чекбокс «Выполнено» дашборда (DASHBOARD_DONE) и типизированные поля Сводки
+   * дефицитов — «Заказано» (ORDERED_QTY) и «Ожидаемая поставка» (EXPECTED_DATE).
+   * Поэтому колонка VALUE хранит не только boolean (чекбоксы), но и число
+   * (ORDERED_QTY) либо дату (EXPECTED_DATE) — интерпретация зависит от поля FIELD.
    */
   PENDING_EDIT_COLUMNS: {
     DATE: 1,
@@ -401,12 +405,17 @@ const V12_CONFIG = {
 
   /**
    * Поле намерения (FIELD) в очереди.
+   *
+   * DASHBOARD_DONE — чекбокс «Выполнено» дашборда (SOURCE = DASHBOARD).
+   * Значение boolean, как и у остальных чекбокс-полей (HANDOFF/REAL_DELIVERY),
+   * но POSITION_ID для него хранит BOM ID — строка дашборда равна одному BOM.
    */
   PENDING_FIELD: {
     HANDOFF: "HANDOFF",
     REAL_DELIVERY: "REAL_DELIVERY",
     ORDERED_QTY: "ORDERED_QTY",
-    EXPECTED_DATE: "EXPECTED_DATE"
+    EXPECTED_DATE: "EXPECTED_DATE",
+    DASHBOARD_DONE: "DASHBOARD_DONE"
   },
 
   /**
@@ -626,11 +635,13 @@ const V12_CONFIG = {
 
   /**
    * Источник интерфейса (sourceUI) для markReceivedByProduction.
+   * DASHBOARD — чекбокс «Выполнено» дашборда (поле очереди DASHBOARD_DONE).
    */
   SOURCE_UI: {
     PICKING: "PICKING",
     WORKING_BOM: "WORKING_BOM",
-    DEFICIT_SUMMARY: "DEFICIT_SUMMARY"
+    DEFICIT_SUMMARY: "DEFICIT_SUMMARY",
+    DASHBOARD: "DASHBOARD"
   },
 
   SETTINGS: {

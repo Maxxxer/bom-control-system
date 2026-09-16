@@ -10,7 +10,8 @@
  *
  * Обратная связь пользователю — ВСПЛЫВАЮЩИМИ сообщениями в правом нижнем
  * углу окна (v12_ui.js, 3 с; ошибки — 8 с). Модальных окон в коде нет,
- * кроме двух ui.prompt в диалоге «Вернуть из архива» (там нужен ввод).
+ * кроме ui.prompt в диалогах «Вернуть из архива» и
+ * «Вернуть проект в Dashboard (снять «Выполнено»)» — там нужен ввод.
  * =====================================================
  */
 
@@ -51,6 +52,7 @@ function v12OnOpen() {
     .addItem("📊 Обновить проекции", "v12RefreshAllProjections")
     .addSeparator()
     .addItem("↩ Вернуть из архива", "v12PromptReturnFromArchive")
+    .addItem("↩ Вернуть проект в Dashboard (снять «Выполнено»)", "v12PromptUndoBomDone")
     .addSeparator()
     .addItem("🔎 Диагностика V12", "v12Diagnostic")
     .addItem("🧪 Тест V12", "v12RunDebug")
@@ -266,6 +268,55 @@ function v12PromptReturnFromArchive() {
     v12Toast("Позиция возвращена из архива: " + positionId);
   } else {
     v12Toast("Не удалось вернуть: " + ((result && result.reason) || "неизвестная ошибка"),
+      V12_UI.TOAST_SECONDS_ERROR);
+  }
+}
+
+/**
+ * Диалог отмены «Выполнено» для BOM (возврат проекта в активный Dashboard).
+ *
+ * V3: чекбокс «Выполнено» обрабатывается очередью, а после применения
+ * выполненный BOM УХОДИТ из Dashboard (хранится в EXCLUDED_BOMS), поэтому снять
+ * галочку прямо в дашборде больше нельзя — строки там уже нет. Эта функция
+ * возвращает проект в работу: спрашивает BOM ID, снимает флаг «Выполнено» и
+ * пересобирает Dashboard, где проект появляется снова.
+ *
+ * Право — то же, что и на отметку: DASHBOARD_CHECKBOX (производство и админ).
+ */
+function v12PromptUndoBomDone() {
+  const role = v12GetCurrentUserRole();
+  if (!v12CanEditField(role, "DASHBOARD_CHECKBOX")) {
+    v12Toast("Нет права отменять «Выполнено» для роли '" + role + "'", V12_UI.TOAST_SECONDS_ERROR);
+    return;
+  }
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt("Вернуть проект в Dashboard",
+    "BOM ID выполненного проекта:", ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+  const bomId = normalizeMaterialId(response.getResponseText());
+  if (!bomId) {
+    v12Toast("BOM ID не указан");
+    return;
+  }
+  let result;
+  try {
+    result = v12SetBomDone(bomId, false);
+  } catch (e) {
+    logSystem("v12PromptUndoBomDone", e.message, e, "ERROR");
+    v12Toast("Не удалось вернуть проект: " + e.message, V12_UI.TOAST_SECONDS_ERROR);
+    return;
+  } finally {
+    v12FlushAudit();
+    flushSystemLog();
+  }
+  if (result && result.status === "applied") {
+    v12Toast("Проект возвращён в Dashboard: " + bomId);
+  } else if (result && result.status === "already") {
+    v12Toast("Проект не отмечен как выполненный: " + bomId);
+  } else {
+    v12Toast("Не удалось вернуть проект: " + ((result && result.reason) || "неизвестная ошибка"),
       V12_UI.TOAST_SECONDS_ERROR);
   }
 }

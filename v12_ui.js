@@ -43,7 +43,9 @@ const V12_UI = {
   BUTTON_OFFSET_X: 2,
   BUTTON_OFFSET_Y: 1,
   // Листы, на которых кнопка «Применить» ставится при установке.
-  BUTTON_SHEETS: ["DEFICIT_SUMMARY", "PICKING", "WORKING_BOM"],
+  // DASHBOARD добавлен: чекбокс «Выполнено» фиксируется в очереди, как и
+  // чекбоксы Сводки/ОТБОРКИ, и применяется этой же кнопкой.
+  BUTTON_SHEETS: ["DEFICIT_SUMMARY", "PICKING", "WORKING_BOM", "DASHBOARD"],
 
   /**
    * PNG-код кнопки «ПРИМЕНИТЬ» (124x20, зелёная со скруглением, белый текст).

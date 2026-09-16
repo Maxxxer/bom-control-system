@@ -14,3 +14,4 @@ _local_tests/v12_queue_capture_fix_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_row_color_reset_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_deficit_checkbox_capture_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_roles_test.js exit=0 fails=0 last=ALL TESTS PASSED
+_local_tests/v12_dashboard_checkbox_test.js exit=0 fails=0 last=ALL TESTS PASSED

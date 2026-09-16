@@ -16,7 +16,9 @@
  *   R3 — Сводка дефицитов: снабженец правит «Заказано», но НЕ «Реальную поставку»;
  *        экономист правит «Реальную поставку», но НЕ «Заказано»;
  *   R4 — ОТБОРКА: кладовщик ставит чекбокс; снабженец — отклонён;
- *   R5 — Dashboard: производство ставит «Выполнено»; экономист — отклонён.
+ *   R5 — Dashboard: производство фиксирует «Выполнено» в очереди (как чекбоксы
+ *        Сводки), применение отмечает BOM выполненным и убирает его из активного
+ *        дашборда; экономист — отклонён.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script.
  * Запуск: node _local_tests/v12_roles_test.js
@@ -113,6 +115,7 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
   + " v12GetCurrentUserRole: v12GetCurrentUserRole, v12OnEdit: v12OnEdit,"
   + " v12BuildPositionRow: v12BuildPositionRow, v12CountPendingEdits: v12CountPendingEdits,"
   + " v12ResolvePendingIntents: v12ResolvePendingIntents, v12RefreshDashboard: v12RefreshDashboard,"
+  + " v12DrainPendingEdits: v12DrainPendingEdits, v12BuildExcludedMap: v12BuildExcludedMap,"
   + " v12EnqueuePendingEdit: v12EnqueuePendingEdit };";
 
 vm.runInThisContext(src, { filename: "v12-bundle-roles.js" });
@@ -327,30 +330,49 @@ N.v12OnEdit(cellEvent(PK, 2, K.CHECKBOX, true, false));
 check("R4: производство — чекбокс ОТБОРКИ в очереди", queuePending(), 1);
 
 // ---------- R5: Dashboard ----------
+// Чекбокс «Выполнено» обрабатывается ТАК ЖЕ, как чекбоксы «Сводки дефицитов»:
+// onEdit только фиксирует намерение DASHBOARD_DONE в очереди PENDING_EDITS, а
+// применяет его кнопка «ПРИМЕНИТЬ» (v12ApplyChanges → v12DrainPendingEdits).
+// После применения BOM попадает в EXCLUDED_BOMS и УХОДИТ из активного дашборда.
 console.log("=== R5: «Dashboard» — права ===");
 asUser(U.production);
-resetDashboard();
+resetListSheets(); resetQueue(); resetDashboard();
 {
   const row = findDashRow("B1");
   check("R5: строка дашборда найдена", row > 1, true);
+  DBs._setCell(row, DB.DONE, true);
   N.v12OnEdit(cellEvent(DBs, row, DB.DONE, true, false));
-  check("R5: производство — «Выполнено» применено", DBs.getRange(row, DB.DONE).getValue(), true);
+  check("R5: производство — намерение DASHBOARD_DONE зафиксировано", queuePending(), 1);
+  check("R5: поле намерения = DASHBOARD_DONE", firstPending()[Q.FIELD - 1], "DASHBOARD_DONE");
+  check("R5: источник намерения = DASHBOARD", firstPending()[Q.SOURCE - 1], "DASHBOARD");
+  check("R5: до применения BOM ещё в активном дашборде", findDashRow("B1") > 1, true);
+  const drain = N.v12DrainPendingEdits();
+  check("R5: производство — «Выполнено» применено", drain.drained >= 1, true);
+  check("R5: BOM отмечен выполненным (EXCLUDED_BOMS)", N.v12BuildExcludedMap()["B1"] === true, true);
+  check("R5: BOM убран из активного дашборда", findDashRow("B1"), -1);
+  check("R5: очередь очищена", queuePending(), 0);
 }
 
 asUser(U.economist);
-resetDashboard();
+resetListSheets(); resetQueue(); resetDashboard();
 {
   const row = findDashRow("B1");
+  DBs._setCell(row, DB.DONE, true);
   N.v12OnEdit(cellEvent(DBs, row, DB.DONE, true, false));
-  check("R5: экономист — «Выполнено» отклонено (осталось false)", DBs.getRange(row, DB.DONE).getValue(), false);
+  check("R5: экономист — «Выполнено» отклонено (очередь пуста)", queuePending(), 0);
+  check("R5: экономист — галочка откатана", DBs.getRange(row, DB.DONE).getValue(), false);
 }
 
 asUser(U.admin);
-resetDashboard();
+resetListSheets(); resetQueue(); resetDashboard();
 {
   const row = findDashRow("B1");
+  DBs._setCell(row, DB.DONE, true);
   N.v12OnEdit(cellEvent(DBs, row, DB.DONE, true, false));
-  check("R5: админ — «Выполнено» применено", DBs.getRange(row, DB.DONE).getValue(), true);
+  check("R5: админ — намерение DASHBOARD_DONE зафиксировано", queuePending(), 1);
+  const drain = N.v12DrainPendingEdits();
+  check("R5: админ — «Выполнено» применено", drain.drained >= 1, true);
+  check("R5: админ — BOM убран из активного дашборда", findDashRow("B1"), -1);
 }
 
 console.log("");

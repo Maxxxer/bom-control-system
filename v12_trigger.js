@@ -17,8 +17,12 @@
  *
  * Медленный путь (в блокировке) остался только у правок, которые обязаны
  * срабатывать немедленно и к пересборке проекций по кнопке не относятся:
- * физический склад (MATERIAL_STATE), чекбокс «Выполнено» дашборда и фильтр
- * проекта в ОТБОРКЕ (B1).
+ * физический склад (MATERIAL_STATE) и фильтр проекта в ОТБОРКЕ (B1).
+ *
+ * Чекбокс «Выполнено» дашборда обрабатывается БЫСТРЫМ путём (очередь
+ * PENDING_EDITS, поле DASHBOARD_DONE) — так же, как чекбоксы «Сводки дефицитов»,
+ * и применяется кнопкой «ПРИМЕНИТЬ» (v12ApplyChanges → v12SetBomDone).
+ * Остальные колонки дашборда остаются read-only.
  * =====================================================
  */
 
@@ -224,38 +228,26 @@ function v12HandleMaterialStateEdit(e) {
 }
 
 /**
- * Dashboard: только чекбокс «Выполнено», и только при «Готов к производству».
- * Отмечать его вправе только PRODUCTION и ADMIN (право DASHBOARD_CHECKBOX).
+ * Dashboard: медленный путь (read-only-guard). Чекбокс «Выполнено»
+ * обрабатывается БЫСТРЫМ путём onEdit (v12CaptureCheckboxEdit → очередь
+ * PENDING_EDITS, поле DASHBOARD_DONE) ровно как чекбоксы «Сводки дефицитов», а
+ * применение выполняет кнопка «ПРИМЕНИТЬ» (v12ApplyChanges → v12SetBomDone).
+ *
+ * Сюда доходят только правки, НЕ затрагивающие колонку «Выполнено»: это
+ * read-only колонки дашборда — они откатываются. Если по какой-то причине
+ * сюда попало изменение самого чекбокса, синхронно его НЕ применяем (иначе
+ * проекции пересобрались бы посреди слива очереди) — фиксируем в логе.
  */
 function v12HandleDashboardEdit(e) {
   const D = V12_CONFIG.DASHBOARD_COLUMNS;
-  const sheet = e.range.getSheet();
-  const row = e.range.getRow();
-  if (e.range.getColumn() !== D.DONE || e.range.getRow() <= 1) {
-    v12RevertEdit(e);
-    logSystem("v12OnEdit", "В дашборде разрешён только чекбокс «Выполнено»", "WARNING");
-    return;
-  }
-  // RBAC: чекбокс «Выполнено» отмечает производство (PRODUCTION) и админ.
-  // onEdit исполняется от имени редактора, поэтому роль берётся для живого
-  // пользователя (без actor-override).
-  const role = v12GetCurrentUserRole();
-  if (!v12CanEditField(role, "DASHBOARD_CHECKBOX")) {
+  if (e.range.getColumn() === D.DONE && e.range.getRow() > 1) {
     v12RevertEdit(e);
     logSystem("v12HandleDashboardEdit",
-      "Нет права на изменение чекбокса «Выполнено» для роли '" + role + "' (" + getCurrentUser() + ")", "WARNING");
+      "Чекбокс «Выполнено» применяется очередью — нажмите «ПРИМЕНИТЬ»", "WARNING");
     return;
   }
-  const bomId = sheet.getRange(row, D.BOM_ID).getValue();
-  const bomChecked = v12IsChecked(e.range.getValue());
-  // Готовность считаем из состояния (не из текста колонки «Статус»): «Выполнено»
-  // доступно только когда BOM скомплектован — все позиции переданы производству.
-  if (bomChecked && !v12IsBomReadyForDone(bomId)) {
-    v12RevertEdit(e);
-    logSystem("v12OnEdit", "«Выполнено» можно отметить только при «Готов к производству»: " + bomId, "WARNING");
-    return;
-  }
-  v12SetBomDone(bomId, bomChecked);
+  v12RevertEdit(e);
+  logSystem("v12OnEdit", "В дашборде разрешён только чекбокс «Выполнено»", "WARNING");
 }
 
 /**
@@ -323,12 +315,19 @@ function v12ScheduledUpdate() {
 }
 
 /**
- * Установить «Выполнено» для BOM (в EXCLUDED_BOMS).
+ * Установить/снять «Выполнено» для BOM (лист EXCLUDED_BOMS). Отмеченный BOM
+ * убирается из активного дашборда (v12RefreshDashboard фильтрует excluded).
+ *
+ * skipRefresh=true — ПАКЕТНЫЙ режим (вызов из v12ApplyDashboardDoneIntent в
+ * составе слива очереди): запись и аудит делаются, но дашборд НЕ пересобирается
+ * здесь — проекции пересобираются ОДИН раз в конце v12DrainPendingEdits.
+ *
+ * Возвращает { status: "applied" | "already" | "blocked", reason? }.
  */
-function v12SetBomDone(bomId, done) {
+function v12SetBomDone(bomId, done, skipRefresh) {
   const sheet = getSheetByName(V12_CONFIG.SHEETS.EXCLUDED_BOMS);
   if (!sheet) {
-    return;
+    return { status: "blocked", reason: "Лист EXCLUDED_BOMS не найден" };
   }
   const data = readSheetValues(sheet);
   const B = V12_CONFIG.EXCLUDED_BOMS_COLUMNS;
@@ -339,6 +338,11 @@ function v12SetBomDone(bomId, done) {
       break;
     }
   }
+  // Текущее состояние «Выполнено» (идемпотентность: повтор не пишет заново).
+  const alreadyDone = foundRow !== -1 && v12IsChecked(data[foundRow - 1][B.DONE - 1]);
+  if (alreadyDone === !!done) {
+    return { status: "already" };
+  }
   if (done) {
     if (foundRow === -1) {
       appendRow(sheet, [bomId, true, new Date()]);
@@ -347,9 +351,7 @@ function v12SetBomDone(bomId, done) {
       sheet.getRange(foundRow, B.DATE).setValue(new Date());
     }
   } else {
-    if (foundRow !== -1) {
-      sheet.getRange(foundRow, B.DONE).setValue(false);
-    }
+    sheet.getRange(foundRow, B.DONE).setValue(false);
   }
   v12Audit({
     action: V12_CONFIG.AUDIT_ACTIONS.MARK_DONE,
@@ -358,8 +360,11 @@ function v12SetBomDone(bomId, done) {
     oldValue: !done,
     newValue: done
   });
-  v12RefreshDashboard();
-  v12FlushAudit();
+  if (!skipRefresh) {
+    v12RefreshDashboard();
+    v12FlushAudit();
+  }
+  return { status: "applied" };
 }
 
 /**

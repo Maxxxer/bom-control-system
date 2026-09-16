@@ -73,12 +73,13 @@ function v12WithActor(actor, fn) {
  */
 
 /**
- * true, если поле очереди — ЧЕКБОКС (boolean-семантика): передача или
- * реальная поставка. Остальные поля (Заказано/Ожидаемая) — типизированные.
+ * true, если поле очереди — ЧЕКБОКС (boolean-семантика): передача, реальная
+ * поставка или «Выполнено» дашборда. Остальные поля (Заказано/Ожидаемая) —
+ * типизированные.
  */
 function v12IsBooleanPendingField(field) {
   const F = V12_CONFIG.PENDING_FIELD;
-  return field === F.HANDOFF || field === F.REAL_DELIVERY;
+  return field === F.HANDOFF || field === F.REAL_DELIVERY || field === F.DASHBOARD_DONE;
 }
 
 /**
@@ -251,10 +252,15 @@ function v12EnqueuePendingEdit(sourceKey, positionId, field, value, actor) {
  *           обычную логику.
  *
  * Обрабатываются:
- *   ОТБОРКА          — кол. CHECKBOX (12), поле HANDOFF, право PICKING_CHECKBOX;
- *   WORKING BOM      — кол. CHECKBOX (14), поле HANDOFF, право WORKING_BOM_CHECKBOX;
- *   Сводка дефицитов — кол. Заказано (9) / Ожидаемая поставка (10) /
- *                      Реальная поставка (12): поля ORDERED_QTY / EXPECTED_DATE /
+ *   ОТБОРКА          — кол. CHECKBOX (13), поле HANDOFF, право PICKING_CHECKBOX;
+ *   WORKING BOM      — кол. CHECKBOX (15), поле HANDOFF, право WORKING_BOM_CHECKBOX;
+ *   DASHBOARD        — кол. «Выполнено» (1), поле DASHBOARD_DONE,
+ *                      право DASHBOARD_CHECKBOX. Ключ строки — BOM ID (кол. 2),
+ *                      поэтому POSITION_ID намерения равен BOM ID. Обработка
+ *                      ТА ЖЕ, что и у чекбоксов Сводки: фиксация в очереди и
+ *                      применение кнопкой «ПРИМЕНИТЬ» (v12ApplyChanges).
+ *   Сводка дефицитов — кол. Заказано (10) / Ожидаемая поставка (11) /
+ *                      Реальная поставка (13): поля ORDERED_QTY / EXPECTED_DATE /
  *                      REAL_DELIVERY (см. v12CaptureDeficitEdit, Вариант A).
  */
 function v12CaptureCheckboxEdit(e, sheetName) {
@@ -278,6 +284,14 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     action = "WORKING_BOM_CHECKBOX";
     field = V12_CONFIG.PENDING_FIELD.HANDOFF;
     sourceKey = V12_CONFIG.SOURCE_UI.WORKING_BOM;
+  } else if (sheetName === S.DASHBOARD) {
+    // Дашборд: редактируемый единственный чекбокс «Выполнено» (кол. 1).
+    // Ключ строки — BOM ID (кол. 2), т.к. строка дашборда = один BOM.
+    column = V12_CONFIG.DASHBOARD_COLUMNS.DONE;
+    keyCol = V12_CONFIG.DASHBOARD_COLUMNS.BOM_ID;
+    action = "DASHBOARD_CHECKBOX";
+    field = V12_CONFIG.PENDING_FIELD.DASHBOARD_DONE;
+    sourceKey = V12_CONFIG.SOURCE_UI.DASHBOARD;
   } else if (sheetName === S.DEFICIT_SUMMARY) {
     // Сводка — особый случай: содержит НЕСКОЛЬКО редактируемых колонок
     // («Заказано», «Ожидаемая поставка», «Реальная поставка»). Их обработка
@@ -681,7 +695,8 @@ function v12PurgeDonePendingEdits(maxAgeDays) {
 /**
  * Есть ли УСТАНОВЛЕННЫЕ редактируемые чекбоксы, которых ещё нет в очереди:
  *   HANDOFF «Отметка получено»          — ОТБОРКА / WORKING BOM;
- *   REAL_DELIVERY «Реальная поставка»   — Сводка дефицитов.
+ *   REAL_DELIVERY «Реальная поставка»   — Сводка дефицитов;
+ *   DASHBOARD_DONE «Выполнено»          — Dashboard.
  *
  * Дешёвый предфильтр для слива: если очередь пуста, но галочки стоят — слив
  * всё равно нужен (страховка от потерянных onEdit, см. v12ReconcileCheckedHandoffs).
@@ -690,7 +705,8 @@ function v12HasCheckedHandoffs() {
   const targets = [
     { sheetKey: "PICKING", checkCol: V12_CONFIG.PICKING_COLUMNS.CHECKBOX },
     { sheetKey: "WORKING_BOM", checkCol: V12_CONFIG.WORKING_BOM_COLUMNS.CHECKBOX },
-    { sheetKey: "DEFICIT_SUMMARY", checkCol: V12_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY }
+    { sheetKey: "DEFICIT_SUMMARY", checkCol: V12_CONFIG.DEFICIT_COLUMNS.REAL_DELIVERY },
+    { sheetKey: "DASHBOARD", checkCol: V12_CONFIG.DASHBOARD_COLUMNS.DONE }
   ];
   for (let t = 0; t < targets.length; t++) {
     const sheet = getSheetByName(V12_CONFIG.SHEETS[targets[t].sheetKey]);
@@ -850,11 +866,44 @@ function v12CollectCheckedRealDeliveries() {
 }
 
 /**
+ * Собрать список фактически отмеченных чекбоксов «Выполнено» дашборда
+ * ({ source, pid }) — pid здесь равен BOM ID (строка дашборда = один BOM).
+ *
+ * Аналог v12CollectCheckedRealDeliveries для колонки DONE дашборда (кол. 1):
+ * проекция всегда пишет в неё false у показываемых BOM (выполненные BOM из
+ * активного дашборда убираются), поэтому стоящая галочка = намерение
+ * производства «BOM выполнен».
+ */
+function v12CollectCheckedDashboardDone() {
+  const out = [];
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.DASHBOARD);
+  if (!sheet) {
+    return out;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return out;
+  }
+  const D = V12_CONFIG.DASHBOARD_COLUMNS;
+  const ids = sheet.getRange(2, D.BOM_ID, lastRow - 1, 1).getValues();
+  const checks = sheet.getRange(2, D.DONE, lastRow - 1, 1).getValues();
+  for (let i = 0; i < ids.length; i++) {
+    const bomId = normalizeMaterialId(ids[i][0]);
+    if (!bomId || !v12IsChecked(checks[i][0])) {
+      continue;
+    }
+    out.push({ source: V12_CONFIG.SOURCE_UI.DASHBOARD, pid: bomId });
+  }
+  return out;
+}
+
+/**
  * ИДЕМПОТЕНТНАЯ ПЕРЕСБОРКА очереди чекбокс-намерений по фактическим галочкам.
  *
  * Охватывает редактируемые чекбокс-колонки:
  *   HANDOFF «Отметка получено»          — ОТБОРКА / WORKING BOM;
- *   REAL_DELIVERY «Реальная поставка»   — Сводка дефицитов.
+ *   REAL_DELIVERY «Реальная поставка»   — Сводка дефицитов;
+ *   DASHBOARD_DONE «Выполнено»          — Dashboard.
  *
  * Приводит множество PENDING-намерений этих полей к каноническому виду:
  *   - по каждому ключу SOURCE|POSITION_ID|FIELD оставляет РОВНО ОДНУ строку
@@ -876,6 +925,7 @@ function v12RebuildPendingFromChecked() {
   const ST = V12_CONFIG.PENDING_STATUS;
   const F = V12_CONFIG.PENDING_FIELD.HANDOFF;
   const RD = V12_CONFIG.PENDING_FIELD.REAL_DELIVERY;
+  const DD = V12_CONFIG.PENDING_FIELD.DASHBOARD_DONE;
 
   // Желаемое множество чекбокс-намерений по фактически отмеченным галочкам.
   const desired = {};
@@ -884,6 +934,9 @@ function v12RebuildPendingFromChecked() {
   });
   v12CollectCheckedRealDeliveries().forEach(function (c) {
     desired[c.source + "|" + c.pid + "|" + RD] = { source: c.source, pid: c.pid, field: RD };
+  });
+  v12CollectCheckedDashboardDone().forEach(function (c) {
+    desired[c.source + "|" + c.pid + "|" + DD] = { source: c.source, pid: c.pid, field: DD };
   });
 
   const data = readSheetValues(sheet);
@@ -997,6 +1050,9 @@ function v12ApplyPendingIntent(intent, ctx, posIndex) {
   if (intent.field === F.EXPECTED_DATE) {
     return v12SetExpectedDate(intent.pid, intent.value, posIndex, ctx);
   }
+  if (intent.field === F.DASHBOARD_DONE) {
+    return v12ApplyDashboardDoneIntent(intent.pid, ctx);
+  }
   return { status: "blocked", reason: "Неизвестное поле намерения: " + intent.field };
 }
 
@@ -1020,6 +1076,39 @@ function v12ApplyRealDeliveryIntent(positionId, ctx, posIndex) {
     return { status: "already" };
   }
   return v12SetRealDeliveryQty(positionId, required, index, ctx);
+}
+
+/**
+ * Чекбокс «Выполнено» дашборда = «BOM выполнен целиком».
+ *
+ * Аналог v12ApplyRealDeliveryIntent для дашборда: отмечается только «вверх»
+ * (снятие галочки ничего не отменяет), а гейт готовности тот же, что и у
+ * прежнего синхронного обработчика — «Выполнено» доступно ТОЛЬКО когда BOM
+ * скомплектован (все позиции переданы производству).
+ *
+ * Запись делает v12SetBomDone (EXCLUDED_BOMS) в пакетном режиме (skipRefresh),
+ * чтобы проекции пересобрались ОДИН раз в конце слива. Отмеченный BOM уходит из
+ * активного дашборда при ближайшем v12RefreshDashboard.
+ */
+function v12ApplyDashboardDoneIntent(bomId, ctx) {
+  const id = normalizeMaterialId(bomId);
+  if (!id) {
+    return { status: "blocked", reason: "Не указан BOM ID" };
+  }
+  // Агрегат BOM строится ОДИН раз на всю пачку слива (кэш в ctx) — иначе на
+  // каждый отмеченный BOM читался бы весь POSITION_STATE.
+  let agg = ctx && ctx.bomAgg;
+  if (!agg) {
+    agg = v12AggregateBomStates();
+    if (ctx) {
+      ctx.bomAgg = agg;
+    }
+  }
+  const a = agg[id];
+  if (!a || v12ComputeBomStatus(a) !== V12_CONFIG.BOM_STATUS.READY) {
+    return { status: "blocked", reason: "«Выполнено» доступно только при «Готов к работе»: " + id };
+  }
+  return v12SetBomDone(id, true, true);
 }
 
 /**

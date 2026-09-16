@@ -1170,8 +1170,11 @@ function v12ComputeBomStatus(agg) {
 }
 
 /**
- * DASHBOARD: сводка по BOM. Чекбокс «Выполнено» (DONE) активен только
- * при полной комплектации BOM (все позиции получены производством).
+ * DASHBOARD: сводка по АКТИВНЫМ BOM. Чекбокс «Выполнено» (DONE) обрабатывается
+ * очередью (поле DASHBOARD_DONE) и применяется кнопкой «ПРИМЕНИТЬ» — точно как
+ * чекбоксы «Сводки дефицитов». Отмеченный (выполненный) BOM попадает в
+ * EXCLUDED_BOMS и УХОДИТ из активного дашборда: здесь такие BOM отфильтрованы,
+ * поэтому после применения строки исчезают из списка.
  */
 function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   const D = V12_CONFIG.DASHBOARD_COLUMNS;
@@ -1185,12 +1188,16 @@ function v12RefreshDashboard(posData, revDatesIn, excludedIn) {
   const awaitingNotes = [];
 
   bomIds.forEach(function (bomId) {
+    // Выполненный BOM хранится в EXCLUDED_BOMS и в активный дашборд не попадает
+    // (это и есть «убрать позицию из списка» после отметки и применения).
+    if (excluded[bomId] === true) {
+      return;
+    }
     const a = agg[bomId];
     const status = v12ComputeBomStatus(a);
     const missingText = v12BuildDashboardMissingCell(a);
-    const done = excluded[bomId] === true;
     rows.push([
-      done,
+      false,   // показываемые BOM не выполнены — выполненные отфильтрованы выше
       bomId,
       a.bomName,
       status,
