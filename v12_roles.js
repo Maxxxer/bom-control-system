@@ -37,6 +37,8 @@ const V12_ROLE_MAP = {
   // "email@example.com": V12_CONFIG.ROLES.ADMIN
   "6458771go@gmail.com":V12_CONFIG.ROLES.ECONOMIST,
   "maksim.salavei@gmail.com":V12_CONFIG.ROLES.PROCUREMENT,
+  "vladimir.katsuba24@gmail.com":V12_CONFIG.ROLES.PROCUREMENT,
+  "vlad1004322@gmail.com":V12_CONFIG.ROLES.PROCUREMENT,
   "Balalaikina79@gmail.com":V12_CONFIG.ROLES.WAREHOUSE,
   "lazukazip24@gmail.com":V12_CONFIG.ROLES.VIEWER,
   "polonets.maksim@gmail.com":V12_CONFIG.ROLES.ADMIN,
