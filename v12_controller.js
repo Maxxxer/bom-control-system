@@ -46,7 +46,15 @@ function v12OnOpen() {
     .createMenu("BOM CONTROL V12")
     .addItem(applyLabel, "v12ApplyChangesUI")
     .addItem("♻ Пересобрать очередь (по галочкам)", "v12RebuildPendingFromCheckedUI")
+    .addItem("🧹 Схлопнуть дубли очереди", "v12CompactPendingEditsUI")
     .addItem("Восстановить кнопку «Применить»", "v12InstallApplyButtonUI")
+    .addSeparator()
+    // === Лоты отборки из личных файлов отборщиков ==========================
+    .addItem("📦 Обработать лоты отборщиков", "v12ProcessBatchesUI")
+    .addItem("🧾 Журнал лотов", "v12ShowBatchJournalUI")
+    .addItem("🔓 Освободить все захваты проектов", "v12ReleaseAllClaimsUI")
+    .addItem("🔐 Задать/сменить секрет отборщиков", "v12SetBatchTokenUI")
+    .addItem("🛡 Поставить защиту на лист ОТБОРКА", "v12ApplyPickingSheetNoticeUI")
     .addSeparator()
     .addItem("🔄 Полная синхронизация", "v12RunFullSync")
     .addItem("📊 Обновить проекции", "v12RefreshAllProjections")
@@ -126,6 +134,165 @@ function v12RebuildPendingFromCheckedUI() {
 }
 
 /**
+ * «Схлопнуть дубли очереди» — гигиена после канала без потерь.
+ *
+ * Если лок не удавалось взять (шла синхронизация или чужое применение), захват
+ * правки писался напрямую через appendRow, поэтому по одному ключу
+ * SOURCE|POSITION_ID|FIELD могло появиться несколько строк. Эта операция
+ * оставляет действующей последнюю и гасит предыдущие.
+ */
+function v12CompactPendingEditsUI() {
+  let removed;
+  try {
+    removed = v12CompactPendingEdits();
+  } catch (e) {
+    logSystem("v12CompactPendingEditsUI", e.message, e, "ERROR");
+    flushSystemLog();
+    v12Toast("Не удалось схлопнуть дубли: " + e.message, V12_UI.TOAST_SECONDS_ERROR);
+    return null;
+  } finally {
+    flushSystemLog();
+  }
+  const pending = v12CountPendingEdits();
+  v12UpdatePendingIndicator(pending);
+  v12Toast(removed > 0
+    ? ("Схлопнуто дублей: " + removed + ", в очереди " + pending + " намерений")
+    : "Дублей в очереди нет");
+  return { removed: removed, pending: pending };
+}
+
+/**
+ * «Обработать лоты отборщиков» — применить все накопленные лоты ОДНИМ сливом.
+ *
+ * Нужно, когда лот остался в статусе PENDING: при приёме был занят лок (шла
+ * синхронизация или чужое применение). Дежурный триггер делает то же самое
+ * каждые 5 минут; пункт меню — для немедленного контроля администратором.
+ */
+function v12ProcessBatchesUI() {
+  let result;
+  try {
+    v12ExpireStaleClaims();
+    result = v12DrainPendingEdits();
+    v12RecoverStuckBatches();
+  } catch (e) {
+    logSystem("v12ProcessBatchesUI", e.message, e, "ERROR");
+    v12Toast("Не удалось обработать лоты: " + e.message, V12_UI.TOAST_SECONDS_ERROR);
+    return null;
+  } finally {
+    v12FlushAudit();
+    flushSystemLog();
+  }
+  const applied = (result && typeof result.drained === "number") ? result.drained : 0;
+  if (result && result.skipped) {
+    v12Toast("Система занята — повторите через несколько секунд.");
+  } else if (applied > 0) {
+    v12Toast("Лоты применены. Позиций передано: " + applied);
+  } else {
+    v12Toast("Неприменённых лотов нет");
+  }
+  return result;
+}
+
+/**
+ * «Журнал лотов» — сводка по последним лотам отборки.
+ */
+function v12ShowBatchJournalUI() {
+  const batches = v12CollectBatches(20);
+  if (!batches.length) {
+    v12Toast("Лотов отборки пока нет");
+    return [];
+  }
+  const lines = batches.map(function (b) {
+    return (b.batchId || "?") + " | " + (b.project || "-") + " | " +
+      (b.actor || "-") + " | " + v12BatchStatusDisplay(b.status) +
+      " | " + b.applied + "/" + b.total +
+      (b.failed ? (" (не применено: " + b.failed + ")") : "");
+  });
+  logSystem("v12ShowBatchJournalUI",
+    "Журнал последних лотов:\n" + lines.join("\n"), "INFO");
+  flushSystemLog();
+  v12Toast("Лотов за период: " + batches.length +
+    ". Подробности — в SYSTEM_LOG и на листе PICKING_BATCHES");
+  return batches;
+}
+
+/**
+ * «Освободить все захваты проектов» (для ADMIN).
+ *
+ * Захваты — строго мягкие: применяются, чтобы показать отборщику «проект уже
+ * отбирает X». Если заявка осталась от прошлого периода, администратор снимает
+ * все сразу, не дожидаясь TTL.
+ */
+function v12ReleaseAllClaimsUI() {
+  const released = v12ReleaseAllClaims();
+  v12Toast(released > 0
+    ? ("Освобождено захватов: " + released)
+    : "Активных захватов нет");
+  return released;
+}
+
+/**
+ * Поставить «мягкую защиту» на лист ОТБОРКА и надпись-подсказку в A1.
+ *
+ * ВАЖНО: защита именно МЯГКАЯ (setWarningOnly), а не запрет. Пересборку листа
+ * делает v12RefreshPicking() при пересчёте проекций, а такой пересчёт в
+ * триггере исполняется от имени автора правки — жёсткая защита с удалением
+ * редакторов остановила бы и саму проекцию, и лист перестал бы обновляться.
+ * Поэтому здесь только предупреждение + текстовая подсказка.
+ */
+function v12ApplyPickingSheetNotice() {
+  const sheet = v12GetSheetByKey("PICKING");
+  if (!sheet) {
+    return { ok: false, reason: "Лист ОТБОРКА не найден" };
+  }
+  let warned = false;
+  if (typeof sheet.protect === "function" &&
+      typeof sheet.getProtections === "function") {
+    const existing = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+    const prot = (existing && existing.length) ? existing[0] : sheet.protect();
+    if (prot) {
+      if (typeof prot.setDescription === "function") {
+        prot.setDescription(
+          "Рабочее место отборщиков перенесено в личные файлы. " +
+          "Правки здесь не сохраняются — откройте свой файл отбора.");
+      }
+      if (typeof prot.setWarningOnly === "function") {
+        prot.setWarningOnly(true);
+        warned = true;
+      }
+    }
+  }
+  if (typeof sheet.getRange === "function") {
+    sheet.getRange(1, 1).setValue("Витрина. Рабочее место — личный файл отбора.");
+  }
+  return { ok: true, warningOnly: warned };
+}
+
+/**
+ * Пункт меню «Поставить защиту на лист ОТБОРКА» с обратной связью.
+ */
+function v12ApplyPickingSheetNoticeUI() {
+  let res;
+  try {
+    res = v12ApplyPickingSheetNotice();
+  } catch (e) {
+    logSystem("v12ApplyPickingSheetNoticeUI", e.message, e, "ERROR");
+    flushSystemLog();
+    v12Toast("Не удалось поставить защиту: " + e.message, V12_UI.TOAST_SECONDS_ERROR);
+    return null;
+  }
+  if (!res || !res.ok) {
+    v12Toast("Не удалось: " + ((res && res.reason) || "неизвестная ошибка"),
+      V12_UI.TOAST_SECONDS_ERROR);
+    return res;
+  }
+  v12Toast(res.warningOnly
+    ? "Лист ОТБОРКА помечен как витрина (защита-предупреждение поставлена)"
+    : "Лист ОТБОРКА помечен как витрина (защита недоступна в этом окружении)");
+  return res;
+}
+
+/**
  * Установка V12: создать листы, снять старые триггеры, поставить новые.
  */
 function v12Install() {
@@ -135,6 +302,9 @@ function v12Install() {
     v12InstallTriggers();
     // Кнопка «Применить» в верхнем левом углу рабочих листов.
     v12InstallApplyButton();
+    // Мягкая защита листа ОТБОРКА + надпись «витрина»: рабочее место отборщика
+    // перенесено в его личный файл, а мастерский лист остаётся для ADMIN и отчётов.
+    v12ApplyPickingSheetNotice();
     logSystem("v12Install", "V12 установлена", "INFO");
     v12Toast("Скрипт выполнен: V12 установлена, кнопка «" + V12_UI.BUTTON_LABEL + "» поставлена");
   } catch (error) {
@@ -173,6 +343,11 @@ function v12Diagnostic() {
     }
     // Очередь правок (Вариант D): число необработанных намерений.
     result.pendingEdits = v12CountPendingEdits();
+    // Транспорт лотов отборщиков (V13): состояние канала приёма.
+    result.pendingBatches = v12CountPendingBatches();
+    result.activeClaims = v12CollectActiveClaims().length;
+    result.syncInProgress = v12IsSyncInProgress();
+    result.tokenConfigured = !!v12GetBatchToken();
   } catch (e) {
     result.errors.push(e.message);
   }
@@ -238,6 +413,39 @@ function v12ConsistencyCheck() {
   }).length;
   if (report.positionIds.size !== nonEmptyIdCount) {
     report.errors.push("Обнаружены дубликаты positionId");
+  }
+
+  // === Проверки канала лотов отборщиков (V13) ===============================
+  // 1) Лоты, застрявшие в статусе PENDING: их должен был добить дежурный дренаж.
+  const batches = v12CollectBatches(50);
+  const pendingBatches = batches.filter(function (b) {
+    return b.status === V12_CONFIG.PICKING_BATCH_STATUS.PENDING;
+  });
+  if (pendingBatches.length) {
+    report.info.push("Лоты в обработке (PENDING): " + pendingBatches.length +
+      " — " + pendingBatches.map(function (b) { return b.batchId; }).join(", "));
+  }
+
+  // 2) Захваты проектов с истёкшим сроком: нужно снять их пометкой EXPIRED.
+  const expired = v12ExpireStaleClaims();
+  if (expired > 0) {
+    report.info.push("Снято просроченных захватов проектов: " + expired);
+  }
+
+  // 3) ВАЖНО (конфликт A7, решение — «оставить как есть, но показывать»):
+  //    физический склад МОЖЕТ быть меньше суммарной потребности по материалу.
+  //    v12RecalculateWarehouseConsistency() уже вычисляет такие несоответствия,
+  //    но раньше результат никем не читался. Теперь показываем их в отчёте,
+  //    чтобы о дефиците склада узнавали, а не выясняли случайно.
+  try {
+    const inconsistencies = v12RecalculateWarehouseConsistency();
+    (inconsistencies || []).forEach(function (inc) {
+      report.errors.push("Материал " + inc.materialKey +
+        ": потребность (резерв) " + inc.reservedQty +
+        " больше склада " + inc.warehouseQty);
+    });
+  } catch (e) {
+    report.info.push("Проверка склада не выполнена: " + e.message);
   }
 
   return report;

@@ -14,6 +14,14 @@
 _tmp_*.js
 _local_tests/**
 _local_tests/
+_satellite/**
+_satellite/
+# Личный файл отборщика (сателлит). Лежит в корне рядом с кодом мастера, но
+# предназначается ОТДЕЛЬНОМУ проекту: если его выгрузить в мастер, туда попадут
+# функции сателлита (satInstall, satSubmit, ...) и его манифест.
+sat_*.js
+sat_appsscript.json
+SAT_*.md
 node_modules/**
 node_modules/
 .git/**

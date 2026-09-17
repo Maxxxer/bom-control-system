@@ -51,3 +51,23 @@
 - [x] Верификация: `node --check` 20 файлов / 0 ошибок; 4 набора тестов PASSED
 - [x] Документация: `project_info__35.md`
 - [ ] Осознанно оставлено (проектные решения, не дефекты): B-2, B-3, B-4, B-5, B-6, B-10, B-11, C-3, P-8, P-9 — см. project_info__35.md
+---
+
+## Этапы 7–9: транспорт лотов отборки, личный файл отборщика, тесты, документация
+
+- [x] Мастер: `v12_batches.js` — лоты (`PICKING_BATCHES`), мягкий захват проекта (`PICKING_CLAIMS`), идемпотентность по `BATCH_ID`, применение ТОЛЬКО своей партии (`v12ApplyBatch(batchId)`)
+- [x] Мастер: `v12_webapp.js` — `doPost`/`doGet`: действия `rows`, `submit`, `status`, `claim`, `release`, `pickers`, `health`; проверка секрета и роли; флаг «идёт синхронизация»
+- [x] Мастер: схема — `PENDING_EDIT_COLUMNS` += `BATCH_ID`, `PROJECT` (12); новые листы `PICKING_BATCHES` (12), `PICKING_CLAIMS` (6); статусы `PENDING/APPLIED/PARTIAL/FAILED`, `ACTIVE/RELEASED/EXPIRED`
+- [x] Мастер: RBAC — `PICKING_BATCH_SUBMIT` (WAREHOUSE/PRODUCTION), `PICKING_CLAIM`
+- [x] Мастер: меню — «🔐 Задать/сменить секрет отборщиков», «🛡 Поставить защиту на лист ОТБОРКА»
+- [x] Очередь: при занятом локе намерение фиксируется атомарной дозаписью (`appendRow`) — отметка отборщика не теряется (этап 7a)
+- [x] Сателлит (7 модулей + манифест): `sat_config.js`, `sat_api.js`, `sat_sheet.js`, `sat_refresh.js`, `sat_submit.js`, `sat_menu.js`, `sat_install.js`, `sat_appsscript.json`
+- [x] Сателлит: обновление НЕ трогает колонку галочек (пишет 1–12); галочки привязаны к `Position ID`; свой фильтр B1; своя кнопка «ПРИМЕНИТЬ»
+- [x] Сателлит исключён из выгрузки в мастер (`.claspignore`: `sat_*.js`, `sat_appsscript.json`, `SAT_*.md`, `_local_tests/**`, `_tmp_*`)
+- [x] Документация сателлита: `SAT_README.md`, `SAT_SETUP.md`, `SAT_TROUBLESHOOTING.md`
+- [x] Пользовательская документация: `REGULATIONS.md`, раздел 10 «Отборка в личном файле»
+- [x] Тесты: `_local_tests/v12_batches_test.js` (B1–B8), `_local_tests/sat_gate_test.js` (S1–S9), обновлён F7 в `_local_tests/v12_queue_capture_fix_test.js`; прогон `_tmp_run.js` расширен
+- [x] Верификация: `node --check` — 24 файла / 0 ошибок; 18 наборов тестов — все PASSED
+- [x] Итоговый отчёт: `project_info__72.md` (что сделано, контракт транспорта, состав файлов, ручные шаги, что осталось)
+- [ ] Требует Google Apps Script (ручные шаги владельца): `clasp push` мастера → «⚙ Установка V12» → «🔐 Задать/сменить секрет отборщиков» → развернуть веб-приложение с доступом «любой пользователь Google» → `V12_ROLE_MAP` → раздать личные файлы отборщикам
+- [ ] Осознанно вне рамок: политика физической выдачи (A7), массовый откат лота по `BATCH_ID`, отложенное применение пачки лотов

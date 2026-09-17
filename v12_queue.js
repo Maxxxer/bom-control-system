@@ -109,8 +109,14 @@ function v12NormalizePendingValue(field, value) {
 
 /**
  * Собрать строку очереди (массив по колонкам PENDING_EDITS).
+ *
+ * batchId/project (опц.) — привязка намерения к лоту отборки (V13). Они нужны,
+ * чтобы кнопка «ПРИМЕНИТЬ» одного отборщика сливала ТОЛЬКО его намерения
+ * (v12DrainPendingEdits(batchId)), а не всю общую очередь. Для правок прямо в
+ * мастер-таблице (Сводка/WORKING BOM/Dashboard) оба параметра пусты — такие
+ * намерения применяются общим сливом, как раньше.
  */
-function v12BuildPendingRow(sourceKey, positionId, field, value, actor, editId) {
+function v12BuildPendingRow(sourceKey, positionId, field, value, actor, editId, batchId, project) {
   const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
   const row = new Array(V12_CONFIG.COLUMN_COUNT.PENDING_EDITS).fill("");
   row[Q.DATE - 1] = new Date();
@@ -123,6 +129,8 @@ function v12BuildPendingRow(sourceKey, positionId, field, value, actor, editId) 
   row[Q.VALUE - 1] = v12NormalizePendingValue(field, value);
   row[Q.USER - 1] = actor || v12CurrentActor();
   row[Q.STATUS - 1] = V12_CONFIG.PENDING_STATUS.PENDING;
+  row[Q.BATCH_ID - 1] = batchId || "";
+  row[Q.PROJECT - 1] = project || "";
   return row;
 }
 
@@ -136,38 +144,89 @@ function v12PendingKey(source, positionId, field) {
 }
 
 /**
+ * Сделать несколько попыток взять общескриптовый лок с нарастающей паузой.
+ *
+ * Паузы берутся из V12_CONFIG.BATCH.RETRY_DELAYS_MS ([0, 300, 800]).
+ * Первая попытка — сразу, вторая и третья — через паузу: так короткая
+ * конкуренция с параллельным onEdit/«Применить» сглаживается без ожидания.
+ *
+ * Возвращает объект лока или null, если лок так и не был получен.
+ */
+function v12TryAcquireWithBackoff() {
+  const delays = (V12_CONFIG.BATCH && V12_CONFIG.BATCH.RETRY_DELAYS_MS) || [0];
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    if (attempt > 0 && typeof Utilities !== "undefined" && Utilities.sleep) {
+      Utilities.sleep(delays[attempt]);
+    }
+    const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+    if (lock) {
+      return lock;
+    }
+  }
+  return null;
+}
+
+/**
+ * Зафиксировать намерения БЕЗ лока — атомарным appendRow.
+ *
+ * ЭТО КАНАЛ БЕЗ ПОТЕРЬ. Раньше при занятом локе (идёт «Применить»/полная
+ * синхронизация/чужой onEdit) намерение просто НЕ записывалось: пользователь
+ * видел, что галочка стоит, но она молча терялась при ближайшей пересборке
+ * проекции — в SYSTEM_LOG оставалась только строка WARNING, а в интерфейсе
+ * ничего.
+ *
+ * Теперь запись делается по одной строке через Sheet.appendRow(): это ОДИН
+ * серверный вызов values.append, который НЕ требует чтения getLastRow() и
+ * поэтому не может перезатереть чужую строку — лока для него не нужно.
+ *
+ * Дубликаты безопасны: разбор очереди берёт ПОСЛЕДНЮЮ строку по ключу
+ * (v12ResolvePendingIntents, правило last-wins), а лишние строки помечаются
+ * DONE при ближайшем v12CompactPendingEdits().
+ *
+ * Возвращает { enqueued, mode }.
+ */
+function v12EnqueuePendingRowsUnlocked(rowArrays) {
+  const sheet = v12GetSheetByKey("PENDING_EDITS");
+  try {
+    rowArrays.forEach(function (row) {
+      sheet.appendRow(row);
+    });
+  } catch (e) {
+    logSystem("v12EnqueuePendingRowsUnlocked", e.message, e, "ERROR");
+    flushSystemLog();
+    return { enqueued: 0, mode: "failed" };
+  }
+  logSystem("v12EnqueuePendingRows",
+    "Намерения зафиксированы без блокировки (append): " + rowArrays.length, "INFO");
+  flushSystemLog();
+  v12UpdatePendingIndicator();
+  return { enqueued: rowArrays.length, mode: "unlocked" };
+}
+
+/**
  * Зафиксировать пачку намерений в PENDING_EDITS.
  *
- * V4-надёжность (фикс дефекта «не все позиции попадают в очередь»):
- *   1) запись идёт ПОД коротким общескриптовым локом, а `getLastRow()+1`
- *      вычисляется уже ПОД локом — параллельные onEdit больше НЕ перезатирают
- *      строки друг друга (раньше два события читали один getLastRow() и писали
- *      в одну строку — часть намерений терялась);
+ * Надёжность (V4 + V13 «канал без потерь»):
+ *   1) сначала пробуем взять короткий общескриптовый лок с backoff
+ *      (v12TryAcquireWithBackoff) — тогда getLastRow()+1 вычисляется ПОД локом
+ *      и параллельные onEdit не перезатирают строки друг друга;
  *   2) UPsert по ключу (SOURCE|POSITION_ID|FIELD): если по ключу уже есть
  *      PENDING-строка — она обновляется на месте (значение/автор/дата), иначе
  *      строка добавляется. Убирает дубли «снял → поставил» и делает применение
- *      детерминированным (в очереди максимум одно актуальное намерение на ключ).
+ *      детерминированным (в очереди максимум одно актуальное намерение на ключ);
+ *   3) если лок взять НЕ УДАЛОСЬ — намерение всё равно фиксируется атомарным
+ *      appendRow (v12EnqueuePendingRowsUnlocked). Молчаливой потери нет.
  *
  * После записи обновляется ячейка-индикатор «есть неприменённые изменения».
+ * Возвращает { enqueued, mode: "locked" | "unlocked" | "failed" }.
  */
 function v12EnqueuePendingRows(rowArrays) {
   if (!rowArrays || !rowArrays.length) {
-    return;
+    return { enqueued: 0, mode: "none" };
   }
-  // Лок с одним коротким повтором: сглаживает конкуренцию с параллельным onEdit
-  // или идущим «Применить»/полным синком, не теряя намерение «с первого раза».
-  let lock = acquireScriptLock({ tryOnly: true, timeoutMs: 10000 });
+  const lock = v12TryAcquireWithBackoff();
   if (!lock) {
-    if (typeof Utilities !== "undefined" && Utilities.sleep) {
-      Utilities.sleep(300);
-    }
-    lock = acquireScriptLock({ tryOnly: true, timeoutMs: 5000 });
-  }
-  if (!lock) {
-    logSystem("v12EnqueuePendingRows",
-      "Очередь занята (идёт применение/синхронизация) — намерение не зафиксировано", "WARNING");
-    flushSystemLog();
-    return;
+    return v12EnqueuePendingRowsUnlocked(rowArrays);
   }
   try {
     const sheet = v12GetSheetByKey("PENDING_EDITS");
@@ -233,6 +292,7 @@ function v12EnqueuePendingRows(rowArrays) {
     lock.releaseLock();
   }
   v12UpdatePendingIndicator();
+  return { enqueued: rowArrays.length, mode: "locked" };
 }
 
 /**
@@ -240,6 +300,61 @@ function v12EnqueuePendingRows(rowArrays) {
  */
 function v12EnqueuePendingEdit(sourceKey, positionId, field, value, actor) {
   v12EnqueuePendingRows([v12BuildPendingRow(sourceKey, positionId, field, value, actor)]);
+}
+
+/**
+ * Схлопнуть дубли PENDING-намерений по ключу SOURCE|POSITION_ID|FIELD.
+ *
+ * Оставляет действующей ПОСЛЕДНЮЮ (самую свежую) строку по ключу, предыдущие
+ * помечает DONE с пометкой «дубль». Это гигиена после appendRow-фолбэка
+ * (v12EnqueuePendingRowsUnlocked), который пишет намерения без лока и потому
+ * может создать несколько строк на один ключ.
+ *
+ * НЕ фильтрует по партии: схлопывание идёт по всем PENDING-строкам. Логика
+ * безопасна, потому что дубли с разными BATCH_ID по одному ключу и так
+ * разрешаются правилом last-wins при разборе намерений.
+ *
+ * Возвращает число помеченных дублей.
+ */
+function v12CompactPendingEdits() {
+  const sheet = v12GetSheetByKey("PENDING_EDITS");
+  const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
+  const ST = V12_CONFIG.PENDING_STATUS;
+  const data = readSheetValues(sheet);
+  const now = new Date();
+  const writes = [];
+  const keepRow = {};
+  let duplicates = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (String(r[Q.STATUS - 1]).trim() !== ST.PENDING) {
+      continue;
+    }
+    const pid = normalizeMaterialId(r[Q.POSITION_ID - 1]);
+    if (!pid) {
+      continue;
+    }
+    const key = v12PendingKey(r[Q.SOURCE - 1], pid, r[Q.FIELD - 1]);
+    const rowNum = i + 1;
+    if (keepRow[key]) {
+      // Прежнюю строку гасим — действующей остаётся последняя.
+      writes.push({ row: keepRow[key], col: Q.STATUS, value: ST.DONE });
+      writes.push({ row: keepRow[key], col: Q.PROCESSED_AT, value: now });
+      writes.push({ row: keepRow[key], col: Q.ERROR, value: "дубль (схлопнуто пересборкой)" });
+      duplicates++;
+    }
+    keepRow[key] = rowNum;
+  }
+
+  if (writes.length) {
+    batchWrite(sheet, writes);
+    SpreadsheetApp.flush();
+  }
+  if (duplicates) {
+    logSystem("v12CompactPendingEdits", "Схлопнуто дублей очереди: " + duplicates, "INFO");
+  }
+  return duplicates;
 }
 
 /**
@@ -569,16 +684,34 @@ function v12UpdatePendingIndicator(count) {
 }
 
 /**
- * Номера строк листа со статусом PENDING.
+ * Относится ли строка очереди к запрошенной партии.
+ *
+ * Без batchId (undefined/пусто) — относится любая строка: это режим общей
+ * кнопки «ПРИМЕНИТЬ» в мастер-таблице (Сводка / WORKING BOM / Dashboard).
  */
-function v12CollectPendingRowNumbers(data) {
+function v12PendingRowInBatch(r, batchId) {
+  if (!batchId) {
+    return true;
+  }
+  const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
+  return v12Norm(r[Q.BATCH_ID - 1]) === v12Norm(batchId);
+}
+
+/**
+ * Номера строк листа со статусом PENDING (опц. — только своей партии).
+ */
+function v12CollectPendingRowNumbers(data, batchId) {
   const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
   const pending = V12_CONFIG.PENDING_STATUS.PENDING;
   const out = [];
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][Q.STATUS - 1]).trim() === pending) {
-      out.push(i + 1);
+    if (String(data[i][Q.STATUS - 1]).trim() !== pending) {
+      continue;
     }
+    if (!v12PendingRowInBatch(data[i], batchId)) {
+      continue;
+    }
+    out.push(i + 1);
   }
   return out;
 }
@@ -587,8 +720,12 @@ function v12CollectPendingRowNumbers(data) {
  * Разобрать строки очереди в намерения с правилом last-wins.
  * Возвращает массив { row, source, pid, field, value, user } в порядке
  * первого появления ключа (SOURCE|POSITION_ID|FIELD); значение — последнее.
+ *
+ * batchId (опц.) — брать только намерения своей партии. Это ключевое отличие
+ * режима «лотами»: кнопка «ПРИМЕНИТЬ» в личном файле отборщика сливает ТОЛЬКО
+ * его отметки и НЕ коммитит незавершённую работу коллег (конфликт A3).
  */
-function v12ResolvePendingIntents(data) {
+function v12ResolvePendingIntents(data, batchId) {
   const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
   const pending = V12_CONFIG.PENDING_STATUS.PENDING;
   const byKey = {};
@@ -596,6 +733,9 @@ function v12ResolvePendingIntents(data) {
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
     if (String(r[Q.STATUS - 1]).trim() !== pending) {
+      continue;
+    }
+    if (!v12PendingRowInBatch(r, batchId)) {
       continue;
     }
     const pid = normalizeMaterialId(r[Q.POSITION_ID - 1]);
@@ -615,8 +755,42 @@ function v12ResolvePendingIntents(data) {
     byKey[key].field = field;
     byKey[key].value = v12NormalizePendingValue(field, r[Q.VALUE - 1]);
     byKey[key].user = String(r[Q.USER - 1] || "").trim();
+    byKey[key].batchId = String(r[Q.BATCH_ID - 1] || "").trim();
   }
   return order.map(function (k) { return byKey[k]; });
+}
+
+/**
+ * Дешёвая проверка: есть ли необработанные намерения КОНКРЕТНОЙ партии.
+ *
+ * Читает только две колонки (Статус, Batch ID) — поэтому применима как
+ * предфильтр партийного слива вместо v12HasCheckedHandoffs (которая сканирует
+ * чекбоксы мастерских листов и в партийном режиме не нужна).
+ */
+function v12HasPendingEditsForBatch(batchId) {
+  if (!batchId) {
+    return v12HasPendingEdits();
+  }
+  const sheet = getSheetByName(V12_CONFIG.SHEETS.PENDING_EDITS);
+  if (!sheet) {
+    return false;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return false;
+  }
+  const Q = V12_CONFIG.PENDING_EDIT_COLUMNS;
+  const pending = V12_CONFIG.PENDING_STATUS.PENDING;
+  const block = sheet.getRange(2, 1, lastRow - 1, V12_CONFIG.COLUMN_COUNT.PENDING_EDITS).getValues();
+  for (let i = 0; i < block.length; i++) {
+    if (String(block[i][Q.STATUS - 1]).trim() !== pending) {
+      continue;
+    }
+    if (v12Norm(block[i][Q.BATCH_ID - 1]) === v12Norm(batchId)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1112,13 +1286,28 @@ function v12ApplyDashboardDoneIntent(bomId, ctx) {
 }
 
 /**
- * Основной слив очереди. Применяет все PENDING-намерения пакетно, одним
- * пересчётом проекций, и помечает строки обработанными.
+ * Основной слив очереди. Применяет PENDING-намерения пакетно, одним пересчётом
+ * проекций, и помечает строки обработанными.
+ *
+ * batchId (опц.) — ВАЖНОЕ отличие режима лотов (V13):
+ *   - задан  — применяются ТОЛЬКО намерения этой партии (кнопка «ПРИМЕНИТЬ» в
+ *     личном файле отборщика). Реконсиляция по мастерским галочкам НЕ делается:
+ *     иначе в чужой лот попали бы отметки из мастерского листа ОТБОРКА;
+ *   - не задан — прежнее поведение: слить всё, что накопилось, вместе с
+ *     реконсиляцией по фактическим галочкам. Это режим кнопки в мастер-таблице
+ *     (для ADMIN и для правок Сводки / WORKING BOM / Dashboard).
  */
-function v12DrainPendingEdits() {
-  // Предфильтр: есть очередь ИЛИ стоят галочки передачи, не попавшие в очередь
-  // (страховка от потерянных onEdit — см. v12ReconcileCheckedHandoffs).
-  if (!v12HasPendingEdits() && !v12HasCheckedHandoffs()) {
+function v12DrainPendingEdits(batchId) {
+  const scoped = !!batchId;
+
+  // Предфильтр. В партийном режиме смотрим только свою партию (дешёвая
+  // проверка по колонкам «Статус» + «Batch ID»); в общем — прежнее условие
+  // с добором галочек из мастерских листов (страховка от потерянных onEdit).
+  if (scoped) {
+    if (!v12HasPendingEditsForBatch(batchId)) {
+      return { drained: 0, batchId: batchId };
+    }
+  } else if (!v12HasPendingEdits() && !v12HasCheckedHandoffs()) {
     return { drained: 0 };
   }
 
@@ -1128,18 +1317,25 @@ function v12DrainPendingEdits() {
     return { drained: 0, skipped: true };
   }
   try {
-    // Приводим очередь к каноническому виду по фактическим галочкам: схлопываем
-    // дубли по ключу и добираем отмеченные без строки. Так слив детерминирован —
-    // ни дублей, ни потерь — независимо от того, сколько событий onEdit доехало.
-    v12RebuildPendingFromChecked();
+    if (scoped) {
+      // Гигиена дублей (appendRow-фолбэк мог создать несколько строк на ключ).
+      // Реконсиляцию по галочкам мастерских листов НЕ зовём — она добавила бы
+      // в лот чужие позиции.
+      v12CompactPendingEdits();
+    } else {
+      // Приводим очередь к каноническому виду по фактическим галочкам: схлопываем
+      // дубли по ключу и добираем отмеченные без строки. Так слив детерминирован —
+      // ни дублей, ни потерь — независимо от того, сколько событий onEdit доехало.
+      v12RebuildPendingFromChecked();
+    }
 
     const sheet = v12GetSheetByKey("PENDING_EDITS");
     const data = readSheetValues(sheet);
-    const pendingRows = v12CollectPendingRowNumbers(data);
+    const pendingRows = v12CollectPendingRowNumbers(data, batchId);
 
-    const intents = v12ResolvePendingIntents(data);
+    const intents = v12ResolvePendingIntents(data, batchId);
     if (!intents.length) {
-      return { drained: 0 };
+      return { drained: 0, batchId: batchId || "" };
     }
     const posIndex = v12BuildPositionIndex();
     const materialIndex = v12BuildMaterialIndex();
@@ -1160,6 +1356,9 @@ function v12DrainPendingEdits() {
       operationId: generateEventId()
     };
     const failed = {};
+    // Отчёт для отборщика: причина по КОНКРЕТНОЙ позиции (а не по номеру
+    // строки очереди, который человеку ничего не говорит).
+    const errors = [];
     let applied = 0;
 
     intents.forEach(function (it) {
@@ -1172,16 +1371,28 @@ function v12DrainPendingEdits() {
       v12WithActor(it.user, function () {
         try {
           const res = v12ApplyPendingIntent(it, ctx, posIndex);
-          if (res && res.status === "blocked") {
-            // it.row = 0 у синтетических (реконсилированных) намерений — их
-            // некуда пометить в очереди, поэтому в failed не пишем.
-            if (it.row) {
-              failed[it.row] = res.reason || "заблокировано";
-            }
-          } else {
+          if (!res || res.status !== "blocked") {
             applied++;
+            return;
+          }
+          // Позиция уже передана ранее — это НЕ ошибка, но отборщику полезно
+          // знать, что «двойной» отметки не было.
+          const reason = res.reason || "заблокировано";
+          const isAlready = res.status === "already";
+          const isStale = !isAlready && /не найдена/i.test(reason);
+          errors.push({
+            positionId: it.pid,
+            reason: isStale ? V12_CONFIG.BATCH_ITEM_ERROR.STALE : reason,
+            already: isAlready,
+            stale: isStale
+          });
+          // it.row = 0 у синтетических (реконсилированных) намерений — их
+          // некуда пометить в очереди, поэтому в failed не пишем.
+          if (it.row) {
+            failed[it.row] = isStale ? V12_CONFIG.BATCH_ITEM_ERROR.STALE : reason;
           }
         } catch (err) {
+          errors.push({ positionId: it.pid, reason: err.message });
           failed[it.row] = err.message;
           logSystem("v12DrainPendingEdits", err.message, err, "ERROR");
         }
@@ -1217,10 +1428,15 @@ function v12DrainPendingEdits() {
     // Пачка применена — индикатор неприменённых изменений сбрасывается.
     v12UpdatePendingIndicator(0);
 
-    return { drained: applied, failed: Object.keys(failed).length };
+    return {
+      drained: applied,
+      failed: Object.keys(failed).length,
+      errors: errors,
+      batchId: batchId || ""
+    };
   } catch (error) {
     logSystem("v12DrainPendingEdits", error.message, error, "ERROR");
-    return { drained: 0, error: error.message };
+    return { drained: 0, error: error.message, batchId: batchId || "" };
   } finally {
     lock.releaseLock();
     v12FlushAudit();
@@ -1241,13 +1457,13 @@ function v12DrainPendingEdits() {
  * Это исключает конкуренцию пользовательского ввода и пересборки проекции —
  * первопричину «сброса введённых значений».
  */
-function v12ApplyChanges() {
+function v12ApplyChanges(batchId) {
   let result;
   try {
-    result = v12DrainPendingEdits();
+    result = v12DrainPendingEdits(batchId);
   } catch (e) {
     logSystem("v12ApplyChanges", e.message, e, "ERROR");
-    result = { drained: 0, error: e.message };
+    result = { drained: 0, error: e.message, batchId: batchId || "" };
   } finally {
     v12FlushAudit();
     flushSystemLog();

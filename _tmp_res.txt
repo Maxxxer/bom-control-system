@@ -1,4 +1,4 @@
-node --check: файлов=22 ошибок=0
+node --check: файлов=24 ошибок=0
 _local_tests/v12_delivery_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_picking_schema_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_audit_fixes_test.js exit=0 fails=0 last=ALL TESTS PASSED
@@ -15,3 +15,5 @@ _local_tests/v12_row_color_reset_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_deficit_checkbox_capture_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_roles_test.js exit=0 fails=0 last=ALL TESTS PASSED
 _local_tests/v12_dashboard_checkbox_test.js exit=0 fails=0 last=ALL TESTS PASSED
+_local_tests/v12_batches_test.js exit=0 fails=0 last=ALL TESTS PASSED
+_local_tests/sat_gate_test.js exit=0 fails=0 last=ALL TESTS PASSED

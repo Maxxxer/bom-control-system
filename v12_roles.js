@@ -20,11 +20,14 @@
  *   WAREHOUSE (кладовщик)     — «ОТБОРКА»: чекбокс «Отметка получено»
  *                               (PICKING_CHECKBOX); физический склад
  *                               MATERIAL_STATE: «Складской остаток»
- *                               (WAREHOUSE_QTY);
+ *                               (WAREHOUSE_QTY); отправка лота отборки из
+ *                               личного файла (PICKING_BATCH_SUBMIT) и захват
+ *                               проекта (PICKING_CLAIM);
  *   PRODUCTION (производство) — «Dashboard»: чекбокс «Выполнено»
  *                               (DASHBOARD_CHECKBOX); «WORKING BOM»:
  *                               чекбокс передачи (WORKING_BOM_CHECKBOX);
- *                               «ОТБОРКА» (PICKING_CHECKBOX);
+ *                               «ОТБОРКА» (PICKING_CHECKBOX); отправка лота
+ *                               отборки из личного файла (PICKING_BATCH_SUBMIT);
  *   ADMIN                     — все изменения без ограничений.
  * =====================================================
  */
@@ -77,10 +80,12 @@ function v12CanEditField(role, action) {
     [R.ECONOMIST]: ["SOURCE_BOM_WRITE", "DEADLINE", "REAL_DELIVERY"],
     // Снабженец: только «Заказано» и «Ожидаемая поставка» «Сводки дефицитов».
     [R.PROCUREMENT]: ["ORDERED_QTY", "EXPECTED_DATE"],
-    // Кладовщик: чекбокс «Отметка получено» «ОТБОРКИ» + «Складской остаток».
-    [R.WAREHOUSE]: ["WAREHOUSE_QTY", "PICKING_CHECKBOX"],
-    // Производство: чекбокс «Выполнено» Dashboard + передача из WORKING BOM/ОТБОРКИ.
-    [R.PRODUCTION]: ["PICKING_CHECKBOX", "WORKING_BOM_CHECKBOX", "DASHBOARD_CHECKBOX"],
+    // Кладовщик: чекбокс «Отметка получено» «ОТБОРКИ» + «Складской остаток»
+    // + отправка лота отборки из личного файла + захват проекта.
+    [R.WAREHOUSE]: ["WAREHOUSE_QTY", "PICKING_CHECKBOX", "PICKING_BATCH_SUBMIT", "PICKING_CLAIM"],
+    // Производство: чекбокс «Выполнено» Dashboard + передача из WORKING BOM/ОТБОРКИ
+    // + отправка лота отборки из личного файла.
+    [R.PRODUCTION]: ["PICKING_CHECKBOX", "WORKING_BOM_CHECKBOX", "DASHBOARD_CHECKBOX", "PICKING_BATCH_SUBMIT"],
     [R.ADMIN]: ["*"],
     [R.VIEWER]: []
   };

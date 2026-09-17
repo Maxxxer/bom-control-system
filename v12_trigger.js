@@ -33,7 +33,12 @@
  * и сторонние триггеры. Теперь удаляются только обработчики V12.
  */
 function removeV11Triggers() {
-  const ours = { v12OnEdit: true, v12ScheduledUpdate: true, v12ScheduledQueueDrain: true };
+  const ours = {
+    v12OnEdit: true,
+    v12ScheduledUpdate: true,
+    v12ScheduledQueueDrain: true,
+    v12ScheduledBatchDrain: true
+  };
   ScriptApp.getProjectTriggers().forEach((trigger) => {
     if (ours[trigger.getHandlerFunction()]) {
       ScriptApp.deleteTrigger(trigger);
@@ -51,15 +56,28 @@ function v12InstallTriggers() {
     .forSpreadsheet(ss)
     .onEdit()
     .create();
-  // Часовая синхронизация источника BOM (импорт новых BOM — не про правки).
+  // Синхронизация источника BOM (импорт новых BOM — не про правки).
+  //
+  // НОЧНОЕ ОКНО. Раньше синхронизация шла каждый час и в рабочее время
+  // выбивала пользователей из работы: на время прогона держится общескриптовая
+  // блокировка, и параллельные onEdit не могут зафиксировать намерение.
+  // Теперь — раз в сутки в 03:00.
   ScriptApp.newTrigger("v12ScheduledUpdate")
     .timeBased()
-    .everyHours(1)
+    .atHour(3)
+    .nearMinute(0)
+    .everyDays(1)
     .create();
-  // V3 — модель «Применить»: периодического слива очереди БОЛЬШЕ НЕТ.
-  // Применение намерений выполняет пользователь кнопкой «✅ Применить изменения»
-  // (v12ApplyChanges). При переустановке старый минутный триггер
-  // v12ScheduledQueueDrain удаляется (см. removeV11Triggers).
+  // Дежурный слив лотов отборщиков (страховка отложенного применения).
+  //
+  // Лот применяется сразу в doPost, но если в этот момент лок занят (идёт
+  // чужое применение или синхронизация), лот остаётся в статусе PENDING.
+  // Этот триггер раз в 5 минут добирает такие лоты одним пересчётом проекций —
+  // вместо N пересборок на N отборщиков.
+  ScriptApp.newTrigger("v12ScheduledBatchDrain")
+    .timeBased()
+    .everyMinutes(5)
+    .create();
 }
 
 /**
@@ -216,8 +234,15 @@ function v12HandleMaterialStateEdit(e) {
     });
     // Пересчитываем контрольные RESERVED_QTY/FREE_QTY склада, чтобы они не
     // «расходились» до ближайшего полного синка (контроль ТЗ №30).
+    //
+    // ПЕРЕСБОРКИ ПРОЕКЦИЙ ЗДЕСЬ НЕТ (устранение конфликта A6). Раньше вызов
+    // v12RefreshProjections() перерисовывал ВСЕ проекции, включая ОТБОРКУ, —
+    // то есть правка складского остатка одним кладовщиком стирала НЕПРИМЕНЁННЫЕ
+    // галочки всех отборщиков и сбрасывала выбранный фильтр проекта.
+    // При этом проекции от «Складского остатка» НЕ зависят: доступность считается
+    // как availableForProduction = reserved + realDelivery (склад — контрольный
+    // лист), поэтому пересборка была лишней работой без пользы.
     v12RecalculateWarehouseConsistency();
-    v12RefreshProjections();
     v12FlushAudit();
     return;
   }
@@ -372,8 +397,16 @@ function v12SetBomDone(bomId, done, skipRefresh) {
  */
 function v12RunFullSync() {
   const lock = acquireScriptLock();
+  // Флаг синхронизации: пока он выставлен, веб-API отклоняет приём лотов
+  // (retryAfterSec). Иначе лот мог бы сослаться на позиции, которые синк
+  // вот-вот удалит. В finally флаг снимается всегда; дополнительно он имеет TTL.
+  v12SetSyncInProgress(true);
   try {
     logSystem("v12RunFullSync", "Старт синхронизации V12", "INFO");
+    // Сливаем накопленные лоты отборщиков ДО синхронизации: так в очереди не
+    // остаётся намерений, ссылающихся на позиции, которые синк удалит.
+    v12DrainPendingEdits();
+    v12RecoverStuckBatches();
 
     const files = v12ListSourceBOMFiles();
     // Индексы строятся ОДИН раз на весь прогон (а не на каждый BOM) — это снимает
@@ -409,6 +442,41 @@ function v12RunFullSync() {
   } catch (error) {
     logSystem("v12RunFullSync", error.message, error, "ERROR");
     throw error;
+  } finally {
+    v12SetSyncInProgress(false);
+    lock.releaseLock();
+    v12FlushAudit();
+    flushSystemLog();
+  }
+}
+
+/**
+ * Дежурный слив лотов отборщиков (триггер раз в 5 минут).
+ *
+ * Лот применяется сразу при приёме в doPost. Но если в этот момент лок занят
+ * (идёт чужое применение или полная синхронизация), лот остаётся в статусе
+ * PENDING и его нужно добрать. Этот триггер:
+ *   1) снимает просроченные захваты проектов;
+ *   2) применяет ВСЕ накопленные лоты ОДНИМ пересчётом проекций (вместо
+ *      пересборки на каждый лот — иначе 5 отборщиков давали бы 5 пересборок);
+ *   3) приводит «зависшие» лоты к APPLIED/FAILED, чтобы отборщик увидел результат.
+ *
+ * Флаг синхронизации ЗДЕСЬ НЕ выставляется: в отличие от полной синхронизации,
+ * этот дренаж ничего не удаляет, он только применяет намерения.
+ */
+function v12ScheduledBatchDrain() {
+  const lock = acquireScriptLock({ tryOnly: true, timeoutMs: 5000 });
+  if (!lock) {
+    return { drained: 0, skipped: true };
+  }
+  try {
+    v12ExpireStaleClaims();
+    const result = v12DrainPendingEdits();
+    v12RecoverStuckBatches();
+    return result;
+  } catch (error) {
+    logSystem("v12ScheduledBatchDrain", error.message, error, "ERROR");
+    return { drained: 0, error: error.message };
   } finally {
     lock.releaseLock();
     v12FlushAudit();

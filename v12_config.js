@@ -51,7 +51,9 @@ const V12_CONFIG = {
     MATERIAL_HISTORY: "MATERIAL_HISTORY",
     BOM_REVISION: "BOM_REVISION",
     EXCLUDED_BOMS: "EXCLUDED_BOMS",
-    PENDING_EDITS: "PENDING_EDITS"
+    PENDING_EDITS: "PENDING_EDITS",
+    PICKING_BATCHES: "PICKING_BATCHES",
+    PICKING_CLAIMS: "PICKING_CLAIMS"
   },
 
   /**
@@ -73,7 +75,9 @@ const V12_CONFIG = {
     MATERIAL_HISTORY: 7,
     BOM_REVISION: 4,
     EXCLUDED_BOMS: 3,
-    PENDING_EDITS: 10
+    PENDING_EDITS: 12,
+    PICKING_BATCHES: 12,
+    PICKING_CLAIMS: 6
   },
 
   /**
@@ -391,7 +395,51 @@ const V12_CONFIG = {
     USER: 7,
     STATUS: 8,
     PROCESSED_AT: 9,
-    ERROR: 10
+    ERROR: 10,
+    // V13 — партии отборщиков: строки намерений группируются в лот (BATCH_ID),
+    // чтобы «Применить» одного отборщика сливал ТОЛЬКО его намерения, а не
+    // всю очередь (иначе кнопка коммитит незавершённую работу коллег).
+    BATCH_ID: 11,
+    PROJECT: 12
+  },
+
+  /**
+   * PICKING_BATCHES (12) — журнал лотов отборки из личных файлов отборщиков.
+   *
+   * Лот = одна отправка кнопки «ПРИМЕНИТЬ» в сателлите. Служит для
+   * идемпотентности (повторная отправка того же BATCH_ID не применяется дважды)
+   * и для отчёта отборщику (что применено, что нет и почему).
+   */
+  PICKING_BATCH_COLUMNS: {
+    BATCH_ID: 1,
+    SUBMITTED_AT: 2,
+    ACTOR: 3,
+    PROJECT: 4,
+    SPREADSHEET_ID: 5,
+    STATUS: 6,
+    APPLIED_AT: 7,
+    APPLIED_BY: 8,
+    TOTAL: 9,
+    APPLIED: 10,
+    FAILED: 11,
+    ERROR: 12
+  },
+
+  /**
+   * PICKING_CLAIMS (6) — МЯГКИЙ захват проекта отборщиком.
+   *
+   * Модель строго мягкая: конфликт НЕ блокируется, а показывается отборщику
+   * («проект уже отбирает ivan@… до 12:30»). Строка перезаписывается на
+   * последнего, кто взял проект; просроченные (EXPIRES_AT < now) считаются
+   * EXPIRED, чтобы забытая заявка не мешала работать.
+   */
+  PICKING_CLAIM_COLUMNS: {
+    PROJECT: 1,
+    ACTOR: 2,
+    SPREADSHEET_ID: 3,
+    CLAIMED_AT: 4,
+    EXPIRES_AT: 5,
+    STATUS: 6
   },
 
   /**
@@ -416,6 +464,39 @@ const V12_CONFIG = {
     ORDERED_QTY: "ORDERED_QTY",
     EXPECTED_DATE: "EXPECTED_DATE",
     DASHBOARD_DONE: "DASHBOARD_DONE"
+  },
+
+  /**
+   * Статусы лота отборки (PICKING_BATCHES).
+   *   PENDING — принят, намерения записаны, применение ещё не завершено;
+   *   APPLIED — применён полностью;
+   *   PARTIAL — применён частично (часть позиций заблокирована);
+   *   FAILED  — не применён (все позиции заблокированы либо ошибка).
+   */
+  PICKING_BATCH_STATUS: {
+    PENDING: "PENDING",
+    APPLIED: "APPLIED",
+    PARTIAL: "PARTIAL",
+    FAILED: "FAILED"
+  },
+
+  /**
+   * Статусы захвата проекта (PICKING_CLAIMS).
+   */
+  PICKING_CLAIM_STATUS: {
+    ACTIVE: "ACTIVE",
+    RELEASED: "RELEASED",
+    EXPIRED: "EXPIRED"
+  },
+
+  /**
+   * Человеческие подписи исхода применения позиции лота.
+   *   ALREADY — позиция уже передана ранее (не ошибка, но отборщику полезно);
+   *   STALE   — позиция исчезла из POSITION_STATE (BOM обновился синхронизацией).
+   */
+  BATCH_ITEM_ERROR: {
+    ALREADY: "Уже передано производству",
+    STALE: "Позиция исчезла: BOM обновился, нажмите «Обновить»"
   },
 
   /**
@@ -489,7 +570,16 @@ const V12_CONFIG = {
     EXCLUDED_BOMS: ["BOM ID", "Выполнено", "Дата"],
     PENDING_EDITS: [
       "Дата", "Edit ID", "Источник", "Position ID", "Поле",
-      "Значение", "Пользователь", "Статус", "Обработано", "Ошибка"
+      "Значение", "Пользователь", "Статус", "Обработано", "Ошибка",
+      "Batch ID", "Проект"
+    ],
+    PICKING_BATCHES: [
+      "Batch ID", "Отправлено", "Отборщик", "Проект", "Файл отборщика",
+      "Статус", "Применено", "Применил", "Всего", "Применено позиций",
+      "Не применено", "Ошибка"
+    ],
+    PICKING_CLAIMS: [
+      "Проект", "Отборщик", "Файл", "Взят", "Истекает", "Статус"
     ]
   },
 
@@ -657,6 +747,41 @@ const V12_CONFIG = {
     // вовсе — соответствующие настройки удалены, чтобы их нельзя было включить
     // «наполовину» и вернуть гонку правки и пересборки проекций.
     QUEUE_PURGE_DONE_DAYS: 30    // сколько дней хранить обработанные строки (аудит)
+  },
+
+  /**
+   * Транспорт лотов отборщиков (веб-приложение) и захват проектов.
+   *
+   * TOKEN_PROPERTY — имя свойства скрипта с общим секретом. Секрет живёт ТОЛЬКО
+   * в Script Properties мастера и сателлитов, в логи никогда не пишется.
+   *
+   * SYNC_FLAG_PROPERTY — маркер «идёт полная синхронизация». Пока он выставлен,
+   * приём лотов отклоняется (retryAfterSec), иначе намерения могли бы ссылаться
+   * на позиции, которые синхронизация вот-вот удалит. TTL обязателен: упавшее
+   * исполнение оставило бы флаг и API «залип» бы навсегда.
+   */
+  BATCH: {
+    TOKEN_PROPERTY: "PICKING_BATCH_TOKEN",
+    SYNC_FLAG_PROPERTY: "V12_SYNC_IN_PROGRESS",
+    SYNC_FLAG_TTL_MS: 5 * 60 * 1000,
+    CLAIM_TTL_MIN: 120,
+    MAX_ITEMS: 1500,
+    RETRY_DELAYS_MS: [0, 300, 800]
+  },
+
+  /**
+   * Действия веб-API (одно развёртывание, один URL, разные action).
+   */
+  WEB_ACTIONS: {
+    // Выдача сателлиту актуальных строк отборки (мастер считает их из
+    // POSITION_STATE через v12BuildPickingRecords). Нужен, потому что сателлит
+    // живёт в отдельном файле и не имеет доступа к POSITION_STATE мастера.
+    ROWS: "rows",
+    SUBMIT: "submit",
+    STATUS: "status",
+    CLAIM: "claim",
+    RELEASE: "release",
+    PICKERS: "pickers"
   },
 
   /**

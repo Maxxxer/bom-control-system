@@ -15,14 +15,17 @@ const tests = [
   "_local_tests/v12_row_color_reset_test.js",
   "_local_tests/v12_deficit_checkbox_capture_test.js",
   "_local_tests/v12_roles_test.js",
-  "_local_tests/v12_dashboard_checkbox_test.js"
+  "_local_tests/v12_dashboard_checkbox_test.js",
+  "_local_tests/v12_batches_test.js",
+  "_local_tests/sat_gate_test.js"
 ];
 const files = [
   "v12_config.js", "utils.js", "sheet_service.js", "v12_utils.js", "v12_calculate.js",
   "v12_position_state.js", "v12_material_state.js", "v12_audit.js", "v12_roles.js",
   "v12_source.js", "v12_sheet_service.js", "v12_projections.js", "v12_operations.js",
   "v12_handoff.js", "v12_change_engine.js", "v12_events.js", "lock.js", "v12_trigger.js",
-  "v12_queue.js", "v12_ui.js", "v12_controller.js", "logger.js"
+  "v12_queue.js", "v12_batches.js", "v12_webapp.js", "v12_ui.js", "v12_controller.js",
+  "logger.js"
 ];
 let report = "";
 let syntaxBad = 0;

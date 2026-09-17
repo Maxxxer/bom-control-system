@@ -451,42 +451,34 @@ function v12InstallPickingBomFilter(codes) {
 }
 
 /**
- * ОТБОРКА (PICKING): активные позиции, готовые/частично готовые к передаче.
+ * ЧИСТАЯ сборка строк ОТБОРКИ из данных POSITION_STATE (без обращения к листу).
  *
- * Фильтр по проекту (код = первая часть BOM до дефиса) берётся из ячейки B1;
- * «(Все проекты)»/пусто — без фильтра.
- * Порядок строк: BOM -> «На складе» сверху -> номер строки в BOM.
+ * Возвращает [ { row, color } ], где row — массив значений по каноническим
+ * колонкам ОТБОРКИ (включая false в колонке CHECKBOX), color — цвет строки.
+ *
+ * Вынесена отдельно по двум причинам:
+ *   1) тестируемость: алгоритм отбора проверяется без мока листа;
+ *   2) переиспользование: тот же порядок колонок и та же логика «что видно
+ *      отборщику» нужны генератору данных для личных файлов отборщиков —
+ *      иначе мастер и сателлит разойдутся в трактовке строк.
+ *
+ * filter — код проекта ("" = без фильтра), bomCreatedDates — карта дат создания
+ * BOM (нужна колонке «Дата поставки» для позиций, закрытых резервом BOM).
  */
-function v12RefreshPicking(posData, revDates) {
+function v12BuildPickingRecords(data, filter, bomCreatedDates) {
   const P = V12_CONFIG.POSITION_COLUMNS;
   const K = V12_CONFIG.PICKING_COLUMNS;
-  const data = posData || v12ReadSheet("POSITION_STATE");
-  const codes = v12GetBomProjectCodes(data);
-  // Даты создания BOM (самая ранняя ревизия) — для колонки «Дата поставки»
-  // у позиций, изначально закрытых резервом BOM. revDates передаётся из
-  // v12RefreshProjections, чтобы не читать BOM_REVISION повторно.
-  const bomCreatedDates = revDates || v12BuildRevisionDateMap();
-  let filter = v12GetPickingFilter();
-  // Выбран несуществующий/исчезнувший проект — сбрасываем фильтр на «Все проекты»
-  // до сборки строк (иначе лист окажется пустым).
-  if (filter && codes.indexOf(filter) === -1) {
-    v12GetSheetByKey("PICKING")
-      .getRange(V12_CONFIG.PICKING_FILTER.CELL_ROW, V12_CONFIG.PICKING_FILTER.CELL_COL)
-      .setValue(V12_CONFIG.PICKING_FILTER.ALL);
-    filter = "";
-  }
-  // Каждая запись несёт строку листа и её цвет (рассчитан из POSITION_STATE,
-  // т.к. после сортировки цвета должны следовать за своими строками).
+  const rows = data || [];
+  const dates = bomCreatedDates || {};
   const records = [];
 
-  for (let i = 1; i < data.length; i++) {
-    const r = data[i];
-    const lc = r[P.LIFECYCLE_STATE - 1];
-    if (lc !== V12_CONFIG.LIFECYCLE_STATE.ACTIVE) {
-      continue;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (r[P.LIFECYCLE_STATE - 1] !== V12_CONFIG.LIFECYCLE_STATE.ACTIVE) {
+      continue;   // архивные/удалённые позиции отборщику не показываем
     }
     if (v12IsChecked(r[P.RECEIVED_BY_PRODUCTION - 1])) {
-      continue;
+      continue;   // уже передано производству — строки в отборке нет
     }
     const bomName = r[P.BOM_NAME - 1];
     if (filter && v12ExtractBomProjectCode(bomName) !== filter) {
@@ -505,8 +497,9 @@ function v12RefreshPicking(posData, revDates) {
         r[P.REQUIRED_QTY - 1],
         r[P.AVAILABLE_FOR_PRODUCTION - 1],
         v12ProductionStatusDisplay(r[P.PRODUCTION_STATE - 1]),
-        v12PickingDeliveryDate(r, bomCreatedDates[normalizeMaterialId(r[P.BOM_ID - 1])]), // «Дата поставки» (кол. 12)
-        false // CHECKBOX (кол. 13)
+        // «Дата поставки» (кол. 12)
+        v12PickingDeliveryDate(r, dates[normalizeMaterialId(r[P.BOM_ID - 1])]),
+        false // CHECKBOX (кол. 13) — проекция всегда пишет false
       ],
       color: v12PickingRowColor(r)
     });
@@ -528,6 +521,38 @@ function v12RefreshPicking(posData, revDates) {
     return toNumber(a.row[K.BOM_ROW - 1]) - toNumber(b.row[K.BOM_ROW - 1]);
   });
 
+  return records;
+}
+
+/**
+ * ОТБОРКА (PICKING): активные позиции, готовые/частично готовые к передаче.
+ *
+ * Фильтр по проекту (код = первая часть BOM до дефиса) берётся из ячейки B1;
+ * «(Все проекты)»/пусто — без фильтра.
+ * Порядок строк: BOM -> «На складе» сверху -> номер строки в BOM.
+ *
+ * Сборка строк делегирована чистой v12BuildPickingRecords; здесь остаются
+ * только операции с листом: сброс исчезнувшего фильтра, запись тела,
+ * чекбоксы, цвета и переустановка выпадающего списка проектов.
+ */
+function v12RefreshPicking(posData, revDates) {
+  const data = posData || v12ReadSheet("POSITION_STATE");
+  const codes = v12GetBomProjectCodes(data);
+  // Даты создания BOM (самая ранняя ревизия) — для колонки «Дата поставки»
+  // у позиций, изначально закрытых резервом BOM. revDates передаётся из
+  // v12RefreshProjections, чтобы не читать BOM_REVISION повторно.
+  const bomCreatedDates = revDates || v12BuildRevisionDateMap();
+  let filter = v12GetPickingFilter();
+  // Выбран несуществующий/исчезнувший проект — сбрасываем фильтр на «Все проекты»
+  // до сборки строк (иначе лист окажется пустым).
+  if (filter && codes.indexOf(filter) === -1) {
+    v12GetSheetByKey("PICKING")
+      .getRange(V12_CONFIG.PICKING_FILTER.CELL_ROW, V12_CONFIG.PICKING_FILTER.CELL_COL)
+      .setValue(V12_CONFIG.PICKING_FILTER.ALL);
+    filter = "";
+  }
+
+  const records = v12BuildPickingRecords(data, filter, bomCreatedDates);
   const rows = records.map(function (rec) { return rec.row; });
   const colors = records.map(function (rec) { return rec.color; });
 
