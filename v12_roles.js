@@ -45,13 +45,32 @@ const V12_ROLE_MAP = {
 };
 
 /**
- * Роль пользователя по email.
+ * Роль пользователя по e-mail.
+ *
+ * Поиск НЕ зависит от регистра и лишних пробелов: Google отдаёт адрес в нижнем
+ * регистре, а владелец мог вписать его в карту как угодно (в V12_ROLE_MAP уже
+ * есть адрес с заглавной буквой). Точное сравнение строк в этом случае не
+ * находило роль, и пользователь терял ВСЕ права — например, снабженец не мог
+ * править «Заказано» («количество заказанного») в «Сводке дефицитов».
+ *
+ * Сначала быстрое прямое попадание (обычный случай: адрес уже в нижнем
+ * регистре), затем — поиск по нормализованным ключам карты.
  */
 function v12GetUserRole(email) {
-  if (!email) {
+  const key = v12NormalizeEmail(email);
+  if (!key) {
     return "";
   }
-  return V12_ROLE_MAP[email] || "";
+  if (V12_ROLE_MAP[key]) {
+    return V12_ROLE_MAP[key];
+  }
+  const keys = Object.keys(V12_ROLE_MAP);
+  for (let i = 0; i < keys.length; i++) {
+    if (v12NormalizeEmail(keys[i]) === key) {
+      return V12_ROLE_MAP[keys[i]];
+    }
+  }
+  return "";
 }
 
 /**
@@ -103,4 +122,52 @@ function v12RequireRole(role, action) {
     const user = v12CurrentActor();
     throw new Error("Недостаточно прав для роли '" + role + "' на действие '" + action + "' (пользователь: " + user + ")");
   }
+}
+
+/**
+ * Человеческие подписи прав (действие -> что именно разрешено править).
+ * Используются диагностикой «Мой доступ» и сообщениями об отказе в правке.
+ */
+const V12_EDITABLE_FIELDS = [
+  { action: "ORDERED_QTY", label: "«Заказано» в «Сводке дефицитов»" },
+  { action: "EXPECTED_DATE", label: "«Ожидаемая поставка» в «Сводке дефицитов»" },
+  { action: "REAL_DELIVERY", label: "галочка «Реальная поставка» в «Сводке дефицитов»" },
+  { action: "DEADLINE", label: "«Крайний срок поставки»" },
+  { action: "SOURCE_BOM_WRITE", label: "исходные BOM (Google Drive)" },
+  { action: "WAREHOUSE_QTY", label: "«Складской остаток» (MATERIAL_STATE)" },
+  { action: "PICKING_CHECKBOX", label: "галочка «Отметка получено» в «ОТБОРКЕ»" },
+  { action: "WORKING_BOM_CHECKBOX", label: "галочка передачи в «WORKING BOM»" },
+  { action: "DASHBOARD_CHECKBOX", label: "галочка «Выполнено» в «Dashboard»" },
+  { action: "PICKING_BATCH_SUBMIT", label: "отправка лота отборки из личного файла" },
+  { action: "PICKING_CLAIM", label: "захват проекта в отборке" }
+];
+
+/**
+ * Человеческая подпись поля по ключу действия (для сообщений об отказе).
+ */
+function v12FieldLabel(action) {
+  for (let i = 0; i < V12_EDITABLE_FIELDS.length; i++) {
+    if (V12_EDITABLE_FIELDS[i].action === action) {
+      return V12_EDITABLE_FIELDS[i].label;
+    }
+  }
+  return action;
+}
+
+/**
+ * Что доступно пользователю: { email, role, allowed: [подписи полей] }.
+ *
+ * Единый источник для диагностики «Мой доступ»: владелец (и любой пользователь)
+ * сразу видит, под каким адресом он определён и какие поля ему разрешены.
+ */
+function v12DescribeUserAccess(email) {
+  const who = v12NormalizeEmail(email);
+  const role = v12GetUserRole(who);
+  const allowed = [];
+  V12_EDITABLE_FIELDS.forEach(function (def) {
+    if (v12CanEditField(role, def.action)) {
+      allowed.push(def.label);
+    }
+  });
+  return { email: who, role: role, allowed: allowed };
 }

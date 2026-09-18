@@ -48,6 +48,8 @@ function v12OnOpen() {
     .addItem("♻ Пересобрать очередь (по галочкам)", "v12RebuildPendingFromCheckedUI")
     .addItem("🧹 Схлопнуть дубли очереди", "v12CompactPendingEditsUI")
     .addItem("Восстановить кнопку «Применить»", "v12InstallApplyButtonUI")
+    .addItem("🔑 Мой доступ (e-mail и права)", "v12WhoAmIUI")
+    .addItem("🔓 Разрешить правки в «Сводке дефицитов»", "v12AllowDeficitEditingUI")
     .addSeparator()
     // === Лоты отборки из личных файлов отборщиков ==========================
     .addItem("📦 Обработать лоты отборщиков", "v12ProcessBatchesUI")
@@ -631,6 +633,131 @@ function v12Assert(name, fn) {
     error = e.message;
   }
   return { name: name, pass: pass, error: error };
+}
+
+/**
+ * «Мой доступ» — показать, кем определён пользователь и что ему разрешено.
+ *
+ * Зачем это в меню. Права доступа (RBAC) считаются по e-mail, а платформа не
+ * всегда отдаёт адрес чужого (не владельца) аккаунта: снабженец видел, что
+ * введённое «Заказано» откатывается, и это выглядело как «нет доступа на
+ * правку». Здесь пользователь видит определённый e-mail, роль и полный список
+ * разрешённых полей; если e-mail не определён — может указать его один раз
+ * (он сохранится в его личных настройках и будет использоваться для проверки
+ * прав так же, как в личном файле отборщика).
+ */
+function v12WhoAmIUI() {
+  const detected = v12DetectUserEmail();
+  const declared = v12GetDeclaredUserEmail();
+  const ui = SpreadsheetApp.getUi();
+
+  let email = detected;
+  // E-mail не определён системой и не указан вручную — спрашиваем и запоминаем.
+  if (!email || !v12IsEmailLike(email)) {
+    const response = ui.prompt(
+      "Мой доступ",
+      "Система не смогла определить ваш e-mail (так бывает, когда скрипт " +
+      "запущен не под владельцем таблицы).\nВведите ваш рабочий e-mail — он " +
+      "сохранится в ваших настройках и будет использоваться для проверки прав " +
+      "доступа:",
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (response.getSelectedButton() !== ui.Button.OK) {
+      return null;
+    }
+    email = v12SetDeclaredUserEmail(response.getResponseText());
+    if (!email) {
+      v12Toast("E-mail не указан — права определить нельзя.");
+      return null;
+    }
+  }
+
+  const access = v12DescribeUserAccess(email);
+  const allowedText = access.allowed.length
+    ? access.allowed.join("; ")
+    : "нет прав на правку (обратитесь к владельцу системы)";
+  const summary = "Ваш доступ:" +
+    "\n  e-mail: " + access.email +
+    (declared && declared === access.email ? " (указан вручную)" : "") +
+    "\n  роль: " + (access.role || "не найдена в списке ролей") +
+    "\n  можно править: " + allowedText;
+
+  logSystem("v12WhoAmIUI", summary, "INFO");
+  flushSystemLog();
+  // Toast — узкая полоса; полный текст всегда есть в SYSTEM_LOG.
+  v12Toast("Ваш e-mail: " + access.email + " · роль: " +
+    (access.role || "нет") + " · полей доступно: " + access.allowed.length);
+  return access;
+}
+
+/**
+ * Снять жёсткую защиту с листа «Сводка дефицитов».
+ *
+ * Лист — рабочее место снабженца: он должен уметь вводить «Заказано» и
+ * «Ожидаемую поставку». Если владелец (или прежняя настройка) поставил на лист
+ * жёсткую защиту, снабженец физически не может править ячейки — Google
+ * показывает «защищённый диапазон», и это тоже выглядит как «нет доступа».
+ *
+ * Функция удаляет ЛЮБЫЕ защиты этого листа (уровня листа и диапазонов).
+ * Выполнять её должен владелец/админ — удалить защиту может только тот, кто
+ * владеет защитой.
+ *
+ * Возвращает { removed, error? }.
+ */
+function v12AllowDeficitEditing() {
+  const sheet = v12GetSheetByKey("DEFICIT_SUMMARY");
+  let removed = 0;
+  if (typeof sheet.getProtections !== "function") {
+    return { removed: 0, error: "Защита листов недоступна в этом окружении" };
+  }
+  const types = [
+    SpreadsheetApp.ProtectionType.SHEET,
+    SpreadsheetApp.ProtectionType.RANGE
+  ];
+  types.forEach(function (type) {
+    let protections = [];
+    try {
+      protections = sheet.getProtections(type) || [];
+    } catch (e) {
+      protections = [];
+    }
+    protections.forEach(function (prot) {
+      try {
+        prot.remove();
+        removed++;
+      } catch (e) {
+        logSystem("v12AllowDeficitEditing", e.message, e, "WARNING");
+      }
+    });
+  });
+  logSystem("v12AllowDeficitEditing",
+    "Снято защит с листа «Сводка дефицитов»: " + removed, "INFO");
+  flushSystemLog();
+  return { removed: removed };
+}
+
+/**
+ * Пункт меню «Разрешить правки в «Сводке дефицитов»» с обратной связью.
+ */
+function v12AllowDeficitEditingUI() {
+  let result;
+  try {
+    result = v12AllowDeficitEditing();
+  } catch (e) {
+    logSystem("v12AllowDeficitEditingUI", e.message, e, "ERROR");
+    v12Toast("Не удалось снять защиту: " + e.message, V12_UI.TOAST_SECONDS_ERROR);
+    return null;
+  } finally {
+    flushSystemLog();
+  }
+  if (result.error) {
+    v12Toast(result.error, V12_UI.TOAST_SECONDS_ERROR);
+  } else if (result.removed > 0) {
+    v12Toast("Защита снята (снято: " + result.removed + "). Снабжение может править «Заказано».");
+  } else {
+    v12Toast("Лист «Сводка дефицитов» не защищён — правки может вводить любой, у кого есть доступ к таблице.");
+  }
+  return result;
 }
 
 /**

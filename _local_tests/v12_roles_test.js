@@ -94,7 +94,30 @@ globalThis.SpreadsheetApp = {
   flush() {}
 };
 globalThis.LockService = { getScriptLock() { return { waitLock() {}, tryLock() { return true; }, releaseLock() {} }; } };
-globalThis.PropertiesService = { getScriptProperties() { return { getProperty() { return null; }, setProperty() {}, deleteProperty() {} }; } };
+// Script Properties — общие настройки скрипта; User Properties — ЛИЧНЫЕ
+// настройки пользователя (в них снабженец может указать свой e-mail, когда
+// платформа не отдаёт адрес чужого аккаунта в исполнении по триггеру).
+const __scriptProps = {};
+const __userProps = {};
+function makeProps(store) {
+  return {
+    getProperty(k) { return store[k] === undefined ? null : store[k]; },
+    setProperty(k, v) { store[k] = String(v); },
+    deleteProperty(k) { delete store[k]; }
+  };
+}
+globalThis.PropertiesService = {
+  getScriptProperties() { return makeProps(__scriptProps); },
+  getUserProperties() { return makeProps(__userProps); }
+};
+function setUserEmail(email) {
+  const key = V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY;
+  if (email) {
+    __userProps[key] = email;
+  } else {
+    delete __userProps[key];
+  }
+}
 globalThis.__testUser = "test@example.com";
 globalThis.Session = { getActiveUser() { return { getEmail() { return globalThis.__testUser; } }; } };
 globalThis.Utilities = { getUuid() { return "uuid-" + Math.random().toString(16).slice(2); } };
@@ -116,6 +139,9 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
   + " v12BuildPositionRow: v12BuildPositionRow, v12CountPendingEdits: v12CountPendingEdits,"
   + " v12ResolvePendingIntents: v12ResolvePendingIntents, v12RefreshDashboard: v12RefreshDashboard,"
   + " v12DrainPendingEdits: v12DrainPendingEdits, v12BuildExcludedMap: v12BuildExcludedMap,"
+  + " v12DescribeUserAccess: v12DescribeUserAccess, v12DetectUserEmail: v12DetectUserEmail,"
+  + " v12GetDeclaredUserEmail: v12GetDeclaredUserEmail, v12SetDeclaredUserEmail: v12SetDeclaredUserEmail,"
+  + " v12FieldLabel: v12FieldLabel, v12InstallDeficitCheckboxes: v12InstallDeficitCheckboxes,"
   + " v12EnqueuePendingEdit: v12EnqueuePendingEdit };";
 
 vm.runInThisContext(src, { filename: "v12-bundle-roles.js" });
@@ -374,6 +400,80 @@ resetListSheets(); resetQueue(); resetDashboard();
   check("R5: админ — «Выполнено» применено", drain.drained >= 1, true);
   check("R5: админ — BOM убран из активного дашборда", findDashRow("B1"), -1);
 }
+
+// ---------- R6: роль по e-mail не зависит от регистра/пробелов ----------
+console.log("=== R6: устойчивое определение роли по e-mail ===");
+check("R6: снабженец в другом регистре",
+  N.v12GetUserRole("  Maksim.Salavei@GMAIL.com "), R.PROCUREMENT);
+check("R6: снабженец может править «Заказано»",
+  N.v12CanEditField(N.v12GetUserRole("Maksim.Salavei@GMAIL.com"), "ORDERED_QTY"), true);
+check("R6: кладовщик распознан без учёта регистра",
+  N.v12GetUserRole("balalaikina79@gmail.com"), R.WAREHOUSE);
+{
+  const acc = N.v12DescribeUserAccess("vlad1004322@gmail.com");
+  check("R6: роль снабженца в описании доступа", acc.role, R.PROCUREMENT);
+  check("R6: в правах есть «Заказано»",
+    acc.allowed.join(" | ").indexOf("«Заказано»") >= 0, true);
+  check("R6: в правах есть «Ожидаемая поставка»",
+    acc.allowed.join(" | ").indexOf("«Ожидаемая поставка»") >= 0, true);
+  check("R6: у снабженца НЕТ «Реальной поставки»",
+    acc.allowed.join(" | ").indexOf("Реальная поставка") === -1, true);
+}
+
+// ---------- R7: доступ снабженца, когда система не отдаёт e-mail ----------
+// Так бывает в исполнении по триггеру для чужого (не владельца) аккаунта:
+// Session.getActiveUser().getEmail() пуст, и без запасного пути RBAC не узнавал
+// снабженца — ввод «Заказано» откатывался («нет доступа на правку»).
+console.log("=== R7: снабженец определён по указанному e-mail ===");
+function psCell(positionId, col) {
+  for (let i = 1; i < PS._data.length; i++) {
+    if (String(PS._data[i][P.POSITION_ID - 1]) === positionId) {
+      return PS._data[i][col - 1];
+    }
+  }
+  return null;
+}
+globalThis.__testUser = "";                    // системный e-mail недоступен
+setUserEmail("vlad1004322@gmail.com");         // снабженец указал его сам
+resetQueue(); resetDeficit();
+PS._data = [C.HEADERS.POSITION_STATE.slice()];
+PS._data.push(N.v12BuildPositionRow("B1", {
+  bomName: "B1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+  requiredQty: 10, reservedQty: 0, deadline: "2026-09-01"
+}, "B1:C1", 1, {}));
+check("R7: определённый e-mail = указанный", N.v12DetectUserEmail(), "vlad1004322@gmail.com");
+check("R7: роль определена", N.v12GetCurrentUserRole(), R.PROCUREMENT);
+
+N.v12OnEdit(cellEvent(DS, 2, D.ORDERED_QTY, 7));
+check("R7: снабженец — «Заказано» зафиксировано", queuePending(), 1);
+check("R7: поле намерения = ORDERED_QTY", firstPending()[Q.FIELD - 1], "ORDERED_QTY");
+check("R7: автор намерения — указанный e-mail",
+  firstPending()[Q.USER - 1], "vlad1004322@gmail.com");
+
+N.v12OnEdit(cellEvent(DS, 2, D.EXPECTED_DATE, new Date(2026, 8, 20)));
+check("R7: «Ожидаемая поставка» тоже зафиксирована", queuePending(), 2);
+
+N.v12DrainPendingEdits();
+check("R7: заказ применён в POSITION_STATE", psCell("B1:C1", P.ORDERED_QTY), 7);
+check("R7: ожидаемая дата применена",
+  (function () {
+    const v = psCell("B1:C1", P.EXPECTED_DATE);
+    return v instanceof Date ? v.getDate() + "." + (v.getMonth() + 1) + "." + v.getFullYear() : v;
+  })(), "20.9.2026");
+check("R7: очередь применена", queuePending(), 0);
+
+// ---------- R8: пользователь не определён — правка отклоняется ----------
+console.log("=== R8: пользователь не определён — отказ ===");
+globalThis.__testUser = "";
+setUserEmail("");
+resetQueue(); resetDeficit();
+N.v12OnEdit(cellEvent(DS, 2, D.ORDERED_QTY, 5, 0));
+check("R8: правка отклонена (очередь пуста)", queuePending(), 0);
+check("R8: значение откатано", DS.getRange(2, D.ORDERED_QTY).getValue(), 0);
+
+// Возвращаем тестового пользователя-админа, чтобы состояние не влияло дальше.
+setUserEmail("");
+globalThis.__testUser = "test@example.com";
 
 console.log("");
 if (failures === 0) { console.log("ALL TESTS PASSED"); } else { console.log("FAILURES: " + failures); process.exitCode = 1; }

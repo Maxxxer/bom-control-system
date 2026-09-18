@@ -47,10 +47,59 @@
 let _v12ActorOverride = "";
 
 /**
+ * E-mail текущего пользователя для проверки прав и аудита.
+ *
+ * Порядок поиска:
+ *   1) Session.getActiveUser().getEmail() — обычный путь (владелец скрипта);
+ *   2) e-mail, который пользователь указал САМ (свойство пользователя
+ *      V12_USER_EMAIL) — когда платформа не отдаёт адрес чужого аккаунта в
+ *      исполнении по триггеру. Без этого запасного пути RBAC не узнавал
+ *      снабженца, и правка «Заказано» откатывалась («нет доступа»), хотя право
+ *      у роли PROCUREMENT есть.
+ *
+ * Возвращает нормализованный e-mail или "" (не удалось определить).
+ */
+function v12DetectUserEmail() {
+  const detected = String(getCurrentUser() || "").trim();
+  if (v12IsEmailLike(detected)) {
+    return v12NormalizeEmail(detected);
+  }
+  return v12GetDeclaredUserEmail();
+}
+
+/**
  * Текущий «актор»: override (внутри слива) либо живой пользователь.
  */
 function v12CurrentActor() {
-  return _v12ActorOverride || getCurrentUser();
+  return _v12ActorOverride || v12DetectUserEmail() || "unknown";
+}
+
+/**
+ * Сообщить пользователю, что правка отклонена по правам доступа.
+ *
+ * Раньше отказ был виден ТОЛЬКО в служебном SYSTEM_LOG: пользователь вводил
+ * число в «Заказано», значение «само откатывалось», и это выглядело как
+ * «нет доступа на правку». Теперь причина и определённый пользователь
+ * показываются всплывающим сообщением (в фоне/тестах UI нет — там остаётся
+ * запись в журнале).
+ *
+ * Возвращает текст сообщения.
+ */
+function v12NotifyEditDenied(action) {
+  const email = v12DetectUserEmail();
+  const role = v12GetCurrentUserRole();
+  const message = "Правка отклонена — нет доступа: " + v12FieldLabel(action) + ". " +
+    "Определён пользователь: " + (email || "не определён") +
+    " (роль: " + (role || "нет роли") + "). " +
+    "Если доступ должен быть — меню «BOM CONTROL V12» → «🔑 Мой доступ».";
+  logSystem("v12NotifyEditDenied", message, "WARNING");
+  flushSystemLog();
+  try {
+    v12Toast(message, V12_UI.TOAST_SECONDS_ERROR);
+  } catch (e) {
+    // Нет UI (фоновое исполнение/локальный тест) — сообщение уже в SYSTEM_LOG.
+  }
+  return message;
 }
 
 /**
@@ -434,9 +483,7 @@ function v12CaptureCheckboxEdit(e, sheetName) {
   const role = v12GetCurrentUserRole();
   if (!v12CanEditField(role, action)) {
     v12RevertEdit(e);
-    logSystem("v12CaptureCheckboxEdit",
-      "Нет права '" + action + "' для роли '" + role + "' (" + v12CurrentActor() + ")", "WARNING");
-    flushSystemLog();
+    v12NotifyEditDenied(action);
     return true;
   }
 
@@ -453,7 +500,11 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
   const localCol = singleCell ? 0 : (column - col);
-  const actor = getCurrentUser();
+  // Автор намерения — ТОТ ЖЕ актор, по которому проверялись права
+  // (v12CurrentActor учитывает e-mail, указанный пользователем вручную).
+  // Иначе при применении пачки права перепроверялись бы по другому адресу и
+  // правка «Заказано» отклонялась бы уже на «ПРИМЕНИТЬ».
+  const actor = v12CurrentActor();
   // Один Edit ID на весь захват (без RPC на каждую строку).
   const editIdBase = generateEventId();
   // Position ID строк диапазона читаем ОДНОЙ выборкой.
@@ -546,16 +597,18 @@ function v12CaptureDeficitEdit(e) {
   });
   if (!allowed.length) {
     v12RevertEdit(e);
-    logSystem("v12CaptureDeficitEdit",
-      "Нет права на правку колонок сводки для роли '" + role + "' (" + v12CurrentActor() + ")", "WARNING");
-    flushSystemLog();
+    v12NotifyEditDenied(editable[0].action);
     return true;
   }
   if (allowed.length !== editable.length) {
     // Часть колонок диапазона недоступна роли — откатить диапазон нельзя
-    // (у события нет oldValue), поэтому фиксируем это в системном логе.
-    logSystem("v12CaptureDeficitEdit",
-      "Часть колонок диапазона недоступна роли '" + role + "' — они не применены", "WARNING");
+    // (у события нет oldValue), поэтому сообщаем о неприменённых колонках.
+    const denied = editable.filter(function (def) {
+      return v12CanEditField(role, def.action) !== true;
+    });
+    denied.forEach(function (def) {
+      v12NotifyEditDenied(def.action);
+    });
   }
 
   const sheet = range.getSheet();
@@ -565,7 +618,9 @@ function v12CaptureDeficitEdit(e) {
   const values = singleCell
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
-  const actor = getCurrentUser();
+  // Автор намерения — тот же актор, по которому проверялись права (в т.ч.
+  // e-mail, указанный пользователем вручную, — см. v12DetectUserEmail).
+  const actor = v12CurrentActor();
   // Один Edit ID на весь захват диапазона (без RPC на каждую строку).
   const editIdBase = generateEventId();
   // Position ID всех строк диапазона — одной выборкой.

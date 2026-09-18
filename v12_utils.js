@@ -88,6 +88,64 @@ function v12Norm(value) {
 }
 
 /**
+ * Нормализовать e-mail для сопоставления: без пробелов и в нижнем регистре.
+ *
+ * Зачем: права доступа (RBAC) ищут пользователя в V12_ROLE_MAP ТОЧНЫМ
+ * сравнением строк. Google отдаёт адрес в нижнем регистре, а владелец мог
+ * вписать его с заглавными буквами (в карте уже есть такой адрес) — тогда роль
+ * не находилась, и правка «Заказано» в «Сводке дефицитов» откатывалась, хотя
+ * право у роли снабженца ЕСТЬ.
+ */
+function v12NormalizeEmail(email) {
+  return String(email === null || email === undefined ? "" : email)
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Похоже ли значение на e-mail (а не на «unknown» из getCurrentUser).
+ */
+function v12IsEmailLike(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value === null || value === undefined ? "" : value).trim());
+}
+
+/**
+ * E-mail, который пользователь указал САМ (свойство пользователя скрипта).
+ *
+ * Мастер использует тот же приём, что и сателлит отборщика: когда системный
+ * e-mail недоступен (Session.getActiveUser() не отдаёт адрес чужого аккаунта в
+ * исполнении по триггеру), актор указывается явно — и права проверяются по нему.
+ *
+ * Возвращает нормализованный e-mail или "" (не указан/недоступно).
+ */
+function v12GetDeclaredUserEmail() {
+  try {
+    const props = PropertiesService.getUserProperties();
+    if (!props) {
+      return "";
+    }
+    return v12NormalizeEmail(props.getProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY));
+  } catch (e) {
+    return "";
+  }
+}
+
+/**
+ * Сохранить e-mail, указанный пользователем. Пустой e-mail удаляет запись.
+ * Возвращает сохранённое (нормализованное) значение.
+ */
+function v12SetDeclaredUserEmail(email) {
+  const value = v12NormalizeEmail(email);
+  const props = PropertiesService.getUserProperties();
+  if (!value) {
+    props.deleteProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY);
+    return "";
+  }
+  props.setProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY, value);
+  return value;
+}
+
+/**
  * Код проекта (агрегата) из имени BOM: часть до первого разделителя —
  * пробела, дефиса или нижнего подчёркивания.
  * Примеры: «1234.АБВ-5678 Щит» -> «1234.АБВ»; «1234 АБВ» -> «1234»;

@@ -375,6 +375,16 @@ function v12InstallDeficitCheckboxes(rowCount) {
     return;
   }
   sheet.getRange(2, D.REAL_DELIVERY, totalRows, 1).clearDataValidations();
+  // Рабочие колонки СНАБЖЕНЦА — «Заказано» и «Ожидаемая поставка»: снимаем с них
+  // ЛЮБЫЕ data-validation. Если на этих колонках осталась валидация-чекбокс от
+  // прежней схемы (в старом каноне на этом месте стояли другие колонки), Google
+  // ОТКЛОНЯЕТ ввод числа/даты — снабженец физически не мог ввести количество
+  // заказанного материала. Колонки идут подряд (10 и 11), поэтому чистим одним
+  // диапазоном.
+  const editableWidth = D.EXPECTED_DATE - D.ORDERED_QTY + 1;
+  if (editableWidth > 0) {
+    sheet.getRange(2, D.ORDERED_QTY, totalRows, editableWidth).clearDataValidations();
+  }
   if (rowCount > 0) {
     sheet.getRange(2, D.REAL_DELIVERY, rowCount, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
