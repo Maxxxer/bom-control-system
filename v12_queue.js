@@ -68,10 +68,50 @@ function v12DetectUserEmail() {
 }
 
 /**
- * Текущий «актор»: override (внутри слива) либо живой пользователь.
+ * E-mail текущего актора (override внутри слива либо живой пользователь).
+ *
+ * Возвращает "" (а не «unknown»), когда личность определить НЕ удалось: пустая
+ * строка — это честный признак «автор не определён», по которому захват правки
+ * не откатывает намерение, а переносит проверку прав на применение (там
+ * личность доступна — см. v12DrainPendingEdits).
+ */
+function v12CurrentActorEmail() {
+  return _v12ActorOverride || v12DetectUserEmail();
+}
+
+/**
+ * Текущий «актор» для аудита и журналов: override (внутри слива) либо живой
+ * пользователь; если личность не определена — служебное «unknown».
  */
 function v12CurrentActor() {
-  return _v12ActorOverride || v12DetectUserEmail() || "unknown";
+  return v12CurrentActorEmail() || "unknown";
+}
+
+/**
+ * Личность текущего пользователя неизвестна платформе.
+ *
+ * Штатный случай — исполнение по установленному onEdit-триггеру для чужого
+ * (не владельца скрипта) аккаунта: `Session.getActiveUser().getEmail()` тогда
+ * возвращает пустую строку, и RBAC не может узнать роль. Это документированное
+ * ограничение («script runs without that user's authorization»), а не сбой
+ * настроек — поэтому правка НЕ откатывается (иначе экономист терял галочку
+ * «Реальная поставка»), а ставится в очередь без автора.
+ */
+function v12ActorUnknown() {
+  return v12IsUnknownActor(v12CurrentActorEmail());
+}
+
+/**
+ * Сообщить в SYSTEM_LOG, что автор правки не определён и права проверит
+ * применение. Пользователю всплывающего окна нет намеренно: правка НЕ
+ * отклонена, она принята в очередь.
+ */
+function v12LogAuthorUnknown(action, sourceKey) {
+  logSystem("v12CapturePendingEdit",
+    "Автор правки не определён платформой (onEdit без авторизации пользователя): " +
+    "намерение '" + action + "' из '" + (sourceKey || "?") +
+    "' принято в очередь без автора; права проверит «ПРИМЕНИТЬ»", "WARNING");
+  flushSystemLog();
 }
 
 /**
@@ -175,8 +215,11 @@ function v12BuildPendingRow(sourceKey, positionId, field, value, actor, editId, 
   row[Q.SOURCE - 1] = sourceKey;
   row[Q.POSITION_ID - 1] = normalizeMaterialId(positionId);
   row[Q.FIELD - 1] = field;
+  // USER пуст, если автор правки не определён (см. v12CurrentActorEmail):
+  // пустой автор — признак для применения «право проверяет тот, кто нажал
+  // ПРИМЕНИТЬ», а не откат правки.
   row[Q.VALUE - 1] = v12NormalizePendingValue(field, value);
-  row[Q.USER - 1] = actor || v12CurrentActor();
+  row[Q.USER - 1] = actor || v12CurrentActorEmail();
   row[Q.STATUS - 1] = V12_CONFIG.PENDING_STATUS.PENDING;
   row[Q.BATCH_ID - 1] = batchId || "";
   row[Q.PROJECT - 1] = project || "";
@@ -478,13 +521,26 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     return false;
   }
 
-  // Права проверяем на этапе захвата: onEdit исполняется от имени редактора
-  // (в отличие от фонового триггера, где getCurrentUser() дал бы владельца).
+  // Права проверяем на этапе захвата, ПОКА личность пользователя известна.
+  //
+  // ВАЖНО (документированное ограничение платформы). В исполнении по
+  // установленному onEdit-триггеру Session.getActiveUser().getEmail() для
+  // чужого (не владельца скрипта) аккаунта возвращает пустую строку — скрипт
+  // исполняется без авторизации этого пользователя. Раньше при этом правка
+  // ОТКАТЫВАЛАСЬ: так экономист терял галочку «Реальная поставка» (право у
+  // роли есть, а личность платформой не раскрыта). Теперь намерение
+  // фиксируется БЕЗ автора, а право проверяет ПРИМЕНЕНИЕ (v12DrainPendingEdits)
+  // от имени того, кто нажал «ПРИМЕНИТЬ»: там исполнение идёт по авторизации
+  // самого пользователя, и роль определяется достоверно.
   const role = v12GetCurrentUserRole();
-  if (!v12CanEditField(role, action)) {
+  const actorUnknown = v12ActorUnknown();
+  if (!actorUnknown && !v12CanEditField(role, action)) {
     v12RevertEdit(e);
     v12NotifyEditDenied(action);
     return true;
+  }
+  if (actorUnknown) {
+    v12LogAuthorUnknown(action, sourceKey);
   }
 
   const sheet = range.getSheet();
@@ -500,11 +556,10 @@ function v12CaptureCheckboxEdit(e, sheetName) {
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
   const localCol = singleCell ? 0 : (column - col);
-  // Автор намерения — ТОТ ЖЕ актор, по которому проверялись права
-  // (v12CurrentActor учитывает e-mail, указанный пользователем вручную).
-  // Иначе при применении пачки права перепроверялись бы по другому адресу и
-  // правка «Заказано» отклонялась бы уже на «ПРИМЕНИТЬ».
-  const actor = v12CurrentActor();
+  // Автор намерения — ТОТ ЖЕ актор, по которому проверялись права (учитывает
+  // e-mail, указанный пользователем вручную); пусто, если личность не
+  // определена (право проверит применяющий — см. v12DrainPendingEdits).
+  const actor = v12CurrentActorEmail();
   // Один Edit ID на весь захват (без RPC на каждую строку).
   const editIdBase = generateEventId();
   // Position ID строк диапазона читаем ОДНОЙ выборкой.
@@ -589,18 +644,27 @@ function v12CaptureDeficitEdit(e) {
     return false;
   }
 
-  // Права проверяем на этапе захвата: onEdit исполняется от имени редактора
-  // (в отличие от фонового триггера, где getCurrentUser() дал бы владельца).
+  // Права проверяем на этапе захвата, ПОКА личность пользователя известна.
+  //
+  // Если личность неизвестна (onEdit-триггер не получает e-mail чужого
+  // аккаунта — см. подробный комментарий в v12CaptureCheckboxEdit), колонки НЕ
+  // отсекаются: намерение фиксируется БЕЗ автора, а право проверяет ПРИМЕНЕНИЕ
+  // от имени того, кто нажал «ПРИМЕНИТЬ». Раньше здесь правка откатывалась, и
+  // экономист не мог поставить галочку «Реальная поставка», хотя право у роли
+  // ECONOMIST есть.
   const role = v12GetCurrentUserRole();
-  const allowed = editable.filter(function (def) {
-    return v12CanEditField(role, def.action);
-  });
-  if (!allowed.length) {
+  const actorUnknown = v12ActorUnknown();
+  const allowed = actorUnknown
+    ? editable.slice()
+    : editable.filter(function (def) {
+        return v12CanEditField(role, def.action);
+      });
+  if (!actorUnknown && !allowed.length) {
     v12RevertEdit(e);
     v12NotifyEditDenied(editable[0].action);
     return true;
   }
-  if (allowed.length !== editable.length) {
+  if (!actorUnknown && allowed.length !== editable.length) {
     // Часть колонок диапазона недоступна роли — откатить диапазон нельзя
     // (у события нет oldValue), поэтому сообщаем о неприменённых колонках.
     const denied = editable.filter(function (def) {
@@ -610,6 +674,9 @@ function v12CaptureDeficitEdit(e) {
       v12NotifyEditDenied(def.action);
     });
   }
+  if (actorUnknown) {
+    v12LogAuthorUnknown(editable[0].action, V12_CONFIG.SOURCE_UI.DEFICIT_SUMMARY);
+  }
 
   const sheet = range.getSheet();
   const firstRow = range.getRow();
@@ -618,9 +685,9 @@ function v12CaptureDeficitEdit(e) {
   const values = singleCell
     ? [[e.value !== undefined ? e.value : range.getValue()]]
     : ((e.values && e.values.length === numRows) ? e.values : range.getValues());
-  // Автор намерения — тот же актор, по которому проверялись права (в т.ч.
-  // e-mail, указанный пользователем вручную, — см. v12DetectUserEmail).
-  const actor = v12CurrentActor();
+  // Автор намерения — тот же актор, по которому проверялись права; пусто, если
+  // личность не определена (право проверит применяющий — см. v12DrainPendingEdits).
+  const actor = v12CurrentActorEmail();
   // Один Edit ID на весь захват диапазона (без RPC на каждую строку).
   const editIdBase = generateEventId();
   // Position ID всех строк диапазона — одной выборкой.
@@ -1021,7 +1088,9 @@ function v12ReconcileCheckedHandoffs(queueData) {
         continue;
       }
       have[key] = true;
-      out.push({ row: 0, source: t.source, pid: pid, field: F, value: true, user: v12CurrentActor() });
+      // Автор синтетического намерения — живой пользователь; пусто, если
+      // личность не определена (право проверит применяющий).
+      out.push({ row: 0, source: t.source, pid: pid, field: F, value: true, user: v12CurrentActorEmail() });
     }
   });
   return out;
@@ -1197,7 +1266,9 @@ function v12RebuildPendingFromChecked() {
   }
 
   const appends = [];
-  const actor = v12CurrentActor();
+  // Автор синтетического намерения — живой пользователь; пусто, если личность
+  // не определена (право проверит применяющий — см. v12DrainPendingEdits).
+  const actor = v12CurrentActorEmail();
   // Один Edit ID-база на всю пересборку; генерируется ЛЕНИВО — только когда
   // реально есть что добавлять (иначе лишний RPC Utilities.getUuid() на пачке
   // без потерянных галочек).
@@ -1265,6 +1336,35 @@ function v12ReconcilePendingHandoffs() {
  *
  * Возвращает { status: "applied" | "already" | "blocked", reason? }.
  */
+/**
+ * Право, которым проверяется намерение очереди (нужно для правок БЕЗ автора).
+ *
+ * Применение проверяет права «за автора» тем же ключом, каким пользуется захват
+ * правки: HANDOFF зависит от листа-источника (ОТБОРКА / WORKING BOM),
+ * остальные поля — «своё» право. Возвращает ключ права или "" (неизвестно).
+ */
+function v12ActionForPendingIntent(intent) {
+  const F = V12_CONFIG.PENDING_FIELD;
+  if (intent.field === F.HANDOFF) {
+    return intent.source === V12_CONFIG.SOURCE_UI.WORKING_BOM
+      ? "WORKING_BOM_CHECKBOX"
+      : "PICKING_CHECKBOX";
+  }
+  if (intent.field === F.REAL_DELIVERY) {
+    return "REAL_DELIVERY";
+  }
+  if (intent.field === F.ORDERED_QTY) {
+    return "ORDERED_QTY";
+  }
+  if (intent.field === F.EXPECTED_DATE) {
+    return "EXPECTED_DATE";
+  }
+  if (intent.field === F.DASHBOARD_DONE) {
+    return "DASHBOARD_CHECKBOX";
+  }
+  return "";
+}
+
 function v12ApplyPendingIntent(intent, ctx, posIndex) {
   const F = V12_CONFIG.PENDING_FIELD;
   if (intent.field === F.HANDOFF) {
@@ -1320,6 +1420,9 @@ function v12ApplyRealDeliveryIntent(positionId, ctx, posIndex) {
  * активного дашборда при ближайшем v12RefreshDashboard.
  */
 function v12ApplyDashboardDoneIntent(bomId, ctx) {
+  // Право проверяем как у остальных полей очереди: при известном авторе — он
+  // (см. v12WithActor в сливе), при правке БЕЗ автора — тот, кто применяет.
+  v12RequireRole(v12GetCurrentUserRole(), "DASHBOARD_CHECKBOX");
   const id = normalizeMaterialId(bomId);
   if (!id) {
     return { status: "blocked", reason: "Не указан BOM ID" };
@@ -1352,8 +1455,16 @@ function v12ApplyDashboardDoneIntent(bomId, ctx) {
  *     реконсиляцией по фактическим галочкам. Это режим кнопки в мастер-таблице
  *     (для ADMIN и для правок Сводки / WORKING BOM / Dashboard).
  */
-function v12DrainPendingEdits(batchId) {
+function v12DrainPendingEdits(batchId, interactive) {
   const scoped = !!batchId;
+  // interactive=true — слив инициировал ЧЕЛОВЕК (кнопка «ПРИМЕНИТЬ» / пункт
+  // меню), действие исполняется под ЕГО авторизацией. Только в этом режиме
+  // применяются намерения БЕЗ автора (их записал onEdit, которому платформа не
+  // отдала e-mail — см. v12CaptureCheckboxEdit). В фоне (полная синхронизация,
+  // дежурный триггер) такие намерения НЕ применяются: иначе правку без автора
+  // коммитил бы владелец скрипта, и любой пользователь мог бы протащить
+  // изменение руками более привилегированного коллеги.
+  const humanApply = interactive === true;
 
   // Предфильтр. В партийном режиме смотрим только свою партию (дешёвая
   // проверка по колонкам «Статус» + «Batch ID»); в общем — прежнее условие
@@ -1415,6 +1526,10 @@ function v12DrainPendingEdits(batchId) {
     // строки очереди, который человеку ничего не говорит).
     const errors = [];
     let applied = 0;
+    // Намерения БЕЗ автора, оставленные в очереди до интерактивного применения.
+    const skippedAuthorless = [];
+    // Намерения БЕЗ автора, отклонённые по правам того, кто применяет.
+    const deniedAuthorless = [];
 
     intents.forEach(function (it) {
       // Отмена (last-wins) относится ТОЛЬКО к чекбокс-полям: для них value=false
@@ -1422,6 +1537,26 @@ function v12DrainPendingEdits(batchId) {
       // Очистка даты) значение применяется как есть — это не отмена.
       if (v12IsBooleanPendingField(it.field) && !it.value) {
         return;
+      }
+      // Правка без автора (onEdit не получил e-mail): право проверяет тот, кто
+      // применяет. В фоне такие намерения не трогаем — оставляем в очереди.
+      const authorless = v12IsUnknownActor(it.user);
+      if (authorless && !humanApply) {
+        skippedAuthorless.push(it);
+        return;
+      }
+      if (authorless) {
+        // Право проверяет ТОТ, КТО ПРИМЕНЯЕТ. Нет права — намерение НЕ
+        // отклоняем и НЕ помечаем FAILED: оставляем в очереди, чтобы его
+        // применил тот, у кого право есть (экономист / снабженец / кладовщик /
+        // производство). Так правка не теряется и не «проскакивает» чужими
+        // руками.
+        const needed = v12ActionForPendingIntent(it);
+        if (needed && !v12CanEditField(v12GetCurrentUserRole(), needed)) {
+          deniedAuthorless.push(it);
+          skippedAuthorless.push(it);
+          return;
+        }
       }
       v12WithActor(it.user, function () {
         try {
@@ -1474,8 +1609,17 @@ function v12DrainPendingEdits(batchId) {
     SpreadsheetApp.flush();
     v12RefreshProjections();
 
-    // Пометить обработанные (и снять с очереди логически).
-    v12MarkPendingProcessed(pendingRows, failed);
+    // Пометить обработанные (и снять с очереди логически). Строки, намеренно
+    // оставленные неприменёнными (нет автора, а слив фоновый), НЕ помечаем —
+    // они ждут интерактивного «ПРИМЕНИТЬ».
+    const skippedRows = {};
+    skippedAuthorless.forEach(function (it) {
+      if (it.row) {
+        skippedRows[it.row] = true;
+      }
+    });
+    const processedRows = pendingRows.filter(function (rowNum) { return !skippedRows[rowNum]; });
+    v12MarkPendingProcessed(processedRows, failed);
 
     // Очистка старых обработанных строк.
     v12PurgeDonePendingEdits(V12_CONFIG.SETTINGS.QUEUE_PURGE_DONE_DAYS);
@@ -1487,6 +1631,10 @@ function v12DrainPendingEdits(batchId) {
       drained: applied,
       failed: Object.keys(failed).length,
       errors: errors,
+      // Сколько намерений ждёт интерактивного применения (автор не определён)
+      // и сколько отклонено по правам того, кто применяет.
+      awaitingAuthor: skippedAuthorless.length,
+      deniedAuthor: deniedAuthorless.length,
       batchId: batchId || ""
     };
   } catch (error) {
@@ -1515,7 +1663,10 @@ function v12DrainPendingEdits(batchId) {
 function v12ApplyChanges(batchId) {
   let result;
   try {
-    result = v12DrainPendingEdits(batchId);
+    // interactive=true: это действие ЧЕЛОВЕКА (кнопка «ПРИМЕНИТЬ» / пункт меню),
+    // исполняется под его авторизацией — только здесь применяются намерения без
+    // автора (см. v12DrainPendingEdits).
+    result = v12DrainPendingEdits(batchId, true);
   } catch (e) {
     logSystem("v12ApplyChanges", e.message, e, "ERROR");
     result = { drained: 0, error: e.message, batchId: batchId || "" };

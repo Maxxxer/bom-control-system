@@ -1,0 +1,536 @@
+/**
+ * Элементы управления: кнопки, поля, значки состояния, карточки, панели,
+ * уведомления, диалог подтверждения.
+ *
+ * Оформление подчинено брендбуку: белые поверхности с тонкой границей, малые
+ * скругления, фирменный синий как основной цвет текста и границ, оранжевый —
+ * как единственный акцент действия. Жёстких теней нет: вместо них тонкая рамка и
+ * мягкая тень, чтобы сотни строк таблицы не превращались в шум.
+ */
+
+/* ── Кнопки ──────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: var(--control-height);
+  padding: 7px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--mair-navy-tint);
+  border-color: var(--mair-navy);
+  color: var(--mair-navy);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: var(--mair-orange);
+  border-color: var(--mair-orange);
+  color: var(--mair-white);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--mair-orange-deep);
+  border-color: var(--mair-orange-deep);
+  color: var(--mair-white);
+}
+
+.btn.danger {
+  background: var(--mair-burgundy);
+  border-color: var(--mair-burgundy);
+  color: var(--mair-white);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--mair-burgundy-deep);
+  border-color: var(--mair-burgundy-deep);
+  color: var(--mair-white);
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.btn.ghost:hover:not(:disabled) {
+  background: var(--mair-navy-tint);
+  border-color: transparent;
+  color: var(--mair-navy);
+}
+
+.btn.small {
+  min-height: 26px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  gap: 5px;
+}
+
+/* ── Поля ввода ──────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field label {
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-muted);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='date'],
+input[type='number'],
+select,
+textarea {
+  min-height: var(--control-height);
+  padding: 6px 10px;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+textarea {
+  min-height: 76px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--mair-navy-soft);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--mair-navy);
+  box-shadow: var(--focus-ring-navy);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--surface-sunken);
+  border-color: var(--line);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--mair-orange);
+  cursor: pointer;
+}
+
+input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/*
+ * Поля внутри строки таблицы.
+ *
+ * Обычное поле интерфейса — 34px высотой (`--control-height`): этого требует
+ * ввод в формах. В таблице та же высота съедала бы по 12px на каждой строке,
+ * поэтому ячейки-поля ниже: строка остаётся плотной, а поле — читаемым.
+ */
+input.cell-input {
+  width: 100%;
+  /* Минимальная ширина — ноль: ширину задаёт колонка, а она у таблицы точная.
+     При жёсткой раскладке собственная минимальная ширина поля вылезала бы за
+     границу ячейки и обрезалась. */
+  min-width: 0;
+  min-height: var(--table-input-min);
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+input.cell-date {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--table-input-min);
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+}
+
+/* Текстовое поле спецификации: ширину задаёт колонка таблицы */
+input.cell-text {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--table-input-min);
+  padding: 1px 6px;
+}
+
+/*
+ * Незаполненное обязательное поле подсвечивается сразу, при открытии карточки:
+ * экономисту нужно видеть, что править, не открывая каждую строку по очереди.
+ */
+input.cell-text[aria-invalid='true'],
+input.cell-input[aria-invalid='true'],
+input.cell-date[aria-invalid='true'] {
+  border-color: var(--bad);
+  background: var(--bad-tint);
+}
+
+/* В плотной строке фокусная рамка со смещением перекрывала бы соседнюю строку */
+table.data input:focus-visible {
+  outline-offset: 0;
+}
+
+/* ── Значки состояния ────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--neutral-line);
+  border-radius: var(--radius-xs);
+  background: var(--neutral-tint);
+  color: var(--neutral);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.badge.ok {
+  background: var(--ok-tint);
+  border-color: var(--ok-line);
+  color: var(--ok);
+}
+
+.badge.wait {
+  background: var(--wait-tint);
+  border-color: var(--wait-line);
+  color: var(--wait);
+}
+
+.badge.late {
+  background: var(--late-tint);
+  border-color: var(--late-line);
+  color: var(--late);
+}
+
+.badge.bad {
+  background: var(--bad-tint);
+  border-color: var(--bad-line);
+  color: var(--bad);
+}
+
+.badge.stock {
+  background: var(--stock-tint);
+  border-color: var(--stock-line);
+  color: var(--stock);
+}
+
+.badge.neutral {
+  background: var(--neutral-tint);
+  border-color: var(--neutral-line);
+  color: var(--neutral);
+}
+
+/* ── Карточки показателей ────────────────────────────────────────── */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.card .card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-muted);
+}
+
+.card .card-value {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.05;
+  color: var(--mair-navy);
+  font-variant-numeric: tabular-nums;
+}
+
+.card .card-note {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.card.accent {
+  background: var(--mair-orange-tint);
+  border-color: var(--mair-orange);
+}
+
+.card.accent .card-value,
+.card.accent .card-title {
+  color: var(--mair-orange-deep);
+}
+
+.card.alert {
+  background: var(--bad-tint);
+  border-color: var(--bad);
+}
+
+.card.alert .card-value,
+.card.alert .card-title {
+  color: var(--bad);
+}
+
+/* Карточка-ссылка на рабочее место */
+a.card:hover {
+  border-color: var(--mair-navy);
+  box-shadow: var(--shadow-md);
+}
+
+a.card .card-title {
+  color: var(--mair-navy);
+}
+
+/* ── Панели: карточка спецификации, отчёт об импорте ─────────────── */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--gap-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--mair-navy);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+}
+
+/* ── Панель действий над строками ────────────────────────────────── */
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--mair-navy-tint);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--mair-navy);
+  border-radius: var(--radius-sm);
+}
+
+.action-bar .count {
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mair-navy);
+}
+
+/* ── Форма в одну строку ─────────────────────────────────────────── */
+
+.inline-form {
+  display: flex;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: var(--gap);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--mair-navy);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Сообщения (всплывающие) ─────────────────────────────────────── */
+
+.toasts {
+  position: fixed;
+  right: var(--gap-lg);
+  bottom: var(--gap-lg);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(430px, calc(100vw - 2 * var(--gap-lg)));
+}
+
+.toast {
+  position: relative;
+  padding: 11px 38px 11px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--mair-navy);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+  animation: toast-in 0.16s ease-out;
+}
+
+.toast.info {
+  border-left-color: var(--stock);
+}
+
+.toast.success {
+  border-left-color: var(--ok);
+}
+
+.toast.error {
+  border-left-color: var(--bad);
+}
+
+.toast .toast-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.toast .toast-close:hover {
+  background: var(--surface-hover);
+  color: var(--mair-navy);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Диалог подтверждения ────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-lg);
+  background: rgba(18, 22, 42, 0.5);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  width: min(620px, 100%);
+  max-height: calc(100vh - 2 * var(--gap-lg));
+  overflow: auto;
+  padding: 22px 24px;
+  background: var(--surface);
+  border-top: 4px solid var(--mair-orange);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal h3 {
+  font-size: 22px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.modal .modal-actions {
+  display: flex;
+  gap: var(--gap-sm);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* ── Служебные элементы ──────────────────────────────────────────── */
+
+.error-text {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--bad);
+}
+
+@media (max-width: 820px) {
+  .toasts {
+    right: var(--gap);
+    left: var(--gap);
+    width: auto;
+  }
+
+  .card .card-value {
+    font-size: 26px;
+  }
+}

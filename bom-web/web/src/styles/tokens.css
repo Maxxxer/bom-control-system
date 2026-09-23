@@ -1,0 +1,152 @@
+/**
+ * Токены оформления по брендбуку MAIR (brand guidelines 2025).
+ *
+ * Источник значений — раздел 02 «Цветовая палитра»:
+ *   основной синий   RGB 43 55 116   → #2B3774
+ *   акцент оранжевый RGB 223 93 33   → #DD5D21
+ *   светло-серый     RGB 217 218 218 → #D9DADA
+ *   дополнительный бордовый RGB 138 32 61 → #8A203D
+ *   чёрный #000000, белый #FFFFFF
+ *
+ * Смысл разделения: фирменные цвета задают узнаваемость (шапка, заголовки,
+ * акценты), а цвета состояния строк и значков приходят из предметной области —
+ * снабженец и кладовщик опознают состояние строки по цвету (см. REGULATIONS.md).
+ * Поэтому цвета строк здесь повторены как токены и совпадают со значениями
+ * `COLORS` на сервере (`server/src/domain/constants.ts`) — менять их нужно парой.
+ */
+
+:root {
+  /* ── Фирменные цвета ─────────────────────────────────────────────── */
+  --mair-navy: #2b3774;
+  --mair-navy-deep: #1f2860;
+  --mair-navy-soft: #4a578f;
+  --mair-navy-tint: #e7eaf4;
+  --mair-orange: #dd5d21;
+  --mair-orange-deep: #b74a16;
+  --mair-orange-tint: #fceade;
+  --mair-gray: #d9dada;
+  --mair-burgundy: #8a203d;
+  --mair-burgundy-deep: #6f1730;
+  --mair-white: #ffffff;
+  --mair-black: #000000;
+
+  /* ── Поверхности ─────────────────────────────────────────────────── */
+  --canvas: #f1f2f6;
+  --surface: #ffffff;
+  --surface-sunken: #f7f8fb;
+  --surface-hover: #eef0f7;
+  --surface-band: var(--mair-gray);
+
+  /* ── Текст ───────────────────────────────────────────────────────── */
+  --text: #12162a;
+  --text-muted: #5b6382;
+  --text-faint: #8b91a8;
+  --text-on-brand: var(--mair-white);
+
+  /* ── Линии и границы ─────────────────────────────────────────────── */
+  --line: #dee1ea;
+  --line-soft: #ebeef4;
+  --line-strong: #c3c9d9;
+
+  /* ── Смысловые цвета (статусы) ───────────────────────────────────── */
+  --ok: #1f7a4d;
+  --ok-tint: #e3f1e8;
+  --ok-line: #b9dfc7;
+  --wait: #a3670a;
+  --wait-tint: #fbefd8;
+  --wait-line: #ecd7a8;
+  --late: #c25416;
+  --late-tint: #fce7db;
+  --late-line: #f2c6ab;
+  --bad: var(--mair-burgundy);
+  --bad-tint: #f8e5ea;
+  --bad-line: #e6c0ca;
+  --stock: #1f5c9e;
+  --stock-tint: #e2edf8;
+  --stock-line: #bfd7ee;
+  --neutral: #5b6382;
+  --neutral-tint: #eceef4;
+  --neutral-line: #d4d8e4;
+
+  /* ── Цвета строк (предметная область, см. REGULATIONS.md) ─────────── */
+  --row-red: #f6dbd8;
+  --row-orange: #f7dcc2;
+  --row-yellow: #fbeecb;
+  --row-green: #d9ebde;
+  --row-stock: #cfe3f5;
+  --row-received: #c9e5d0;
+  --row-gray: #e3e4e8;
+  --row-white: #ffffff;
+
+  /* ── Геометрия ───────────────────────────────────────────────────── */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --gap-xs: 6px;
+  --gap-sm: 10px;
+  --gap: 14px;
+  --gap-lg: 20px;
+  --gap-xl: 28px;
+
+  --control-height: 34px;
+  --header-height: 64px;
+
+  /* ── Плотность таблиц ──────────────────────────────────────────────
+     Таблицы — основной рабочий инструмент системы, и работают с ними на 24"
+     Full HD: чем больше строк помещается на экран, тем меньше прокрутки и тем
+     быстрее сверяются спецификации. Поэтому высота строки задана токенами —
+     плотность меняется здесь, а не поиском отступов по файлам стилей.
+
+     `--table-fs` — размер шрифта строки (заголовок таблицы по-прежнему берёт
+     `--fs-xs`): 12px, а не 12.5px, потому что на плотной строке важнее число
+     видимых строк, а разница в полпикселя на глаз не читается. */
+  --table-fs: 12px;
+  --table-line: 1.35;
+  --table-cell-py: 3px;
+  --table-cell-px: 8px;
+  --table-head-py: 4px;
+  /* Высота полей ввода внутри строки: у плотной строки — 22px, у «свободно» — 26px */
+  --table-input-min: 22px;
+
+  /* ── Тени и фокус ────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(18, 22, 42, 0.06);
+  --shadow-md: 0 4px 16px rgba(18, 22, 42, 0.1);
+  --shadow-lg: 0 20px 50px rgba(18, 22, 42, 0.24);
+  --focus-ring: 0 0 0 3px rgba(221, 93, 33, 0.3);
+  --focus-ring-navy: 0 0 0 3px rgba(43, 55, 116, 0.24);
+
+  /* ── Типографика ─────────────────────────────────────────────────── */
+  --font-display: 'Oswald', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --font: 'Inter', 'Segoe UI', system-ui, -apple-system, Arial, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, 'SFMono-Regular', 'Courier New', monospace;
+
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-md: 13.5px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+
+  --tracking-label: 0.09em;
+  --tracking-nav: 0.06em;
+}
+
+/*
+ * Режим «свободно»: строка выше, шрифт на полпункта крупнее, поля ввода выше.
+ *
+ * Включается кнопкой в шапке (`ui/density.ts`), выбор хранится в браузере. Режим
+ * нужен там, где плотная строка неудобна: увеличенный системный шрифт, работа с
+ * ноутбука, обучение нового сотрудника. Значения — только для таблиц: остальные
+ * элементы интерфейса от плотности не зависят.
+ */
+:root[data-density='roomy'] {
+  --table-fs: 13px;
+  --table-line: 1.5;
+  --table-cell-py: 6px;
+  --table-head-py: 6px;
+  --table-input-min: 26px;
+}

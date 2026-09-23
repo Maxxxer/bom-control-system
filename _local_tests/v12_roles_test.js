@@ -19,6 +19,13 @@
  *   R5 — Dashboard: производство фиксирует «Выполнено» в очереди (как чекбоксы
  *        Сводки), применение отмечает BOM выполненным и убирает его из активного
  *        дашборда; экономист — отклонён.
+ *   R6 — роль по e-mail не зависит от регистра/пробелов;
+ *   R7 — снабженец определён по УКАЗАННОМУ e-mail (когда системный недоступен);
+ *   R8 — автор правки не определён: намерение принимается (правка не откатывается),
+ *        фон его НЕ применяет, чужая роль его НЕ применяет и НЕ теряет, а тот,
+ *        у кого право есть (экономист), применяет своей кнопкой «ПРИМЕНИТЬ»;
+ *   R9 — e-mail пользователя определяется по ОБЩЕМУ реестру (анонимный ключ) —
+ *        путь для onEdit-триггера, где свойства пользователя принадлежат владельцу.
  *
  * ВАЖНО: файл — Node-скрипт (require/vm) и НЕ выгружается в Apps Script.
  * Запуск: node _local_tests/v12_roles_test.js
@@ -119,7 +126,14 @@ function setUserEmail(email) {
   }
 }
 globalThis.__testUser = "test@example.com";
-globalThis.Session = { getActiveUser() { return { getEmail() { return globalThis.__testUser; } }; } };
+// __tmpUserKey — АНОНИМНЫЙ ключ пользователя (Session.getTemporaryActiveUserKey).
+// Платформа отдаёт его и там, где e-mail недоступен (исполнение по onEdit-триггеру
+// от имени владельца): по нему мастер раскладывает общий реестр «кто есть кто».
+globalThis.__tmpUserKey = "";
+globalThis.Session = {
+  getActiveUser() { return { getEmail() { return globalThis.__testUser; } }; },
+  getTemporaryActiveUserKey() { return globalThis.__tmpUserKey; }
+};
 globalThis.Utilities = { getUuid() { return "uuid-" + Math.random().toString(16).slice(2); } };
 globalThis.logSystem = function () {};
 globalThis.flushSystemLog = function () {};
@@ -142,7 +156,9 @@ const src = files.map(function (f) { return fs.readFileSync(f, "utf8"); }).join(
   + " v12DescribeUserAccess: v12DescribeUserAccess, v12DetectUserEmail: v12DetectUserEmail,"
   + " v12GetDeclaredUserEmail: v12GetDeclaredUserEmail, v12SetDeclaredUserEmail: v12SetDeclaredUserEmail,"
   + " v12FieldLabel: v12FieldLabel, v12InstallDeficitCheckboxes: v12InstallDeficitCheckboxes,"
-  + " v12EnqueuePendingEdit: v12EnqueuePendingEdit };";
+  + " v12EnqueuePendingEdit: v12EnqueuePendingEdit, v12ApplyChanges: v12ApplyChanges,"
+  + " v12RememberDeclaredUserEmail: v12RememberDeclaredUserEmail,"
+  + " v12IsUnknownActor: v12IsUnknownActor };";
 
 vm.runInThisContext(src, { filename: "v12-bundle-roles.js" });
 const N = globalThis.__V12;
@@ -462,16 +478,73 @@ check("R7: ожидаемая дата применена",
   })(), "20.9.2026");
 check("R7: очередь применена", queuePending(), 0);
 
-// ---------- R8: пользователь не определён — правка отклоняется ----------
-console.log("=== R8: пользователь не определён — отказ ===");
-globalThis.__testUser = "";
-setUserEmail("");
+// ---------- R8: автор правки не определён — право проверяет «ПРИМЕНИТЬ» ----------
+// Реальный onEdit чужого (не владельца) аккаунта: платформа НЕ отдаёт e-mail,
+// поэтому на захвате роль определить нельзя. Раньше из-за этого правка
+// ОТКАТЫВАЛАСЬ, и экономист не мог поставить галочку «Реальная поставка».
+// Теперь намерение принимается БЕЗ автора, а право проверяет тот, кто нажимает
+// «ПРИМЕНИТЬ» (действие от имени пользователя).
+console.log("=== R8: автор правки не определён — намерение принято, право проверит «ПРИМЕНИТЬ» ===");
+globalThis.__testUser = "";        // системный e-mail недоступен
+setUserEmail("");                  // и вручную e-mail не указан
+globalThis.__tmpUserKey = "";      // и в реестре по анонимному ключу ничего нет
 resetQueue(); resetDeficit();
-N.v12OnEdit(cellEvent(DS, 2, D.ORDERED_QTY, 5, 0));
-check("R8: правка отклонена (очередь пуста)", queuePending(), 0);
-check("R8: значение откатано", DS.getRange(2, D.ORDERED_QTY).getValue(), 0);
+PS._data = [C.HEADERS.POSITION_STATE.slice()];
+PS._data.push(N.v12BuildPositionRow("B1", {
+  bomName: "B1", row: 1, code: "C1", name: "M-C1", model: "M1", unit: "шт",
+  requiredQty: 5, reservedQty: 0, deadline: "2026-09-01"
+}, "B1:C1", 1, {}));
+DS._setCell(2, D.REAL_DELIVERY, true);
+N.v12OnEdit(cellEvent(DS, 2, D.REAL_DELIVERY, true, false));
+check("R8: намерение принято (не откатано)", queuePending(), 1);
+check("R8: автор намерения пуст", String(firstPending()[Q.USER - 1]), "");
+check("R8: галочка НЕ откатана", DS.getRange(2, D.REAL_DELIVERY).getValue(), true);
+
+// Фоновый слив (полная синхронизация / дежурный триггер) намерение НЕ применяет:
+// иначе правку без автора коммитил бы владелец скрипта.
+const bg = N.v12DrainPendingEdits();
+check("R8: фон не применил", bg.drained, 0);
+check("R8: намерение ждёт «ПРИМЕНИТЬ»", bg.awaitingAuthor, 1);
+check("R8: строка осталась PENDING", queuePending(), 1);
+check("R8: поставка не зафиксирована", psCell("B1:C1", P.REAL_DELIVERY_QTY), 0);
+
+// Снабженец права на «Реальную поставку» НЕ имеет: его «ПРИМЕНИТЬ» намерение не
+// применяет — но и НЕ теряет, строка остаётся в очереди до нужного пользователя.
+asUser(U.procurement);
+const deniedApply = N.v12ApplyChanges();
+check("R8: снабженец не применил", deniedApply.drained, 0);
+check("R8: снабженец увидел «ждут применения»", deniedApply.awaitingAuthor, 1);
+check("R8: намерение осталось в очереди", queuePending(), 1);
+check("R8: поставка не зафиксирована", psCell("B1:C1", P.REAL_DELIVERY_QTY), 0);
+
+// Экономист (право REAL_DELIVERY есть) применяет своей кнопкой — всё работает.
+asUser(U.economist);
+const econApply = N.v12ApplyChanges();
+check("R8: экономист применил", econApply.drained >= 1, true);
+check("R8: поставка зафиксирована", psCell("B1:C1", P.REAL_DELIVERY_QTY), 5);
+check("R8: очередь очищена", queuePending(), 0);
+
+// ---------- R9: e-mail пользователя по ОБЩЕМУ реестру (анонимный ключ) ----------
+// Свойства ПОЛЬЗОВАТЕЛЯ в onEdit-триггере принадлежат владельцу таблицы, поэтому
+// e-mail экономиста виден триггеру только через общий реестр по анонимному ключу
+// (его пишет пункт меню «Мой доступ»).
+console.log("=== R9: определение e-mail по общему реестру (анонимный ключ) ===");
+globalThis.__testUser = "";
+globalThis.__tmpUserKey = "anon-key-economist";
+setUserEmail("");                                // личные настройки НЕ видны
+N.v12RememberDeclaredUserEmail(U.economist);     // экономист указал e-mail в меню
+check("R9: e-mail из реестра", N.v12DetectUserEmail(), U.economist);
+check("R9: роль из реестра", N.v12GetCurrentUserRole(), R.ECONOMIST);
+resetQueue(); resetDeficit();
+DS._setCell(2, D.REAL_DELIVERY, true);
+N.v12OnEdit(cellEvent(DS, 2, D.REAL_DELIVERY, true, false));
+check("R9: экономист зафиксировал намерение", queuePending(), 1);
+check("R9: автор — экономист", firstPending()[Q.USER - 1], U.economist);
+N.v12ApplyChanges();
+check("R9: поставка применена", psCell("B1:C1", P.REAL_DELIVERY_QTY), 5);
 
 // Возвращаем тестового пользователя-админа, чтобы состояние не влияло дальше.
+globalThis.__tmpUserKey = "";
 setUserEmail("");
 globalThis.__testUser = "test@example.com";
 

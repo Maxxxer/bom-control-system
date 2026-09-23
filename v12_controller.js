@@ -83,6 +83,9 @@ function v12ApplyChangesUI() {
   const result = v12ApplyChanges();
   const applied = (result && typeof result.drained === "number") ? result.drained : 0;
   const failed = (result && typeof result.failed === "number") ? result.failed : 0;
+  // Намерения БЕЗ автора (onEdit не получил e-mail), на которые у нажавшего нет
+  // права: НЕ теряются — остаются в очереди и ждут того, у кого право есть.
+  const awaiting = (result && typeof result.awaitingAuthor === "number") ? result.awaitingAuthor : 0;
   if (result && result.skipped) {
     v12Toast("Система занята — повторите через несколько секунд.");
   } else if (result && result.error) {
@@ -90,6 +93,9 @@ function v12ApplyChangesUI() {
   } else if (failed > 0) {
     v12Toast("Применено: " + applied + ", не применено: " + failed +
       " (см. PENDING_EDITS, колонка «Ошибка»)", V12_UI.TOAST_SECONDS_ERROR);
+  } else if (awaiting > 0) {
+    v12Toast("Ждут применения под своим аккаунтом: " + awaiting +
+      " (у вас нет права на это поле). Применено: " + applied, V12_UI.TOAST_SECONDS_ERROR);
   } else if (applied > 0) {
     v12Toast("Применено изменений: " + applied);
   } else {

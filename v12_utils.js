@@ -110,39 +110,167 @@ function v12IsEmailLike(value) {
 }
 
 /**
- * E-mail, который пользователь указал САМ (свойство пользователя скрипта).
+ * АНОНИМНЫЙ ключ текущего пользователя (не раскрывает личность).
  *
- * Мастер использует тот же приём, что и сателлит отборщика: когда системный
- * e-mail недоступен (Session.getActiveUser() не отдаёт адрес чужого аккаунта в
- * исполнении по триггеру), актор указывается явно — и права проверяются по нему.
+ * Нужен там, где платформа принципиально не отдаёт e-mail: в исполнении по
+ * установленному onEdit-триггеру `Session.getActiveUser().getEmail()` для
+ * чужого (не владельца скрипта) аккаунта возвращает пустую строку — это
+ * документированное ограничение («script runs without that user's
+ * authorization»). Ключ же платформа отдаёт всегда: он уникален для
+ * пользователя, но личности не раскрывает, поэтому по нему можно разложить
+ * ОБЩИЙ реестр «кто есть кто» (см. v12RememberDeclaredUserEmail).
  *
- * Возвращает нормализованный e-mail или "" (не указан/недоступно).
+ * Возвращает ключ или "" (недоступен).
  */
-function v12GetDeclaredUserEmail() {
+function v12GetAnonymousUserKey() {
   try {
-    const props = PropertiesService.getUserProperties();
-    if (!props) {
-      return "";
-    }
-    return v12NormalizeEmail(props.getProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY));
+    return String(Session.getTemporaryActiveUserKey() || "").trim();
   } catch (e) {
     return "";
   }
 }
 
 /**
+ * Ключ записи общего реестра «анонимный ключ → e-mail».
+ */
+function v12UserEmailRegistryKey(anonymousKey) {
+  return V12_CONFIG.SETTINGS.USER_EMAIL_REGISTRY_PREFIX + String(anonymousKey || "").trim();
+}
+
+/**
+ * Запомнить e-mail пользователя в ОБЩЕМ реестре скрипта по его анонимному ключу.
+ *
+ * Зачем второй носитель, если есть свойства пользователя. Свойства
+ * пользователя доступны «текущему ИЛИ ЭФФЕКТИВНОМУ пользователю»: в
+ * исполнении по установленному onEdit-триггеру эффективный пользователь —
+ * владелец таблицы, поэтому личная настройка экономиста в триггере не видна и
+ * права снова не определялись (галочка «Реальная поставка» откатывалась).
+ * Реестр живёт в свойствах СКРИПТА (видны всем исполнениям) и не раскрывает
+ * личность: ключ — анонимный.
+ *
+ * Записи старше TTL не используются: анонимный ключ платформа меняет раз в
+ * 30 дней, поэтому протухшая запись просто перестаёт находиться.
+ */
+function v12RememberDeclaredUserEmail(email) {
+  const value = v12NormalizeEmail(email);
+  const key = v12GetAnonymousUserKey();
+  if (!value || !key) {
+    return "";
+  }
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (!props) {
+      return "";
+    }
+    props.setProperty(v12UserEmailRegistryKey(key), value);
+    props.setProperty(v12UserEmailRegistryKey(key) + "|AT", String(new Date().getTime()));
+  } catch (e) {
+    return "";
+  }
+  return value;
+}
+
+/**
+ * E-mail из ОБЩЕГО реестра по анонимному ключу текущего пользователя.
+ *
+ * Возвращает нормализованный e-mail или "" (записи нет либо она протухла).
+ */
+function v12GetRegisteredUserEmail() {
+  const key = v12GetAnonymousUserKey();
+  if (!key) {
+    return "";
+  }
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (!props) {
+      return "";
+    }
+    const value = v12NormalizeEmail(props.getProperty(v12UserEmailRegistryKey(key)));
+    if (!value) {
+      return "";
+    }
+    const ttlDays = toNumber(V12_CONFIG.SETTINGS.USER_EMAIL_REGISTRY_TTL_DAYS);
+    if (ttlDays > 0) {
+      const at = toNumber(props.getProperty(v12UserEmailRegistryKey(key) + "|AT"));
+      if (!at || (new Date().getTime() - at) > ttlDays * 24 * 60 * 60 * 1000) {
+        return "";
+      }
+    }
+    return value;
+  } catch (e) {
+    return "";
+  }
+}
+
+/**
+ * E-mail, который пользователь указал САМ.
+ *
+ * Порядок:
+ *   1) свойство ПОЛЬЗОВАТЕЛЯ (V12_USER_EMAIL) — быстрый путь, работает в
+ *      исполнении от имени самого пользователя (меню, кнопка «ПРИМЕНИТЬ»);
+ *   2) ОБЩИЙ реестр по анонимному ключу — путь для onEdit-триггера, где
+ *      свойства пользователя принадлежат владельцу таблицы, а e-mail
+ *      пользователя платформа не отдаёт.
+ *
+ * Мастер использует тот же приём, что и сателлит отборщика: когда системный
+ * e-mail недоступен, актор указывается явно — и права проверяются по нему.
+ *
+ * Возвращает нормализованный e-mail или "" (не указан/недоступно).
+ */
+function v12GetDeclaredUserEmail() {
+  try {
+    const props = PropertiesService.getUserProperties();
+    if (props) {
+      const own = v12NormalizeEmail(props.getProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY));
+      if (own) {
+        return own;
+      }
+    }
+  } catch (e) {
+    // Свойства пользователя недоступны — остаётся общий реестр.
+  }
+  return v12GetRegisteredUserEmail();
+}
+
+/**
  * Сохранить e-mail, указанный пользователем. Пустой e-mail удаляет запись.
+ *
+ * Пишем ОБА носителя: свойство пользователя (быстрый путь и исполнение от имени
+ * пользователя) и общий реестр по анонимному ключу (путь onEdit-триггера, где
+ * свойство пользователя принадлежит владельцу таблицы и не видно).
+ *
  * Возвращает сохранённое (нормализованное) значение.
  */
 function v12SetDeclaredUserEmail(email) {
   const value = v12NormalizeEmail(email);
-  const props = PropertiesService.getUserProperties();
-  if (!value) {
-    props.deleteProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY);
-    return "";
+  let props = null;
+  try {
+    props = PropertiesService.getUserProperties();
+  } catch (e) {
+    props = null;
   }
-  props.setProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY, value);
+  if (props) {
+    if (!value) {
+      props.deleteProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY);
+    } else {
+      props.setProperty(V12_CONFIG.SETTINGS.USER_EMAIL_PROPERTY, value);
+    }
+  }
+  if (value) {
+    v12RememberDeclaredUserEmail(value);
+  }
   return value;
+}
+
+/**
+ * Пользователь НЕ определён (нет e-mail ни из системы, ни из настроек).
+ *
+ * «unknown» — служебная подстановка getCurrentUser(), она означает то же самое:
+ * личность не установлена, проверять права по ней нельзя.
+ */
+function v12IsUnknownActor(email) {
+  const who = v12NormalizeEmail(email);
+  return !who || who === "unknown";
 }
 
 /**
