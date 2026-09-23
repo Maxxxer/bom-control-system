@@ -3,6 +3,8 @@
  *
  *   GET  /api/warehouse             — остатки, резервы, свободный остаток
  *   GET  /api/warehouse/summary     — сводка (сколько строк, сколько проблемных)
+ *   POST /api/warehouse/bulk        — МАССОВАЯ установка остатков (вставка столбца
+ *                                     из Excel: одна команда на всю пачку)
  *   POST /api/warehouse/:materialKey — установить фактический остаток
  *
  * Ключ материала содержит вертикальную черту и кириллицу, поэтому клиент кодирует
@@ -14,8 +16,35 @@ import type { FastifyInstance } from 'fastify';
 import type { AppConfig } from '../../config.js';
 import type { Database } from '../../db/Database.js';
 import { ValidationError } from '../../errors.js';
-import { listInconsistencies, listWarehouse, setWarehouseQuantity } from '../../services/warehouseService.js';
+import {
+  listInconsistencies,
+  listWarehouse,
+  setWarehouseQuantity,
+  setWarehouseQuantitiesBulk,
+  type WarehouseBulkChange,
+} from '../../services/warehouseService.js';
+import { sendBulkReply } from '../operationReply.js';
 import { authenticate, authenticateWithContext, requireBody } from '../requestAuth.js';
+
+/**
+ * Прочитать список остатков из тела запроса.
+ *
+ * Значения здесь НЕ приводятся: их проверяет сервис (`parseBulkQuantity`), чтобы
+ * правило разбора количества оставалось в одном месте. Маршрут следит только за
+ * формой — «список объектов с полями materialKey, quantity».
+ */
+function readBulkQuantities(value: unknown): WarehouseBulkChange[] {
+  if (!Array.isArray(value)) {
+    throw new ValidationError('Не передан список остатков');
+  }
+  return value.map((item) => {
+    const entry = (item ?? {}) as { materialKey?: unknown; quantity?: unknown };
+    return {
+      materialKey: String(entry.materialKey ?? '').trim(),
+      quantity: entry.quantity ?? null,
+    };
+  });
+}
 
 /** Ключ материала из адреса запроса. */
 function materialKeyOf(request: { params: unknown }): string {
@@ -58,6 +87,22 @@ export function registerWarehouseRoutes(
       reservedTotal: rows.reduce((sum, row) => sum + row.reservedQty, 0),
       freeTotal: rows.reduce((sum, row) => sum + row.freeQty, 0),
     };
+  });
+
+  /**
+   * Массовая установка остатков.
+   *
+   * Объявлен ДО `/api/warehouse/:materialKey` намеренно: у адресов одинаковый
+   * префикс, и объявление после параметрического маршрута рисковало бы принять
+   * «bulk» за ключ материала.
+   */
+  app.post('/api/warehouse/bulk', async (request, reply) => {
+    const { ctx } = await authenticateWithContext(db, request);
+    const body = requireBody<{ changes?: unknown }>(request);
+    const result = await setWarehouseQuantitiesBulk(db, ctx, {
+      changes: readBulkQuantities(body.changes),
+    });
+    return sendBulkReply(reply, result);
   });
 
   app.post('/api/warehouse/:materialKey', async (request, reply) => {

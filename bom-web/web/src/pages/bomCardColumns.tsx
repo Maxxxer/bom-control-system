@@ -12,6 +12,12 @@
  *     больше строк;
  *   * строка с «Ошибкой данных» помечена значком с перечнем незаполненных полей,
  *     а не общим «что-то не так»: экономисту нужно знать, что именно править.
+ *
+ * Про массовый ввод. У каждой правящейся колонки указаны `bulkField` (имя поля,
+ * которое понимает массовая правка) и текст значения — благодаря этому колонка
+ * участвует в выделении и вставке блока из Excel. Операционные колонки остаются
+ * только для чтения: их правит своя роль на своём экране, и вставка в них не
+ * притворяется допустимой — таблица честно сообщает, сколько ячеек пропущено.
  */
 
 import type { PositionDto } from '../api/types.js';
@@ -65,6 +71,9 @@ export function buildBomCardColumns(
       width: '56px',
       sticky: true,
       sortValue: (row) => row.identity.rowNo,
+      text: (row) => String(row.identity.rowNo),
+      bulkField: 'rowNo',
+      readOnly: !editable,
       render: (row) => (
         <EditableNumber
           value={row.identity.rowNo}
@@ -80,6 +89,9 @@ export function buildBomCardColumns(
       width: '320px',
       sticky: true,
       sortValue: (row) => `${row.identity.name} ${row.identity.model}`,
+      text: (row) => row.identity.name,
+      bulkField: 'name',
+      readOnly: !editable,
       render: (row) => (
         <EditableText
           value={row.identity.name}
@@ -95,6 +107,9 @@ export function buildBomCardColumns(
       title: 'Модель',
       width: '140px',
       sortValue: (row) => row.identity.model,
+      text: (row) => row.identity.model,
+      bulkField: 'model',
+      readOnly: !editable,
       render: (row) => (
         <EditableText
           value={row.identity.model}
@@ -110,6 +125,9 @@ export function buildBomCardColumns(
       title: 'Артикул',
       width: '130px',
       sortValue: (row) => row.identity.code,
+      text: (row) => row.identity.code,
+      bulkField: 'code',
+      readOnly: !editable,
       render: (row) => (
         <EditableText
           value={row.identity.code}
@@ -127,6 +145,9 @@ export function buildBomCardColumns(
       title: 'Производитель',
       width: '150px',
       sortValue: (row) => row.identity.manufacturer,
+      text: (row) => row.identity.manufacturer,
+      bulkField: 'manufacturer',
+      readOnly: !editable,
       render: (row) => (
         <EditableText
           value={row.identity.manufacturer}
@@ -144,6 +165,9 @@ export function buildBomCardColumns(
       title: 'Ед.',
       width: '72px',
       sortValue: (row) => row.identity.unit,
+      text: (row) => row.identity.unit,
+      bulkField: 'unit',
+      readOnly: !editable,
       render: (row) => (
         <EditableText
           value={row.identity.unit}
@@ -160,6 +184,9 @@ export function buildBomCardColumns(
       numeric: true,
       width: '96px',
       sortValue: (row) => row.quantities.requiredQty,
+      text: (row) => formatQty(row.quantities.requiredQty),
+      bulkField: 'requiredQty',
+      readOnly: !editable,
       render: (row) => (
         <EditableNumber
           value={row.quantities.requiredQty}
@@ -175,6 +202,9 @@ export function buildBomCardColumns(
       numeric: true,
       width: '96px',
       sortValue: (row) => row.quantities.reservedQty,
+      text: (row) => formatQty(row.quantities.reservedQty),
+      bulkField: 'reservedQty',
+      readOnly: !editable,
       render: (row) => (
         <EditableNumber
           value={row.quantities.reservedQty}
@@ -190,6 +220,7 @@ export function buildBomCardColumns(
       numeric: true,
       width: '92px',
       sortValue: (row) => row.quantities.orderedQty,
+      text: (row) => formatQty(row.quantities.orderedQty),
       render: (row) => formatQty(row.quantities.orderedQty),
     },
     {
@@ -198,6 +229,7 @@ export function buildBomCardColumns(
       numeric: true,
       width: '104px',
       sortValue: (row) => row.quantities.realDeliveryQty,
+      text: (row) => formatQty(row.quantities.realDeliveryQty),
       render: (row) => formatQty(row.quantities.realDeliveryQty),
     },
     {
@@ -205,6 +237,7 @@ export function buildBomCardColumns(
       title: 'Ожидаемая поставка',
       width: '116px',
       sortValue: (row) => row.expectedDate ?? '',
+      text: (row) => (row.expectedDate ? formatDate(row.expectedDate) : ''),
       render: (row) => <span className="mono">{formatDate(row.expectedDate)}</span>,
     },
     {
@@ -212,6 +245,9 @@ export function buildBomCardColumns(
       title: 'Крайний срок',
       width: '116px',
       sortValue: (row) => row.identity.deadline ?? '',
+      text: (row) => (row.identity.deadline ? formatDate(row.identity.deadline) : ''),
+      bulkField: 'deadline',
+      readOnly: !editable,
       render: (row) => (
         <EditableDate
           value={row.identity.deadline}
@@ -227,6 +263,8 @@ export function buildBomCardColumns(
       title: 'Состояние',
       width: '140px',
       sortValue: (row) => row.computed.supplyState,
+      text: (row) =>
+        row.computed.valid ? supplyStateText(row.computed.supplyState) : missingSummary(row),
       render: (row) =>
         row.computed.valid ? (
           <StatusBadge
@@ -244,6 +282,7 @@ export function buildBomCardColumns(
       title: 'Жизненный цикл',
       width: '128px',
       sortValue: (row) => row.lifecycle,
+      text: (row) => lifecycleText(row.lifecycle),
       render: (row) => (
         <Badge
           text={lifecycleText(row.lifecycle)}

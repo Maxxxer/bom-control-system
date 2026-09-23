@@ -100,6 +100,15 @@ export const AUDIT_ACTION = {
   WAREHOUSE_QTY: 'WAREHOUSE_QTY_CHANGED',
   HANDOFF: 'PRODUCTION_HANDOFF',
   RETURN_FROM_ARCHIVE: 'RETURN_FROM_ARCHIVE',
+  /**
+   * Откат ранее выполненной команды.
+   *
+   * Отдельное действие, а не повторение исходного: по журналу должно быть видно,
+   * что значение ВЕРНУЛИ и по какой команде. Записи отката получают собственный
+   * идентификатор операции, поэтому сам откат тоже виден как одна команда — и,
+   * при необходимости, тоже может быть откачен.
+   */
+  ROLLBACK: 'OPERATION_ROLLBACK',
   BOM_IMPORT: 'BOM_IMPORTED',
   BOM_DONE: 'BOM_MARKED_DONE',
   BOM_RETURNED: 'BOM_RETURNED_TO_WORK',

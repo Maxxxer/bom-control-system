@@ -12,10 +12,12 @@
  */
 
 import type { Database } from '../db/Database.js';
+import { parseBulkQuantity } from '../domain/bulkFields.js';
+import { LIMITS } from '../domain/constants.js';
 import { requirePermission } from '../domain/permissions.js';
 import { isActive } from '../domain/position.js';
 import { toQty } from '../domain/values.js';
-import { ValidationError } from '../errors.js';
+import { ConflictError, ValidationError } from '../errors.js';
 import {
   listMaterials,
   reservedByMaterial,
@@ -23,7 +25,12 @@ import {
   type MaterialIdentity,
 } from '../repositories/materials.js';
 import { listPositions } from '../repositories/positions.js';
-import { AUDIT_ACTION, recordChanges, type OperationContext } from './operationLog.js';
+import {
+  AUDIT_ACTION,
+  recordChanges,
+  type ChangeRecord,
+  type OperationContext,
+} from './operationLog.js';
 
 /** Строка склада. */
 export interface WarehouseRow {
@@ -207,6 +214,153 @@ export async function setWarehouseQuantity(
     warehouseQty: quantity,
     reservedQty: row.reservedQty,
     freeQty: Math.max(quantity - row.reservedQty, 0),
+  };
+}
+
+/** Одно изменение складского остатка в массовой команде. */
+export interface WarehouseBulkChange {
+  materialKey: string;
+  quantity: unknown;
+}
+
+/** Результат по одному материалу. */
+export interface WarehouseBulkItemResult {
+  materialKey: string;
+  status: 'applied' | 'already' | 'blocked';
+  reason: string;
+  previousQty: number;
+  warehouseQty: number;
+  freeQty: number;
+}
+
+/** Итог массовой установки остатков. */
+export interface WarehouseBulkResult {
+  results: WarehouseBulkItemResult[];
+  applied: number;
+  already: number;
+  blocked: number;
+  operationId: string;
+}
+
+/**
+ * Установить остатки сразу по нескольким материалам (вставка столбца из Excel).
+ *
+ * Зачем отдельная операция, а не `setWarehouseQuantity` в цикле. Каждый одиночный
+ * вызов перестраивает ВЕСЬ список склада (`listWarehouse`): это дорого само по
+ * себе, а в цикле ещё и повторялось бы столько раз, сколько ячеек вставили. Здесь
+ * список строится один раз, остатки пишутся в одной транзакции, а запись журнала —
+ * одна на всю команду (один `operationId`).
+ *
+ * Правила те же, что у одиночного ввода: право `WAREHOUSE_QTY`, отрицательное
+ * значение ограничивается нулём, повторное значение отвечает «уже так» и в журнал
+ * не пишется. Отказ по одному материалу не отменяет остальные.
+ */
+export async function setWarehouseQuantitiesBulk(
+  db: Database,
+  ctx: OperationContext,
+  params: { changes: readonly WarehouseBulkChange[] },
+): Promise<WarehouseBulkResult> {
+  requirePermission(ctx.role, 'WAREHOUSE_QTY');
+
+  const changes = params.changes ?? [];
+  if (!changes.length) {
+    throw new ConflictError('Не выбрано ни одного материала');
+  }
+  if (changes.length > LIMITS.MAX_BULK_CHANGES) {
+    throw new ValidationError(
+      `За одну команду можно изменить не больше ${LIMITS.MAX_BULK_CHANGES} остатков, ` +
+        `получено ${changes.length}. Разделите вставку на части.`,
+    );
+  }
+
+  const rows = await listWarehouse(db);
+  const byMaterial = new Map(rows.map((row) => [row.materialKey, row] as const));
+
+  // Дедупликация по материалу: если строка попала в пачку дважды, побеждает
+  // последнее введённое значение.
+  const ordered = new Map<string, unknown>();
+  for (const change of changes) {
+    ordered.set(String(change?.materialKey ?? '').trim(), change?.quantity ?? null);
+  }
+
+  const results: WarehouseBulkItemResult[] = [];
+
+  await db.transaction(async (tx) => {
+    const records: ChangeRecord[] = [];
+
+    for (const [materialKey, rawQuantity] of ordered) {
+      const row = byMaterial.get(materialKey);
+      if (!row) {
+        results.push({
+          materialKey,
+          status: 'blocked',
+          reason: `Материал не найден: ${materialKey}`,
+          previousQty: 0,
+          warehouseQty: 0,
+          freeQty: 0,
+        });
+        continue;
+      }
+
+      const unchanged = (status: 'already' | 'blocked', reason: string): void => {
+        results.push({
+          materialKey,
+          status,
+          reason,
+          previousQty: row.warehouseQty,
+          warehouseQty: row.warehouseQty,
+          freeQty: row.freeQty,
+        });
+      };
+
+      const checked = parseBulkQuantity(rawQuantity);
+      if (!checked.ok) {
+        unchanged('blocked', checked.error);
+        continue;
+      }
+
+      const quantity = toQty(checked.value);
+      if (row.warehouseQty === quantity) {
+        unchanged('already', '');
+        continue;
+      }
+
+      const identity: MaterialIdentity = {
+        code: row.code,
+        manufacturer: row.manufacturer,
+        name: row.name,
+        model: row.model,
+        unit: row.unit,
+      };
+      await setWarehouseQty(tx, materialKey, quantity, identity);
+      records.push({
+        action: AUDIT_ACTION.WAREHOUSE_QTY,
+        field: 'WAREHOUSE_QTY',
+        oldValue: row.warehouseQty,
+        newValue: quantity,
+        reason:
+          `Массовый ввод остатка. Материал: ${identity.name} ${identity.model} ` +
+          `(${materialKey}). Резерв: ${row.reservedQty}`,
+      });
+      results.push({
+        materialKey,
+        status: 'applied',
+        reason: '',
+        previousQty: row.warehouseQty,
+        warehouseQty: quantity,
+        freeQty: Math.max(quantity - row.reservedQty, 0),
+      });
+    }
+
+    await recordChanges(tx, ctx, records);
+  });
+
+  return {
+    results,
+    applied: results.filter((item) => item.status === 'applied').length,
+    already: results.filter((item) => item.status === 'already').length,
+    blocked: results.filter((item) => item.status === 'blocked').length,
+    operationId: ctx.operationId,
   };
 }
 

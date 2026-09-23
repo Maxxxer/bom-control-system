@@ -24,11 +24,11 @@ import { useAction } from '../app/useAction.js';
 import { useLoader } from '../app/useLoader.js';
 import { formatDate, formatDateTime } from '../format.js';
 import { useSession } from '../session/SessionContext.js';
-import { DataTable } from '../ui/DataTable.js';
+import { DataTable, type DataTableBulk } from '../ui/DataTable.js';
 import { StatCard } from '../ui/StatCard.js';
 import { useToast } from '../ui/ToastProvider.js';
 import { buildBomCardColumns } from './bomCardColumns.js';
-import { requiresFix, type SpecFieldName } from './bomSpecFields.js';
+import { requiresFix, touchesMaterialKey, type SpecFieldName } from './bomSpecFields.js';
 
 export function BomCardPanel({ code, onClose }: { code: string; onClose: () => void }) {
   const { can } = useSession();
@@ -39,6 +39,35 @@ export function BomCardPanel({ code, onClose }: { code: string; onClose: () => v
   const { data, loading, error, reload } = useLoader(`bom|${code}`, () => api.fetchBomCard(code));
 
   const canEdit = can('SOURCE_BOM_WRITE');
+
+  /**
+   * Массовый ввод в карточке: правка описания блоком ячеек из Excel.
+   *
+   * Почему предупреждение о ключе материала ОДНО на всю вставку. Наименование,
+   * модель, артикул, производитель и единица измерения образуют ключ, по которому
+   * связаны склад, снабжение и отборка. Сервер отвечает пояснением на каждую строку
+   * — при вставке на триста строк это триста одинаковых сообщений, поэтому карточка
+   * один раз предупреждает о последствии и на этом останавливается.
+   */
+  const bulk: DataTableBulk<PositionDto> = {
+    rowIdOf: (row) => row.positionId,
+    submit: async (changes) => {
+      const reply = await run(() =>
+        api.applyPositionsBulk(
+          changes.map((change) => ({
+            positionId: change.rowId,
+            field: change.field,
+            value: change.value,
+          })),
+        ),
+      );
+      return reply;
+    },
+    noticeOf: (changes) =>
+      touchesMaterialKey(changes.map((change) => change.field))
+        ? 'Изменены поля, из которых собран ключ материала. Ключ НЕ пересчитывается: склад и снабжение остаются привязаны к прежнему материалу, а новый ключ вступит в силу при следующем импорте спецификации'
+        : '',
+  };
   const positions = useMemo(() => data?.positions ?? [], [data]);
   const brokenCount = useMemo(() => positions.filter(requiresFix).length, [positions]);
   const rows = useMemo(
@@ -103,6 +132,12 @@ export function BomCardPanel({ code, onClose }: { code: string; onClose: () => v
               ? 'Поля спецификации правятся прямо в строке: Enter — сохранить, Escape — отменить. Каждая правка попадает в журнал с указанием автора.'
               : 'Спецификацию правит экономист: поля видны, но не редактируются.'}
           </div>
+          <div className="hint">
+            Массовый ввод: Shift+щелчок выделяет блок ячеек, Ctrl+V вставляет данные из
+            Excel, Ctrl+D заполняет вниз. Операционные колонки («Заказано», «Поставлено»,
+            «Ожидаемая поставка») правятся на своих рабочих местах и в массовый ввод не
+            попадают — эти ячейки будут пропущены с отчётом.
+          </div>
         </div>
         <div className="row tight">
           {brokenCount > 0 ? (
@@ -163,6 +198,9 @@ export function BomCardPanel({ code, onClose }: { code: string; onClose: () => v
                   ? 'var(--row-received)'
                   : undefined
             }
+            bulk={bulk}
+            busy={busy}
+            onApplied={reload}
           />
         </>
       ) : null}

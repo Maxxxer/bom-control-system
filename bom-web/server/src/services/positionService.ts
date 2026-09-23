@@ -57,8 +57,14 @@ export interface OperationResult {
   position?: Position;
 }
 
-/** Данные материала позиции для записи на склад. */
-function materialIdentity(position: Position) {
+/**
+ * Данные материала позиции для записи на склад.
+ *
+ * Экспортируется: ту же запись использует массовая правка «Поставлено» — склад
+ * меняется на дельту по каждой позиции пачки, и описание материала обязано
+ * записываться ровно так же, как при одиночной поставке.
+ */
+export function materialIdentity(position: Position) {
   return {
     code: position.identity.code,
     manufacturer: position.identity.manufacturer,
@@ -306,8 +312,16 @@ export async function setDeadline(
   return finish(db, position.positionId);
 }
 
-/** Значение поля спецификации в текущем состоянии позиции. */
-function currentSpecValue(position: Position, field: SpecField): string | number | null {
+/**
+ * Значение поля спецификации в текущем состоянии позиции.
+ *
+ * Экспортируется для массовой правки и отката операции: обе сравнивают прежнее
+ * и новое значение и должны видеть одно и то же поле одинаково.
+ */
+export function currentSpecValue(
+  position: Position,
+  field: SpecField,
+): string | number | null {
   switch (field) {
     case 'rowNo':
       return position.identity.rowNo;
@@ -337,7 +351,7 @@ function currentSpecValue(position: Position, field: SpecField): string | number
  * описательные поля, а `material_key` и `position_id` остаются прежними. Так
  * правка описания не отвязывает позицию от склада, архива и истории.
  */
-function specWithField(
+export function specWithField(
   position: Position,
   field: SpecField,
   value: string | number | null,

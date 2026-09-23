@@ -9,6 +9,9 @@
  *   POST /api/positions/:positionId/deadline       — «Крайний срок поставки»
  *   POST /api/positions/:positionId/spec           — правка поля спецификации
  *                                                    (исправление «Ошибки данных»)
+ *   POST /api/positions/bulk                       — МАССОВАЯ правка: список
+ *                                                    изменений одной командой
+ *                                                    (вставка блока ячеек из Excel)
  *
  * Идентификатор позиции содержит двоеточие и символ `#` (например,
  * `1234.АБВ:AB-12|Bosch#2`), поэтому клиент обязан кодировать его через
@@ -21,6 +24,7 @@ import type { AppConfig } from '../../config.js';
 import type { Database } from '../../db/Database.js';
 import { ValidationError } from '../../errors.js';
 import { getPositionHistory } from '../../services/auditService.js';
+import { applyBulkChanges, type BulkChangeInput } from '../../services/bulkService.js';
 import {
   getPositionDetail,
   setDeadline,
@@ -30,7 +34,7 @@ import {
   setRealDeliveryQty,
   setSpecField,
 } from '../../services/positionService.js';
-import { sendOperation } from '../operationReply.js';
+import { sendBulkReply, sendOperation } from '../operationReply.js';
 import { authenticate, authenticateWithContext, requireBody } from '../requestAuth.js';
 
 /** Идентификатор позиции из адреса запроса. */
@@ -41,6 +45,27 @@ function positionIdOf(request: { params: unknown }): string {
     throw new ValidationError('Не указана позиция');
   }
   return positionId;
+}
+
+/**
+ * Прочитать список изменений из тела запроса.
+ *
+ * Значения здесь НЕ приводятся: их проверяет сервис (`normalizeBulkValue`), чтобы
+ * правила разбора чисел и дат оставались в одном месте. Маршрут следит только за
+ * формой — «список объектов с полями positionId, field, value».
+ */
+function readBulkChanges(value: unknown): BulkChangeInput[] {
+  if (!Array.isArray(value)) {
+    throw new ValidationError('Не передан список изменений');
+  }
+  return value.map((item) => {
+    const entry = (item ?? {}) as { positionId?: unknown; field?: unknown; value?: unknown };
+    return {
+      positionId: String(entry.positionId ?? '').trim(),
+      field: String(entry.field ?? '').trim(),
+      value: entry.value ?? null,
+    };
+  });
 }
 
 export function registerPositionRoutes(
@@ -126,5 +151,22 @@ export function registerPositionRoutes(
       value: body.value ?? null,
     });
     return sendOperation(reply, result);
+  });
+
+  /**
+   * Массовая правка: одна команда на всю вставку блока ячеек.
+   *
+   * Список РАЗНОРОДНЫЙ — разные поля и разные позиции в одном запросе. Иначе
+   * нельзя было бы вставить блок из Excel: он легко покрывает сразу «Заказано»,
+   * «Ожидаемую поставку» и «Крайний срок».
+   *
+   * Отказы по отдельным ячейкам не отменяют остальные: ответ содержит результат
+   * по каждому изменению (см. `sendBulkReply`).
+   */
+  app.post('/api/positions/bulk', async (request, reply) => {
+    const { ctx } = await authenticateWithContext(db, request);
+    const body = requireBody<{ changes?: unknown }>(request);
+    const result = await applyBulkChanges(db, ctx, { changes: readBulkChanges(body.changes) });
+    return sendBulkReply(reply, result);
   });
 }

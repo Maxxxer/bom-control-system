@@ -534,3 +534,42 @@ a.card .card-title {
     font-size: 26px;
   }
 }
+/* ── Массовый ввод: выделение диапазона ячеек ─────────────────────────────
+   Работа идёт в тех же таблицах, что и раньше, поэтому выделение показано
+   наложением цвета поверх фона строки: цвета состояния строки (красный, жёлтый,
+   зелёный) остаются видны, а выделенный блок читается как блок. */
+
+/* Обёртка таблицы: подсказка о выделении и сама таблица. */
+.table-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+}
+
+/* Подсказка о горячих клавишах — видна только при выделенном диапазоне. */
+.grid-hint {
+  padding: 6px 10px;
+  border: 1px solid var(--wait-line);
+  border-radius: var(--radius-sm);
+  background: var(--wait-tint);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* Таблица принимает фокус клавиатуры: без этого Shift+стрелки не доходят до неё. */
+.table-scroll:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-navy);
+}
+
+/* Ячейка внутри выделенного диапазона. */
+.data td.cell-selected {
+  background-color: rgba(43, 55, 116, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(43, 55, 116, 0.3);
+}
+
+/* Ячейка, с которой начали выделение: видно, куда встанет вставленный блок. */
+.data td.cell-anchor {
+  box-shadow: inset 0 0 0 2px var(--mair-navy);
+}

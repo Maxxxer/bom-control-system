@@ -71,3 +71,27 @@ export function materialHint(row: PositionDto): string {
   }
   return parts.filter(Boolean).join(' · ');
 }
+
+/**
+ * Поля, из которых собирается ключ материала.
+ *
+ * Ключ — то, по чему система узнаёт «тот же материал»: к нему привязаны складской
+ * остаток, снабжение и отборка. Правка этих полей НЕ пересчитывает ключ сама, и об
+ * этом нужно сказать пользователю: иначе он будет ждать, что исправленный артикул
+ * сразу «переедет» вместе со складским остатком.
+ *
+ * Список повторяет правило сервера (`domain/specFields.ts`): если артикула нет,
+ * ключ собирается из наименования, модели, производителя и единицы измерения.
+ */
+export const MATERIAL_KEY_FIELDS: readonly SpecFieldName[] = [
+  'code',
+  'name',
+  'model',
+  'manufacturer',
+  'unit',
+];
+
+/** Правка затронула поля, из которых собирается ключ материала. */
+export function touchesMaterialKey(fields: readonly string[]): boolean {
+  return fields.some((field) => MATERIAL_KEY_FIELDS.includes(field as SpecFieldName));
+}

@@ -25,6 +25,7 @@ import { registerAdminRoutes } from './routes/adminRoutes.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerBomRoutes } from './routes/bomRoutes.js';
 import { registerHandoffRoutes } from './routes/handoffRoutes.js';
+import { registerOperationRoutes } from './routes/operationRoutes.js';
 import { registerPositionRoutes } from './routes/positionRoutes.js';
 import { registerProjectionRoutes } from './routes/projectionRoutes.js';
 import { registerWarehouseRoutes } from './routes/warehouseRoutes.js';
@@ -56,6 +57,9 @@ export async function buildServer(config: AppConfig, db: Database): Promise<Fast
   registerPositionRoutes(app, db, config);
   registerHandoffRoutes(app, db, config);
   registerWarehouseRoutes(app, db, config);
+  // Откат операции — надстройка над журналом: читает записи `audit_log` одной
+  // команды и возвращает прежние значения (см. `rollbackService`).
+  registerOperationRoutes(app, db, config);
   registerBomRoutes(app, db, config);
   registerAdminRoutes(app, db, config);
 

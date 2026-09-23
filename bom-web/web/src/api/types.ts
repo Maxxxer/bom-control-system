@@ -259,3 +259,49 @@ export interface WarehouseRow {
   requiredTotal: number;
   hasRecord: boolean;
 }
+
+/* Массовая правка и откат */
+
+/**
+ * Результат по одному изменению массовой правки.
+ *
+ * Идентификатор строки приходит РАЗНЫМИ полями: у правки позиций это `positionId`,
+ * у правки склада — `materialKey`. Поэтому оба поля необязательные: интерфейсу
+ * важны статус и причина, а по какому полю пришла строка, он знает из запроса.
+ */
+export interface BulkItemResult {
+  positionId?: string;
+  materialKey?: string;
+  /** Поле в терминах сервера («orderedQty», «expectedDate», «SPEC.MODEL»). */
+  field: string;
+  status: OperationStatus;
+  reason: string;
+}
+
+/**
+ * Итог массовой правки.
+ *
+ * Частичный успех — нормальный исход: причина отказа по одной ячейке не отменяет
+ * остальные, поэтому интерфейс показывает и число применённых, и причины отказов.
+ */
+export interface BulkReply {
+  applied: number;
+  already: number;
+  blocked: number;
+  results: BulkItemResult[];
+  /** Обновлённые позиции: по ним таблица сразу показывает состояние сервера. */
+  positions?: PositionDto[];
+}
+
+/** Итог откатa операции: прежние значения возвращены по записям журнала. */
+export interface RollbackReply {
+  /** Команда, которую откатывали. */
+  sourceOperationId: string;
+  /** Идентификатор команды откатa (у откатa своя запись в журнале). */
+  operationId: string;
+  applied: number;
+  already: number;
+  blocked: number;
+  results: Array<BulkItemResult & { restoredValue: string }>;
+  positions?: PositionDto[];
+}

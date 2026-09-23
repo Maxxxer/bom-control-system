@@ -17,7 +17,7 @@ import { useLoader } from '../app/useLoader.js';
 import { numberOrZero } from '../api/client.js';
 import { formatQty } from '../format.js';
 import { useSession } from '../session/SessionContext.js';
-import { Column, DataTable } from '../ui/DataTable.js';
+import { Column, DataTable, type DataTableBulk } from '../ui/DataTable.js';
 import { EditableNumber } from '../ui/EditableNumber.js';
 import { StatCard } from '../ui/StatCard.js';
 import { useToast } from '../ui/ToastProvider.js';
@@ -47,6 +47,28 @@ export function WarehousePage() {
 
   const canEdit = can('WAREHOUSE_QTY');
 
+  /**
+   * Массовый ввод остатков: одна команда на всю вставку столбца из Excel.
+   *
+   * У складской команды одно поле — остаток, поэтому `field` из таблицы здесь не
+   * используется: он нужен таблице, чтобы знать, что колонка участвует в вводе.
+   * Значение уходит текстом, разбирает его сервер (пробелы разрядов, запятая).
+   */
+  const bulk: DataTableBulk<WarehouseRow> = {
+    rowIdOf: (row) => row.materialKey,
+    submit: async (changes) => {
+      const reply = await run(() =>
+        api.applyWarehouseBulk(
+          changes.map((change) => ({
+            materialKey: change.rowId,
+            quantity: change.value,
+          })),
+        ),
+      );
+      return reply;
+    },
+  };
+
   const saveQty = async (materialKey: string, quantity: number): Promise<boolean> => {
     const result = await run(() => api.setWarehouseQty(materialKey, quantity));
     if (!result) {
@@ -69,6 +91,7 @@ export function WarehousePage() {
       key: 'material',
       title: 'Материал',
       sortValue: (row) => `${row.name} ${row.model}`,
+      text: (row) => row.name,
       render: (row) => (
         <div>
           <div>{row.name}</div>
@@ -80,11 +103,14 @@ export function WarehousePage() {
         </div>
       ),
     },
-    { key: 'unit', title: 'Ед.', render: (row) => row.unit },
+    { key: 'unit', title: 'Ед.', text: (row) => row.unit, render: (row) => row.unit },
     {
       key: 'warehouseQty',
       title: 'Остаток',
       sortValue: (row) => row.warehouseQty,
+      text: (row) => formatQty(row.warehouseQty),
+      bulkField: 'warehouseQty',
+      readOnly: !canEdit,
       render: (row) => (
         <EditableNumber
           value={row.warehouseQty}
@@ -99,6 +125,7 @@ export function WarehousePage() {
       title: 'Резерв',
       numeric: true,
       sortValue: (row) => row.reservedQty,
+      text: (row) => formatQty(row.reservedQty),
       render: (row) => formatQty(row.reservedQty),
     },
     {
@@ -106,6 +133,7 @@ export function WarehousePage() {
       title: 'Свободно',
       numeric: true,
       sortValue: (row) => row.freeQty,
+      text: (row) => formatQty(row.freeQty),
       render: (row) => formatQty(row.freeQty),
     },
     {
@@ -113,6 +141,7 @@ export function WarehousePage() {
       title: 'Позиций',
       numeric: true,
       sortValue: (row) => row.positionsCount,
+      text: (row) => String(row.positionsCount),
       render: (row) => row.positionsCount,
     },
     {
@@ -120,6 +149,7 @@ export function WarehousePage() {
       title: 'Потребность',
       numeric: true,
       sortValue: (row) => row.requiredTotal,
+      text: (row) => formatQty(row.requiredTotal),
       render: (row) => formatQty(row.requiredTotal),
     },
     {
@@ -146,7 +176,8 @@ export function WarehousePage() {
           <h1>Склад</h1>
           <div className="hint">
             Остаток вводит кладовщик. Резерв складывается из потребностей активных
-            спецификаций, свободный остаток — это остаток минус резерв.
+            спецификаций, свободный остаток — это остаток минус резерв. Массовый ввод:
+            Shift+щелчок выделяет столбец ячеек, Ctrl+V вставляет значения из Excel.
           </div>
         </div>
         {data ? (
@@ -211,6 +242,9 @@ export function WarehousePage() {
           rowKey={(row) => row.materialKey}
           emptyText="Материалов на складе нет"
           rowBackground={(row) => (row.inconsistent ? 'var(--row-red)' : undefined)}
+          bulk={bulk}
+          busy={busy}
+          onApplied={reload}
         />
       ) : null}
     </div>

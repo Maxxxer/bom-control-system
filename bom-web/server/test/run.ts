@@ -11,7 +11,13 @@ import './calculate.test.js';
 import './procurement.test.js';
 import './position.test.js';
 import './specFields.test.js';
+import './bulkFields.test.js';
 import './bomImport.test.js';
 import './projections.test.js';
 import './dashboard.test.js';
 import './permissions.test.js';
+
+// Проверки на реальной базе (PGlite в памяти) идут последними: они дольше
+// поднимаются, зато проверяют то, чего не видно на чистых функциях — одну
+// транзакцию массовой правки, изменение склада на дельту и откат операции.
+import './bulk.test.js';

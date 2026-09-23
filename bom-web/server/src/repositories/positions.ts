@@ -82,6 +82,28 @@ export async function listPositionsByBom(
   return rows.map(mapPosition);
 }
 
+/**
+ * Позиции по списку идентификаторов — одним запросом.
+ *
+ * Нужна массовым операциям: после вставки блока ячеек интерфейсу возвращаются
+ * обновлённые строки, и читать их по одной (`findPositionByPositionId` в цикле)
+ * значило бы сделать столько запросов, сколько строк в пачке. Приём тот же, что
+ * в `deletePositionsByPositionIds`: список передаётся массивом (`= any($1::text[])`).
+ */
+export async function listPositionsByPositionIds(
+  db: Database,
+  positionIds: readonly string[],
+): Promise<Position[]> {
+  if (!positionIds.length) {
+    return [];
+  }
+  const rows = await db.query<PositionRow>(
+    `${POSITION_SELECT} where p.position_id = any($1::text[])`,
+    [positionIds],
+  );
+  return rows.map(mapPosition);
+}
+
 /** Найти позицию по её идентификатору (`код спецификации:ключ материала`). */
 export async function findPositionByPositionId(
   db: Database,

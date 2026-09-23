@@ -18,11 +18,11 @@ import * as api from '../api/endpoints.js';
 import type { DeficitRow, OperationReply } from '../api/types.js';
 import { useAction } from '../app/useAction.js';
 import { useLoader } from '../app/useLoader.js';
-import { formatQty } from '../format.js';
+import { formatDate, formatQty } from '../format.js';
 import { useSession } from '../session/SessionContext.js';
 import { StatusBadge } from '../ui/Badge.js';
 import { BomCell, MaterialCell } from '../ui/Cells.js';
-import { Column, DataTable } from '../ui/DataTable.js';
+import { Column, DataTable, type DataTableBulk } from '../ui/DataTable.js';
 import { EditableCheckbox } from '../ui/EditableCheckbox.js';
 import { EditableDate } from '../ui/EditableDate.js';
 import { EditableNumber } from '../ui/EditableNumber.js';
@@ -82,6 +82,32 @@ export function DeficitPage() {
   const canDelivery = can('REAL_DELIVERY');
   const canDeadline = can('DEADLINE');
 
+  /**
+   * Массовый ввод: одна команда на всю вставку блока.
+   *
+   * Значения уходят текстом «как в ячейке» — числа и даты разбирает сервер, поэтому
+   * «1 234,5» и «20.09.2026» понимаются так же, как при обычной правке поля.
+   */
+  const bulk: DataTableBulk<DeficitRow> = {
+    rowIdOf: (row) => row.positionId,
+    submit: async (changes) => {
+      const reply = await run(() =>
+        api.applyPositionsBulk(
+          changes.map((change) => ({
+            positionId: change.rowId,
+            field: change.field,
+            value: change.value,
+          })),
+        ),
+      );
+      return reply;
+    },
+    noticeOf: (changes) =>
+      changes.some((change) => change.field === 'deadline')
+        ? 'Крайний срок участвует в оценке «в срок / опаздывает» по всей спецификации'
+        : '',
+  };
+
   const columns: Array<Column<DeficitRow>> = [
     {
       // «№» и «Материал» закреплены у левого края: при горизонтальной прокрутке
@@ -92,6 +118,7 @@ export function DeficitPage() {
       width: '56px',
       sticky: true,
       sortValue: (row) => row.rowNo,
+      text: (row) => String(row.rowNo),
       render: (row) => row.rowNo,
     },
     {
@@ -99,6 +126,7 @@ export function DeficitPage() {
       title: 'Спецификация',
       width: '190px',
       sortValue: (row) => row.bomName,
+      text: (row) => row.bomName,
       render: (row) => <BomCell bomName={row.bomName} projectCode={row.projectCode} />,
     },
     {
@@ -107,6 +135,7 @@ export function DeficitPage() {
       width: '360px',
       sticky: true,
       sortValue: (row) => `${row.materialName} ${row.model}`,
+      text: (row) => row.materialName,
       render: (row) => (
         <MaterialCell
           name={row.materialName}
@@ -120,6 +149,7 @@ export function DeficitPage() {
       key: 'unit',
       title: 'Ед.',
       width: '64px',
+      text: (row) => row.unit,
       render: (row) => row.unit,
     },
     {
@@ -128,6 +158,7 @@ export function DeficitPage() {
       numeric: true,
       width: '110px',
       sortValue: (row) => row.deficitQty,
+      text: (row) => formatQty(row.deficitQty),
       render: (row) => formatQty(row.deficitQty),
     },
     {
@@ -136,6 +167,9 @@ export function DeficitPage() {
       numeric: true,
       width: '100px',
       sortValue: (row) => row.orderedQty,
+      text: (row) => formatQty(row.orderedQty),
+      bulkField: 'orderedQty',
+      readOnly: !canOrder,
       render: (row) => (
         <EditableNumber
           value={row.orderedQty}
@@ -150,6 +184,9 @@ export function DeficitPage() {
       title: 'Ожидаемая поставка',
       width: '120px',
       sortValue: (row) => row.expectedDate ?? '',
+      text: (row) => (row.expectedDate ? formatDate(row.expectedDate) : ''),
+      bulkField: 'expectedDate',
+      readOnly: !canExpected,
       render: (row) => (
         <EditableDate
           value={row.expectedDate}
@@ -163,6 +200,10 @@ export function DeficitPage() {
       key: 'realDelivery',
       title: 'Поставлено',
       width: '96px',
+      // Галочка в тексте: «да» ставит полный объём поставки, пусто — снимает отметку.
+      text: (row) => (row.realDelivery ? 'да' : ''),
+      bulkField: 'realDeliveryChecked',
+      readOnly: !canDelivery,
       render: (row) => (
         <EditableCheckbox
           checked={row.realDelivery}
@@ -179,6 +220,9 @@ export function DeficitPage() {
       title: 'Крайний срок',
       width: '120px',
       sortValue: (row) => row.deadline ?? '',
+      text: (row) => (row.deadline ? formatDate(row.deadline) : ''),
+      bulkField: 'deadline',
+      readOnly: !canDeadline,
       render: (row) => (
         <EditableDate
           value={row.deadline}
@@ -194,6 +238,7 @@ export function DeficitPage() {
       title: 'Состояние',
       width: '176px',
       sortValue: (row) => row.statusKey,
+      text: (row) => row.statusText,
       render: (row) => (
         <div>
           <StatusBadge statusKey={row.statusKey} text={row.statusText} />
@@ -255,12 +300,17 @@ export function DeficitPage() {
           rowKey={(row) => row.positionId}
           emptyText="Нет позиций с потребностью — дефицита нет"
           rowBackground={(row) => (row.statusKey === 'ERROR' ? 'var(--row-gray)' : undefined)}
+          bulk={bulk}
+          busy={busy}
+          onApplied={reload}
         />
       ) : null}
 
       <div className="muted">
         Формат даты: ДД.ММ.ГГГГ. Пустая ожидаемая дата означает «срок ещё не сообщён
         поставщиком». «Поставлено» отмечает фактический приход материала на склад.
+        Массовый ввод: Shift+щелчок (или Shift+стрелки) выделяет блок ячеек, Ctrl+V
+        вставляет данные из Excel, Delete очищает, Ctrl+D заполняет вниз.
       </div>
     </div>
   );

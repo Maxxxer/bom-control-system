@@ -15,6 +15,19 @@
 import type { FastifyReply } from 'fastify';
 
 import type { OperationResult } from '../services/positionService.js';
+import type { RollbackResult } from '../services/rollbackService.js';
+
+/**
+ * Общая часть ответа массовой операции.
+ *
+ * Тип СТРУКТУРНЫЙ, а не конкретный результат: у правки позиций и у правки склада
+ * свои формы ответа (у склада нет обновлённых позиций), но правило выбора кода
+ * ответа у них одно — «ничего не применилось и что-то отклонено → 409».
+ */
+interface BulkOutcome {
+  applied: number;
+  blocked: number;
+}
 
 /** Отправить результат операции в ответ. */
 export function sendOperation(reply: FastifyReply, result: OperationResult): FastifyReply {
@@ -32,4 +45,39 @@ export function sendOperation(reply: FastifyReply, result: OperationResult): Fas
     notice: result.notice ?? '',
     position: result.position ?? null,
   });
+}
+
+/**
+ * Отправить результат массовой операции (вставка блока ячеек).
+ *
+ * Форма ответа ДРУГАЯ, чем у одиночной операции, поэтому и помощник отдельный:
+ * здесь на каждое изменение приходит свой результат, а не один статус. Код 409
+ * используется только тогда, когда не применилось НИЧЕГО, а что-то отклонено —
+ * ровно как в передаче производству: так интерфейс показывает причины, а не
+ * «успех без изменений». Частичный успех — обычный ответ 200, иначе клиент принял
+ * бы применённые строки за ошибку.
+ */
+export function sendBulkReply<Result extends BulkOutcome>(
+  reply: FastifyReply,
+  result: Result,
+): FastifyReply {
+  const body = { ...result };
+  if (result.applied === 0 && result.blocked > 0) {
+    return reply.code(409).send(body);
+  }
+  return reply.send(body);
+}
+
+/**
+ * Отправить результат отката команды.
+ *
+ * Здесь, кроме отклонённых записей, есть ещё «уже так» (значение уже равно
+ * прежнему — повторный откат): это тоже успешный исход, а не отказ.
+ */
+export function sendRollbackReply(reply: FastifyReply, result: RollbackResult): FastifyReply {
+  const body = { ...result };
+  if (result.applied === 0 && result.already === 0 && result.blocked > 0) {
+    return reply.code(409).send(body);
+  }
+  return reply.send(body);
 }

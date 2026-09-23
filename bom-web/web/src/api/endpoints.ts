@@ -20,11 +20,13 @@ import type {
 } from './adminTypes.js';
 import { deleteJson, encodeId, getJson, patchJson, postJson, postOperation } from './client.js';
 import type {
+  BulkReply,
   DashboardRow,
   DeficitRow,
   OperationReply,
   PickingRow,
   PositionDto,
+  RollbackReply,
   SessionUser,
   SupplyRow,
   WorkingBomRow,
@@ -238,6 +240,54 @@ export function setWarehouseQty(
   freeQty: number;
 }> {
   return postJson(`/api/warehouse/${encodeId(materialKey)}`, { quantity });
+}
+
+/* Массовая правка: вставка блока ячеек одной командой */
+
+/**
+ * Изменение позиции.
+ *
+ * Значение передаётся ТЕКСТОМ — ровно тем, что было в ячейке. Приводит его сервер:
+ * правила разбора дат и количеств живут в одном месте, и интерфейс не повторяет их
+ * (иначе «1 234,5» и «20.09.2026» понимались бы по-разному).
+ */
+export interface PositionBulkChange {
+  positionId: string;
+  field: string;
+  value: string;
+}
+
+/** Изменение остатка материала на складе. */
+export interface WarehouseBulkChange {
+  materialKey: string;
+  quantity: string;
+}
+
+/**
+ * Применить пачку изменений позиций одной командой.
+ *
+ * Одна команда на всю вставку: сервер выполняет её одной транзакцией и пишет одну
+ * запись в журнал. Отказ по отдельной ячейке не отменяет остальные, поэтому и
+ * частичный успех приходит обычным результатом — вызывающий код показывает отчёт.
+ */
+export function applyPositionsBulk(changes: PositionBulkChange[]): Promise<BulkReply> {
+  return postOperation<BulkReply>('/api/positions/bulk', { changes });
+}
+
+export function applyWarehouseBulk(changes: WarehouseBulkChange[]): Promise<BulkReply> {
+  return postOperation<BulkReply>('/api/warehouse/bulk', { changes });
+}
+
+/**
+ * Вернуть значения, записанные командой (откат операции).
+ *
+ * Причина обязательна: возврат меняет данные, которыми уже пользуются другие роли,
+ * и по журналу должно быть видно, почему это сделано.
+ */
+export function rollbackOperation(operationId: string, reason: string): Promise<RollbackReply> {
+  return postOperation<RollbackReply>(`/api/operations/${encodeId(operationId)}/rollback`, {
+    reason,
+  });
 }
 
 /* Спецификации */
