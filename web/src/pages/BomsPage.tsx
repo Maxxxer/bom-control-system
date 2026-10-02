@@ -6,11 +6,16 @@
  * файла без расширения, поэтому повторная загрузка того же файла обновляет ту же
  * спецификацию, а не создаёт вторую.
  *
+ * Файлы можно перетащить в область на странице или выбрать диалогом — оба способа
+ * равноправны: перетаскивание не работает с телефона, а у людей, ведущих архив
+ * спецификаций в папке, диалог быстрее. Файлов за раз может быть несколько:
+ * загружать спецификации по одной утомительно, а отчёт собирается по всем сразу.
+ *
  * Сразу после импорта показывается отчёт: сколько позиций добавлено, обновлено и
  * какие строки требуют правки (например, без крайнего срока).
  */
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
 import * as api from '../api/endpoints.js';
 import type { BomImportReport, BomSummary } from '../api/adminTypes.js';
@@ -20,9 +25,13 @@ import { formatDateTime } from '../format.js';
 import { useSession } from '../session/SessionContext.js';
 import { Column, DataTable } from '../ui/DataTable.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { DropZone } from '../ui/DropZone.js';
 import { useToast } from '../ui/ToastProvider.js';
 import { Icon } from '../ui/icons.js';
 import { BomCardPanel } from './BomCardPanel.js';
+
+/** Форматы, которые принимает импорт. Порядок повторяет подсказку на экране. */
+const IMPORT_ACCEPT = '.xls,.xlsx,.csv';
 
 /** Прочитать выбранный файл и вернуть его содержимое в base64. */
 function readFileAsBase64(file: File): Promise<string> {
@@ -42,8 +51,7 @@ export function BomsPage() {
   const { can } = useSession();
   const toast = useToast();
   const { busy, run } = useAction();
-  const fileInput = useRef<HTMLInputElement | null>(null);
-  const [report, setReport] = useState<BomImportReport | null>(null);
+  const [reports, setReports] = useState<BomImportReport[]>([]);
   const [openCode, setOpenCode] = useState('');
   const [toDelete, setToDelete] = useState<BomSummary | null>(null);
 
@@ -51,27 +59,61 @@ export function BomsPage() {
   const canWrite = can('SOURCE_BOM_WRITE');
   const canDone = can('DASHBOARD_CHECKBOX');
 
-  const importFile = async (file: File): Promise<void> => {
-    const result = await run(async () => {
+  /**
+   * Загрузить один файл и вернуть его отчёт (или undefined, если не вышло).
+   *
+   * Файлы обрабатываются по очереди, а не одновременно: каждый импорт — это
+   * отдельная транзакция, и параллельная загрузка десяти файлов на слабом сервере
+   * приводит к взаимным блокировкам и тайм-аутам.
+   */
+  const importFile = async (file: File): Promise<BomImportReport | undefined> =>
+    run(async () => {
       const contentBase64 = await readFileAsBase64(file);
       return api.importBom(file.name, contentBase64);
     });
-    if (!result) {
+
+  const importFiles = async (files: File[]): Promise<void> => {
+    if (!files.length) {
       return;
     }
-    setReport(result);
-    toast.success(
-      `Спецификация «${result.bomCode}»: добавлено ${result.inserted}, обновлено ${result.updated}`,
-    );
+    const collected: BomImportReport[] = [];
+    let failed = 0;
+
+    for (const file of files) {
+      const result = await importFile(file);
+      if (result) {
+        collected.push(result);
+      } else {
+        failed += 1;
+      }
+    }
+
+    if (collected.length) {
+      setReports(collected);
+      const added = collected.reduce((sum, report) => sum + report.inserted, 0);
+      const updated = collected.reduce((sum, report) => sum + report.updated, 0);
+      if (collected.length === 1) {
+        toast.success(
+          `Спецификация «${collected[0]?.bomCode}»: добавлено ${collected[0]?.inserted}, обновлено ${collected[0]?.updated}`,
+        );
+      } else {
+        toast.success(
+          `Загружено спецификаций: ${collected.length}. Добавлено позиций: ${added}, обновлено: ${updated}`,
+        );
+      }
+    }
+
+    // Отчёт об ошибке по каждому файлу уже показан тостом; здесь — только итог.
+    if (failed) {
+      toast.error(`Не загружено файлов: ${failed}`);
+    }
     reload();
   };
 
-  const onFileChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (file) {
-      void importFile(file);
-    }
+  const onRejected = (names: string[]): void => {
+    toast.error(
+      `Не поддерживается: ${names.join(', ')}. Поддерживаются .xls, .xlsx и .csv`,
+    );
   };
 
   const setDone = async (bom: BomSummary, done: boolean): Promise<void> => {
@@ -185,29 +227,13 @@ export function BomsPage() {
         <div>
           <h1>Спецификации</h1>
           <div className="hint">
-            Загрузка спецификаций файлом Excel или CSV. Колонки распознаются по
-            заголовкам; обязательны «№ п/п» и «Наименование». Код спецификации — имя файла
-            без расширения, поэтому повторная загрузка обновляет ту же спецификацию.
+            Загрузка спецификаций файлом Excel (включая старый формат .xls) или CSV.
+            Колонки распознаются по заголовкам; обязательны «№ п/п» и «Наименование».
+            Код спецификации — имя файла без расширения, поэтому повторная загрузка
+            обновляет ту же спецификацию.
           </div>
         </div>
         <div className="row">
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".csv,.xlsx,text/csv"
-            className="hidden-input"
-            onChange={onFileChange}
-          />
-          <button
-            type="button"
-            className="btn primary"
-            disabled={!canWrite || busy}
-            title={canWrite ? 'Загрузить спецификацию' : 'Импорт доступен экономисту'}
-            onClick={() => fileInput.current?.click()}
-          >
-            <Icon name="file" size={16} />
-            {busy ? 'Загружаю…' : 'Загрузить спецификацию'}
-          </button>
           <button type="button" className="btn small ghost" onClick={reload} disabled={busy}>
             <Icon name="refresh" size={14} />
             Обновить
@@ -215,11 +241,31 @@ export function BomsPage() {
         </div>
       </div>
 
-      {report ? (
-        <div className="panel">
+      {canWrite ? (
+        <DropZone
+          accept={IMPORT_ACCEPT}
+          multiple
+          disabled={busy}
+          title={
+            busy
+              ? 'Загружаю спецификации…'
+              : 'Перетащите сюда файлы спецификаций'
+          }
+          hint="Можно отпустить сразу несколько файлов — они загрузятся по очереди. Поддерживаются .xls, .xlsx и .csv. Код спецификации берётся из имени файла."
+          onFiles={(files) => void importFiles(files)}
+          onRejected={onRejected}
+        />
+      ) : null}
+
+      {reports.map((report) => (
+        <div className="panel" key={report.bomCode}>
           <div className="panel-head">
             <h3>Отчёт об импорте: {report.bomCode}</h3>
-            <button type="button" className="btn small ghost" onClick={() => setReport(null)}>
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => setReports(reports.filter((item) => item.bomCode !== report.bomCode))}
+            >
               Закрыть отчёт
             </button>
           </div>
@@ -238,7 +284,7 @@ export function BomsPage() {
               <strong>Требуют правки спецификации ({report.incomplete.length}):</strong>
               <ul>
                 {report.incomplete.slice(0, 50).map((item) => (
-                  <li key={`${item.sourceLine}|${item.name}`}>
+                  <li key={`${report.bomCode}|${item.sourceLine}|${item.name}`}>
                     строка {item.sourceLine}: {item.name} — {item.reason}
                   </li>
                 ))}
@@ -250,7 +296,7 @@ export function BomsPage() {
               <strong>Пропущены ({report.skipped.length}):</strong>
               <ul>
                 {report.skipped.slice(0, 20).map((item) => (
-                  <li key={`skip|${item.sourceLine}`}>
+                  <li key={`${report.bomCode}|skip|${item.sourceLine}`}>
                     строка {item.sourceLine}: {item.reason}
                   </li>
                 ))}
@@ -258,7 +304,7 @@ export function BomsPage() {
             </div>
           ) : null}
         </div>
-      ) : null}
+      ))}
 
       {error ? (
         <div className="error-text">

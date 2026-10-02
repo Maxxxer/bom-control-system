@@ -573,3 +573,74 @@ a.card .card-title {
 .data td.cell-anchor {
   box-shadow: inset 0 0 0 2px var(--mair-navy);
 }
+
+/* ── Область перетаскивания файлов ────────────────────────────────── */
+
+/*
+ * Пунктирная рамка вместо сплошной: сброс файла не должен выглядеть как ещё одна
+ * кнопка, но при наведении область обязана стать заметной — иначе человек не
+ * понимает, что файл можно туда отпустить, и жмёт обычную кнопку загрузки.
+ */
+.drop-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: var(--gap-lg);
+  background: var(--surface);
+  border: 2px dashed var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.drop-zone:hover {
+  border-color: var(--mair-navy);
+}
+
+.drop-zone:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-navy);
+}
+
+.drop-zone.is-over {
+  border-color: var(--mair-navy);
+  border-style: solid;
+  background: var(--mair-navy-tint);
+  color: var(--text);
+}
+
+.drop-zone.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.drop-zone.is-disabled:hover {
+  border-color: var(--line);
+}
+
+.drop-zone-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.drop-zone-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.drop-zone.is-disabled .drop-zone-title {
+  color: var(--text-muted);
+}
+
+.drop-zone-hint {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* Подпись-кнопка внутри области: показывает, что работает и обычный выбор. */
+.drop-zone-action {
+  flex-shrink: 0;
+  pointer-events: none;
+}
