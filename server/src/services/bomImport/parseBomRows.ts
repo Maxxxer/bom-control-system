@@ -61,6 +61,16 @@ export interface ParsedBom {
   /** Найденные колонки — показываются в отчёте об импорте. */
   foundColumns: string[];
   /**
+   * Сколько позиций осталось без крайнего срока поставки.
+   *
+   * Отдельное число, а не вычисление на интерфейсе: интерфейс решает по нему,
+   * показывать ли окно ввода даты. Если срока в файле нет вовсе (в боевых
+   * спецификациях колонки часто не бывает), человек узнаёт об этом сразу после
+   * импорта и вводит дату один раз для всей спецификации, вместо того чтобы
+   * проставлять её в каждой строке.
+   */
+  missingDeadline: number;
+  /**
    * Колонки файла, которым не сопоставлено ни одно поле.
    *
    * Показываются в отчёте, чтобы человек увидел: данные не потерялись молча, их
@@ -213,5 +223,16 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
     );
   }
 
-  return { positions, incomplete, skipped, foundColumns: describeColumns(columns), ignoredColumns };
+  const missingDeadline = positions.filter(
+    (position) => position.deadline === null || position.deadline === '',
+  ).length;
+
+  return {
+    positions,
+    incomplete,
+    skipped,
+    foundColumns: describeColumns(columns),
+    ignoredColumns,
+    missingDeadline,
+  };
 }

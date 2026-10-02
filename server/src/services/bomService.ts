@@ -52,6 +52,11 @@ export interface BomImportReport {
    * систему, и человек должен об этом знать.
    */
   ignoredColumns: string[];
+  /**
+   * Позиции без крайнего срока поставки. По этому числу интерфейс показывает окно
+   * ввода даты и проставляет её всем незаполненным позициям одной командой.
+   */
+  missingDeadline: number;
   /** Строки с неполными данными: импортированы, но требуют правки спецификации. */
   incomplete: Array<{ sourceLine: number; name: string; reason: string }>;
   /** Строки без наименования: пропущены. */
@@ -139,6 +144,7 @@ export async function importBomFromFile(
     totalInFile: parsed.positions.length,
     foundColumns: parsed.foundColumns,
     ignoredColumns: parsed.ignoredColumns,
+    missingDeadline: parsed.missingDeadline,
     incomplete: parsed.incomplete,
     skipped: parsed.skipped,
     skippedEmptyRows: file.skippedEmptyRows,

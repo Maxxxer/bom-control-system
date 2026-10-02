@@ -21,11 +21,12 @@ import * as api from '../api/endpoints.js';
 import type { BomImportReport, BomSummary } from '../api/adminTypes.js';
 import { useAction } from '../app/useAction.js';
 import { useLoader } from '../app/useLoader.js';
-import { formatDateTime } from '../format.js';
+import { formatDate, formatDateTime } from '../format.js';
 import { useSession } from '../session/SessionContext.js';
 import { Column, DataTable } from '../ui/DataTable.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DropZone } from '../ui/DropZone.js';
+import { DeadlinePromptDialog } from '../ui/DeadlinePromptDialog.js';
 import { useToast } from '../ui/ToastProvider.js';
 import { Icon } from '../ui/icons.js';
 import { BomCardPanel } from './BomCardPanel.js';
@@ -47,17 +48,25 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+/** Спецификация, для которой предлагается ввести срок поставки. */
+interface DeadlinePrompt {
+  bomCode: string;
+  count: number;
+}
+
 export function BomsPage() {
   const { can } = useSession();
   const toast = useToast();
   const { busy, run } = useAction();
   const [reports, setReports] = useState<BomImportReport[]>([]);
+  const [deadlinePrompt, setDeadlinePrompt] = useState<DeadlinePrompt | null>(null);
   const [openCode, setOpenCode] = useState('');
   const [toDelete, setToDelete] = useState<BomSummary | null>(null);
 
   const { data, loading, error, reload } = useLoader('boms', api.fetchBoms);
   const canWrite = can('SOURCE_BOM_WRITE');
   const canDone = can('DASHBOARD_CHECKBOX');
+  const canDeadline = can('DEADLINE');
 
   /**
    * Загрузить один файл и вернуть его отчёт (или undefined, если не вышло).
@@ -101,6 +110,21 @@ export function BomsPage() {
           `Загружено спецификаций: ${collected.length}. Добавлено позиций: ${added}, обновлено: ${updated}`,
         );
       }
+
+      // Спрашиваем срок сразу, пока человек смотрит на отчёт: в боевых файлах
+      // колонки срока часто нет, и без него ни одна позиция не уйдёт на склад.
+      // При нескольких файлах спрашиваем про наибольшее число незаполненных строк
+      // — одну дату имеет смысл ввести один раз.
+      const withoutDeadline = collected.reduce(
+        (sum, report) => sum + (report.missingDeadline ?? 0),
+        0,
+      );
+      const target = collected.reduce((worst, report) =>
+        (report.missingDeadline ?? 0) > (worst.missingDeadline ?? 0) ? report : worst,
+      );
+      if (canDeadline && withoutDeadline > 0 && target.missingDeadline > 0) {
+        setDeadlinePrompt({ bomCode: target.bomCode, count: target.missingDeadline });
+      }
     }
 
     // Отчёт об ошибке по каждому файлу уже показан тостом; здесь — только итог.
@@ -114,6 +138,48 @@ export function BomsPage() {
     toast.error(
       `Не поддерживается: ${names.join(', ')}. Поддерживаются .xls, .xlsx и .csv`,
     );
+  };
+
+  /**
+   * Проставить введённую дату всем позициям спецификации без срока.
+   *
+   * Список таких позиций берётся из карточки, а не из отчёта об импорте: отчёт
+   * знает только количество, а сервер должен получить точные идентификаторы.
+   * Всё уходит одной командой, поэтому в журнале действий это одна запись со
+   * своим идентификатором, которую при необходимости можно вернуть целиком.
+   */
+  const applyDeadlineToAll = async (isoDate: string): Promise<void> => {
+    const target = deadlinePrompt;
+    if (!target) {
+      return;
+    }
+    const result = await run(async () => {
+      const card = await api.fetchBomCard(target.bomCode);
+      const changes = card.positions
+        .filter((position) => !position.identity.deadline)
+        .map((position) => ({
+          positionId: position.positionId,
+          field: 'deadline',
+          value: isoDate,
+        }));
+      if (!changes.length) {
+        return { applied: 0, already: 0, blocked: 0 };
+      }
+      return api.applyPositionsBulk(changes);
+    });
+
+    setDeadlinePrompt(null);
+    if (!result) {
+      return;
+    }
+    if (result.applied === 0) {
+      toast.error('Срок не проставлен: проверьте дату и права на её изменение');
+    } else {
+      toast.success(
+        `Дата ${formatDate(isoDate)} проставлена позициям без срока: ${result.applied}`,
+      );
+    }
+    reload();
   };
 
   const setDone = async (bom: BomSummary, done: boolean): Promise<void> => {
@@ -333,6 +399,16 @@ export function BomsPage() {
       ) : null}
 
       {openCode ? <BomCardPanel code={openCode} onClose={() => setOpenCode('')} /> : null}
+
+      {deadlinePrompt ? (
+        <DeadlinePromptDialog
+          bomCode={deadlinePrompt.bomCode}
+          count={deadlinePrompt.count}
+          busy={busy}
+          onConfirm={(isoDate) => void applyDeadlineToAll(isoDate)}
+          onCancel={() => setDeadlinePrompt(null)}
+        />
+      ) : null}
 
       {toDelete ? (
         <ConfirmDialog
