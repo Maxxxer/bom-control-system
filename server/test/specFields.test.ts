@@ -45,7 +45,6 @@ test('правке доступны только поля спецификаци
       'name',
       'requiredQty',
       'reservedQty',
-      'rowNo',
       'unit',
     ],
   );
@@ -58,12 +57,12 @@ test('правке доступны только поля спецификаци
   assert.equal(isSpecField(undefined), false);
 });
 
-test('номер строки принимается только положительным', () => {
-  assert.equal(valueOf('rowNo', '12'), 12);
-  assert.equal(valueOf('rowNo', 12), 12);
-  assert.match(errorOf('rowNo', '0'), /положительный номер строки/);
-  assert.match(errorOf('rowNo', ''), /положительный номер строки/);
-  assert.match(errorOf('rowNo', 'нет'), /положительный номер строки/);
+test('номер строки правке не доступен', () => {
+  // Нумерация задаётся файлом (или порядком строк в нём) и должна совпадать с
+  // источником: правка номера рассыпала бы её и рассинхронизировала журнал с
+  // архивом. Поэтому сервер такое поле не принимает вовсе.
+  assert.equal(isSpecField('rowNo'), false);
+  assert.equal(EDITABLE_SPEC_FIELDS.includes('rowNo' as never), false);
 });
 
 test('количество нужно больше нуля, а резерв может быть нулевым', () => {

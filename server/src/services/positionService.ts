@@ -323,8 +323,6 @@ export function currentSpecValue(
   field: SpecField,
 ): string | number | null {
   switch (field) {
-    case 'rowNo':
-      return position.identity.rowNo;
     case 'code':
       return position.identity.code;
     case 'manufacturer':
@@ -368,8 +366,6 @@ export function specWithField(
     deadline: position.identity.deadline,
   };
   switch (field) {
-    case 'rowNo':
-      return { ...spec, rowNo: Number(value) };
     case 'code':
       return { ...spec, code: String(value ?? '') };
     case 'manufacturer':

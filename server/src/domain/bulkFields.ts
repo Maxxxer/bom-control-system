@@ -41,10 +41,10 @@ export type BulkOperatingField = (typeof BULK_OPERATING_FIELDS)[number];
 /**
  * Все поля массовой правки: операционные и поля спецификации.
  *
- * Имена полей спецификации совпадают с `SpecField` (`rowNo`, `name`, `model`,
- * `requiredQty`, `deadline` и т. д.) — интерфейс передаёт их как есть, поэтому
- * одна таблица «поле → право → проверка» обслуживает и одиночную, и массовую
- * правку, и откат операции.
+ * Имена полей спецификации совпадают с `SpecField` (`name`, `model`, `unit`,
+ * `requiredQty`, `reservedQty`, `deadline` и т. д.) — интерфейс передаёт их как есть,
+ * поэтому одна таблица «поле → право → проверка» обслуживает и одиночную, и
+ * массовую правку, и откат операции.
  */
 export const BULK_FIELDS = [...BULK_OPERATING_FIELDS, ...EDITABLE_SPEC_FIELDS] as const;
 
@@ -144,7 +144,7 @@ function normalizeSpecValue(field: SpecField, value: unknown): BulkValueCheck {
 }
 
 /** Поля спецификации, значения которых — количества (проверяются строже). */
-const SPEC_QTY_FIELDS: readonly SpecField[] = ['rowNo', 'requiredQty', 'reservedQty'];
+const SPEC_QTY_FIELDS: readonly SpecField[] = ['requiredQty', 'reservedQty'];
 
 /**
  * Проверить и привести значение массовой правки к тому виду, в котором оно

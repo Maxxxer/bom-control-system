@@ -193,7 +193,17 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
     const requiredQty = cellQty(cells, columns.requiredQty);
     const reservedQty = cellQty(cells, columns.reservedQty);
     const deadline = cellDate(cells, columns.deadline);
-    const rowNo = columns.rowNo === -1 ? index - headerIndex : toNumber(cells[columns.rowNo]);
+    /*
+     * Номер строки: из файла, если там колонка «№ п/п» с осмысленным значением,
+     * иначе по порядку в файле.
+     *
+     * Запасной вариант нужен потому, что номер строки в карточке не редактируется
+     * (см. `domain/specFields.ts`). Если бы в колонке файла оказался ноль или пустая
+     * ячейка, позиция навсегда осталась бы «Ошибкой данных» без возможности
+     * починки — а это как раз те строки, ради которых импорт ничего не отбрасывает.
+     */
+    const rowNoFromFile = columns.rowNo === -1 ? 0 : toNumber(cells[columns.rowNo]);
+    const rowNo = rowNoFromFile > 0 ? rowNoFromFile : index - headerIndex;
 
     const materialKey = buildMaterialKey({ code, manufacturer, name, model, unit });
     const positionId = buildPositionId(bomCode, materialKey, takenIds);

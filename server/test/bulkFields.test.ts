@@ -115,15 +115,19 @@ test('поля спецификации проверяются теми же п�
   assert.equal(valueOf('requiredQty', '2,5'), 2.5);
   assert.equal(valueOf('reservedQty', '0'), 0);
   assert.equal(valueOf('deadline', '20.09.2026'), '2026-09-20');
-  assert.equal(valueOf('rowNo', '3'), 3);
 
   assert.match(errorOf('model', ''), /обязательно/);
   assert.match(errorOf('requiredQty', ''), /больше 0/);
   // Резерв может быть нулевым, но не «мусором»: иначе опечатка станет нулём.
   assert.match(errorOf('reservedQty', 'мусор'), /неотрицательное число/);
-  assert.match(errorOf('rowNo', '0'), /положительный номер строки/);
   // Крайний срок обязателен: очистить его вставкой нельзя — это отказ.
   assert.match(errorOf('deadline', ''), /введите дату/);
+});
+
+test('номер строки нельзя изменить вставкой блока', () => {
+  // Столбец «№» не редактируется и в массовый ввод не попадает: нумерация
+  // должна совпадать с файлом-источником.
+  assert.equal(isBulkField('rowNo'), false);
 });
 
 test('имена полей журнала отображаются на поля правки', () => {

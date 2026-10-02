@@ -30,9 +30,15 @@ import { toIsoDate, trimmed, toQty } from './values.js';
  *
  * Операционные поля (заказано, ожидаемая поставка, реальная поставка, передача)
  * здесь отсутствуют намеренно: у них свои операции и свои права ролей.
+ *
+ * «№ п/п» тоже отсутствует — и это правило, а не забывчивость. Номера строк в
+ * спецификации идут по порядку и задаются файлом (а если колонки в файле нет —
+ * порядком строк в нём). Разрешить править их вручную нельзя: после правки
+ * нумерация рассыпается, строки в журнале и архиве перестают совпадать с тем, что
+ * видно в спецификации, а отчёт о пропущенных строках начинает указывать номера,
+ * которых в файле нет.
  */
 export const EDITABLE_SPEC_FIELDS = [
-  'rowNo',
   'code',
   'manufacturer',
   'name',
@@ -47,7 +53,6 @@ export type SpecField = (typeof EDITABLE_SPEC_FIELDS)[number];
 
 /** Подписи полей — те же, что видит пользователь в спецификации. */
 export const SPEC_FIELD_LABEL: Record<SpecField, string> = {
-  rowNo: '№ п/п',
   code: 'Артикул',
   manufacturer: 'Производитель',
   name: 'Наименование',
@@ -91,13 +96,6 @@ function reject(field: SpecField, hint: string): SpecFieldCheck {
  */
 export function normalizeSpecField(field: SpecField, value: unknown): SpecFieldCheck {
   switch (field) {
-    case 'rowNo': {
-      const rowNo = toQty(value);
-      if (rowNo <= 0) {
-        return reject(field, 'укажите положительный номер строки');
-      }
-      return { ok: true, value: rowNo };
-    }
     case 'requiredQty': {
       const requiredQty = toQty(value);
       if (!(requiredQty > 0)) {
