@@ -279,6 +279,12 @@ export function BomsPage() {
             ) : null}
           </div>
           <div className="muted">Распознаны колонки: {report.foundColumns.join(', ')}</div>
+          {report.ignoredColumns?.length ? (
+            <div className="muted">
+              Не сопоставлено с полями (данные этих столбцов не импортированы):{' '}
+              {report.ignoredColumns.join(', ')}
+            </div>
+          ) : null}
           {report.incomplete.length ? (
             <div>
               <strong>Требуют правки спецификации ({report.incomplete.length}):</strong>

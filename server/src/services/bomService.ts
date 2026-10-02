@@ -47,6 +47,11 @@ export interface BomImportReport {
   markedRemoved: number;
   totalInFile: number;
   foundColumns: string[];
+  /**
+   * Колонки файла, которым не сопоставлено ни одно поле: их данные не попали в
+   * систему, и человек должен об этом знать.
+   */
+  ignoredColumns: string[];
   /** Строки с неполными данными: импортированы, но требуют правки спецификации. */
   incomplete: Array<{ sourceLine: number; name: string; reason: string }>;
   /** Строки без наименования: пропущены. */
@@ -133,6 +138,7 @@ export async function importBomFromFile(
     markedRemoved: summary.markedRemoved,
     totalInFile: parsed.positions.length,
     foundColumns: parsed.foundColumns,
+    ignoredColumns: parsed.ignoredColumns,
     incomplete: parsed.incomplete,
     skipped: parsed.skipped,
     skippedEmptyRows: file.skippedEmptyRows,

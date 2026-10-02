@@ -53,6 +53,8 @@ export interface BomImportReport {
   markedRemoved: number;
   totalInFile: number;
   foundColumns: string[];
+  /** Колонки файла, не сопоставленные ни с одним полем. */
+  ignoredColumns: string[];
   incomplete: Array<{ sourceLine: number; name: string; reason: string }>;
   skipped: Array<{ sourceLine: number; name: string; reason: string }>;
   skippedEmptyRows: number;

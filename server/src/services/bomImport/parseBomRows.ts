@@ -17,7 +17,16 @@ import { buildMaterialKey, buildPositionId } from '../../domain/materialKeys.js'
 import { toIsoDate, toNumber, trimmed } from '../../domain/values.js';
 import { describeMissingFields, validatePosition } from '../../domain/validation.js';
 import { ValidationError } from '../../errors.js';
-import { resolveBomColumns, type BomColumnIndex } from './bomColumns.js';
+import { resolveBomColumnsWithIgnored, type BomColumnIndex } from './bomColumns.js';
+
+/**
+ * Сколько верхних строк файла проверяется на наличие шапки.
+ *
+ * У настоящих файлов предприятия перед таблицей часто идёт титул: название
+ * проекта, заказчик, дата. Если требовать шапку строго в первой строке, такой
+ * файл не импортировался бы вовсе — а данные в нём самые нужные.
+ */
+const HEADER_SCAN_ROWS = 20;
 
 /** Позиция, разобранная из файла (ещё не записанная в базу). */
 export interface ParsedBomPosition {
@@ -51,6 +60,13 @@ export interface ParsedBom {
   skipped: ImportIssue[];
   /** Найденные колонки — показываются в отчёте об импорте. */
   foundColumns: string[];
+  /**
+   * Колонки файла, которым не сопоставлено ни одно поле.
+   *
+   * Показываются в отчёте, чтобы человек увидел: данные не потерялись молча, их
+   * нужно либо назвать иначе, либо донести вручную.
+   */
+  ignoredColumns: string[];
 }
 
 /** Прочитать ячейку как текст с ограничением длины. */
@@ -110,20 +126,36 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
     );
   }
 
-  const columns = resolveBomColumns(rows[0] ?? []);
-  if (!columns) {
+  // Шапка ищется по всему файлу, а не только в первой строке: перед таблицей
+  // часто стоит титул. Берётся первая строка, в которой найдено наименование.
+  let headerIndex = -1;
+  let resolved: ReturnType<typeof resolveBomColumnsWithIgnored> = null;
+  const scanLimit = Math.min(rows.length, HEADER_SCAN_ROWS);
+  for (let index = 0; index < scanLimit; index += 1) {
+    const attempt = resolveBomColumnsWithIgnored(rows[index] ?? []);
+    if (attempt) {
+      headerIndex = index;
+      resolved = attempt;
+      break;
+    }
+  }
+
+  if (!resolved) {
     throw new ValidationError(
-      'Не найдены обязательные колонки «№ п/п» и «Наименование». ' +
-        'Проверьте, что первая строка файла — шапка спецификации',
+      'Не найдена колонка «Наименование» ни в одной из первых строк файла. ' +
+        'Проверьте, что это спецификация, и при необходимости переименуйте столбец',
     );
   }
+
+  const columns: BomColumnIndex = resolved.columns;
+  const ignoredColumns = resolved.ignored;
 
   const positions: ParsedBomPosition[] = [];
   const incomplete: ImportIssue[] = [];
   const skipped: ImportIssue[] = [];
   const takenIds = new Set<string>();
 
-  for (let index = 1; index < rows.length; index += 1) {
+  for (let index = headerIndex + 1; index < rows.length; index += 1) {
     const cells = rows[index] ?? [];
     const sourceLine = index + 1;
     const name = cellText(cells, columns.name);
@@ -139,7 +171,7 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
     const requiredQty = cellQty(cells, columns.requiredQty);
     const reservedQty = cellQty(cells, columns.reservedQty);
     const deadline = cellDate(cells, columns.deadline);
-    const rowNo = columns.rowNo === -1 ? index : toNumber(cells[columns.rowNo]);
+    const rowNo = columns.rowNo === -1 ? index - headerIndex : toNumber(cells[columns.rowNo]);
 
     const materialKey = buildMaterialKey({ code, manufacturer, name, model, unit });
     const positionId = buildPositionId(bomCode, materialKey, takenIds);
@@ -181,5 +213,5 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
     );
   }
 
-  return { positions, incomplete, skipped, foundColumns: describeColumns(columns) };
+  return { positions, incomplete, skipped, foundColumns: describeColumns(columns), ignoredColumns };
 }
