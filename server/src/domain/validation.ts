@@ -40,8 +40,16 @@ export function validatePosition(
   };
 }
 
-/** Человекочитаемый список незаполненных обязательных полей. */
-export function describeMissingFields(missing: ValidationResult['missing']): string[] {
+/**
+ * Человекочитаемый список незаполненных обязательных полей.
+ *
+ * Принимает и неполный набор: отчёт импорта показывает не все поля, а только
+ * те, которые действительно должен дозаполнить человек (срок поставки он
+ * спрашивает отдельным окном и в этот список не выносит).
+ */
+export function describeMissingFields(
+  missing: Partial<ValidationResult['missing']>,
+): string[] {
   const labels: Array<[keyof ValidationResult['missing'], string]> = [
     ['rowNo', '№ п/п'],
     ['name', 'Наименование'],
