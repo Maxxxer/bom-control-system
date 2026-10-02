@@ -77,6 +77,14 @@ export interface ParsedBom {
    * нужно либо назвать иначе, либо донести вручную.
    */
   ignoredColumns: string[];
+  /**
+   * Повторы распознанной колонки, названные иначе (`Ед.изм` и `Ед. изм`).
+   *
+   * Не ошибка и не потеря данных: значение берётся из первого столбца. Показываются,
+   * чтобы человек знал, что в файле есть две одинаковые колонки и правка второй
+   * не попадёт в систему.
+   */
+  duplicateColumns: Array<{ header: string; sameAs: string }>;
 }
 
 /** Прочитать ячейку как текст с ограничением длины. */
@@ -159,6 +167,7 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
 
   const columns: BomColumnIndex = resolved.columns;
   const ignoredColumns = resolved.ignored;
+  const duplicateColumns = resolved.duplicates;
 
   const positions: ParsedBomPosition[] = [];
   const incomplete: ImportIssue[] = [];
@@ -233,6 +242,7 @@ export function parseBomRows(params: { bomCode: string; rows: readonly string[][
     skipped,
     foundColumns: describeColumns(columns),
     ignoredColumns,
+    duplicateColumns,
     missingDeadline,
   };
 }

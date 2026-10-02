@@ -53,6 +53,12 @@ export interface BomImportReport {
    */
   ignoredColumns: string[];
   /**
+   * Повторы распознанной колонки (`Ед.изм` и `Ед. изм` — одно поле). Значение
+   * берётся из первого столбца; наличие повтора показывается, чтобы правка во
+   * втором не выглядела потерянной.
+   */
+  duplicateColumns: Array<{ header: string; sameAs: string }>;
+  /**
    * Позиции без крайнего срока поставки. По этому числу интерфейс показывает окно
    * ввода даты и проставляет её всем незаполненным позициям одной командой.
    */
@@ -144,6 +150,7 @@ export async function importBomFromFile(
     totalInFile: parsed.positions.length,
     foundColumns: parsed.foundColumns,
     ignoredColumns: parsed.ignoredColumns,
+    duplicateColumns: parsed.duplicateColumns,
     missingDeadline: parsed.missingDeadline,
     incomplete: parsed.incomplete,
     skipped: parsed.skipped,

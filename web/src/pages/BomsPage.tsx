@@ -345,6 +345,14 @@ export function BomsPage() {
             ) : null}
           </div>
           <div className="muted">Распознаны колонки: {report.foundColumns.join(', ')}</div>
+          {report.duplicateColumns?.length ? (
+            <div className="muted">
+              Повтор одной колонки (используется первая):{' '}
+              {report.duplicateColumns
+                .map((item) => `${item.header} = ${item.sameAs}`)
+                .join(', ')}
+            </div>
+          ) : null}
           {report.ignoredColumns?.length ? (
             <div className="muted">
               Не сопоставлено с полями (данные этих столбцов не импортированы):{' '}

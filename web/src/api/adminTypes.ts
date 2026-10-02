@@ -55,6 +55,8 @@ export interface BomImportReport {
   foundColumns: string[];
   /** Колонки файла, не сопоставленные ни с одним полем. */
   ignoredColumns: string[];
+  /** Повторы распознанной колонки (`Ед.изм` и `Ед. изм` — одно поле). */
+  duplicateColumns: Array<{ header: string; sameAs: string }>;
   /** Позиции без крайнего срока поставки: интерфейс предложит ввести дату. */
   missingDeadline: number;
   incomplete: Array<{ sourceLine: number; name: string; reason: string }>;

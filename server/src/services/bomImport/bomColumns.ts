@@ -119,6 +119,16 @@ export interface ResolvedBomColumns {
   columns: BomColumnIndex;
   /** Заголовки колонок файла, не сопоставленные ни с одним полем. */
   ignored: string[];
+  /**
+   * Повторы уже распознанной колонки, написанные иначе: `Ед.изм` и `Ед. изм` —
+   * одно и то же поле.
+   *
+   * Отделены от `ignored` намеренно: это не потерянные данные и не неизвестный
+   * столбец — человек просто назвал одно поле двумя способами. Значение берётся
+   * из первой колонки, а наличие повтора показывается в отчёте, чтобы правка в
+   * одной из них не выглядела потерянной.
+   */
+  duplicates: Array<{ header: string; sameAs: string }>;
 }
 
 /**
@@ -157,7 +167,10 @@ export function findHeaderIndex(headers: readonly string[], candidates: readonly
 /**
  * Найти колонку по совпадению начала строки: `Наименование 2206` → «Наименование».
  *
- * Возвращает -1, если под заголовок подходит сразу несколько синонимов: такой
+ * Здесь же ловится каноническое равенство — `Ед изм` и `Ед.изм` после сведения к
+ * буквам и цифрам дают одну и ту же форму, хотя различаются пробелом и точкой.
+ *
+ * Возвращает -1, если под заголовок подходит сразу несколько колонок: такой
  * случай означает, что колонку невозможно определить однозначно, и угадывать
  * опаснее, чем показать её в отчёте как нераспознанную.
  */
@@ -169,15 +182,16 @@ function findHeaderIndexByPrefix(
   let found = -1;
   for (const candidate of candidates) {
     const form = canonical(candidate);
-    // Короткие синонимы дают случайные совпадения («Модель» ⊂ «Моделирование»),
+    // Короткие синонимы дают случайные совпадения («Ед» ⊂ «Ед. изм поставки»),
     // поэтому по началу строки ищем только по существенному началу слова.
     if (form.length < 4) {
       continue;
     }
     for (let index = 0; index < forms.length; index += 1) {
-      if (forms[index] === form || !forms[index]?.startsWith(form)) {
+      if (!forms[index]?.startsWith(form)) {
         continue;
       }
+      // Совпадение с двумя разными колонками файла — неоднозначность.
       if (found !== -1 && found !== index) {
         return -1;
       }
@@ -232,8 +246,28 @@ export function resolveBomColumnsWithIgnored(headers: readonly string[]): Resolv
     return null;
   }
 
-  const ignored = text.filter(
-    (header, index) => header !== '' && !taken.has(index),
-  );
-  return { columns, ignored };
+  // Каноническая форма уже сопоставленных заголовков: по ней повтор той же
+  // колонки отличается от действительно неизвестного столбца.
+  const takenForms = new Map<string, string>();
+  for (let index = 0; index < text.length; index += 1) {
+    if (taken.has(index) && text[index]) {
+      takenForms.set(canonical(text[index]), text[index]);
+    }
+  }
+
+  const ignored: string[] = [];
+  const duplicates: Array<{ header: string; sameAs: string }> = [];
+  for (let index = 0; index < text.length; index += 1) {
+    const header = text[index];
+    if (header === '' || taken.has(index)) {
+      continue;
+    }
+    const sameAs = takenForms.get(canonical(header));
+    if (sameAs) {
+      duplicates.push({ header, sameAs });
+    } else {
+      ignored.push(header);
+    }
+  }
+  return { columns, ignored, duplicates };
 }
