@@ -295,6 +295,7 @@ export function BomsPage() {
     {
       key: 'code',
       title: 'Спецификация',
+      width: '320px',
       sortValue: (row) => row.code,
       render: (row) => (
         <div className="mono">
@@ -307,17 +308,20 @@ export function BomsPage() {
       key: 'positions',
       title: 'Позиций',
       numeric: true,
+      width: '96px',
       sortValue: (row) => row.positionCount,
       render: (row) => row.positionCount,
     },
     {
       key: 'source',
       title: 'Источник',
+      width: '200px',
       render: (row) => row.sourceNote || <span className="muted">—</span>,
     },
     {
       key: 'done',
       title: 'Состояние',
+      width: '128px',
       sortValue: (row) => (row.isDone ? 1 : 0),
       render: (row) =>
         row.isDone ? (
@@ -329,12 +333,14 @@ export function BomsPage() {
     {
       key: 'updatedAt',
       title: 'Обновлена',
+      width: '150px',
       sortValue: (row) => row.updatedAt,
       render: (row) => formatDateTime(row.updatedAt),
     },
     {
       key: 'actions',
       title: 'Действия',
+      width: '260px',
       render: (row) => (
         <div className="row tight">
           <button

@@ -124,7 +124,7 @@ export function DeficitPage() {
     {
       key: 'bom',
       title: 'Спецификация',
-      width: '190px',
+      width: '160px',
       sortValue: (row) => row.bomName,
       text: (row) => row.bomName,
       render: (row) => <BomCell bomName={row.bomName} projectCode={row.projectCode} />,
@@ -132,7 +132,7 @@ export function DeficitPage() {
     {
       key: 'material',
       title: 'Материал',
-      width: '360px',
+      width: '300px',
       sticky: true,
       sortValue: (row) => `${row.materialName} ${row.model}`,
       text: (row) => row.materialName,
@@ -148,7 +148,7 @@ export function DeficitPage() {
     {
       key: 'unit',
       title: 'Ед.',
-      width: '64px',
+      width: '56px',
       text: (row) => row.unit,
       render: (row) => row.unit,
     },
@@ -156,7 +156,7 @@ export function DeficitPage() {
       key: 'deficitQty',
       title: 'Потребность',
       numeric: true,
-      width: '110px',
+      width: '100px',
       sortValue: (row) => row.deficitQty,
       text: (row) => formatQty(row.deficitQty),
       render: (row) => formatQty(row.deficitQty),
@@ -165,7 +165,7 @@ export function DeficitPage() {
       key: 'orderedQty',
       title: 'Заказано',
       numeric: true,
-      width: '100px',
+      width: '92px',
       sortValue: (row) => row.orderedQty,
       text: (row) => formatQty(row.orderedQty),
       bulkField: 'orderedQty',
@@ -182,7 +182,7 @@ export function DeficitPage() {
     {
       key: 'expectedDate',
       title: 'Ожидаемая поставка',
-      width: '120px',
+      width: '150px',
       sortValue: (row) => row.expectedDate ?? '',
       text: (row) => (row.expectedDate ? formatDate(row.expectedDate) : ''),
       bulkField: 'expectedDate',
@@ -198,8 +198,14 @@ export function DeficitPage() {
     },
     {
       key: 'realDelivery',
-      title: 'Поставлено',
-      width: '96px',
+      /*
+       * Заголовок намеренно пустой. Колонка узкая — под слова «Поставлено» (~100px)
+       * места нет, а обрезанная надпись «ПОСТА…» ничего не объясняет и выглядит
+       * как поломка вёрстки. Смысл колонки указан на самой галочке: при наведении
+       * и для программ экранного доступа там подсказка «Реальная поставка».
+       */
+      title: '',
+      width: '44px',
       // Галочка в тексте: «да» ставит полный объём поставки, пусто — снимает отметку.
       text: (row) => (row.realDelivery ? 'да' : ''),
       bulkField: 'realDeliveryChecked',
@@ -218,7 +224,7 @@ export function DeficitPage() {
     {
       key: 'deadline',
       title: 'Крайний срок',
-      width: '120px',
+      width: '116px',
       sortValue: (row) => row.deadline ?? '',
       text: (row) => (row.deadline ? formatDate(row.deadline) : ''),
       bulkField: 'deadline',
@@ -236,7 +242,7 @@ export function DeficitPage() {
     {
       key: 'status',
       title: 'Состояние',
-      width: '176px',
+      width: '164px',
       sortValue: (row) => row.statusKey,
       text: (row) => row.statusText,
       render: (row) => (

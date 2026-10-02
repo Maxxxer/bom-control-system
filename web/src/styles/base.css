@@ -325,6 +325,14 @@ li + li {
   gap: 3px;
 }
 
+/* Обрезка содержимого ячейки по её границе: без этого содержимое в таблице с
+   автоматической раскладкой вылезает в соседнюю колонку, и буквы накладываются. */
+.cell-clip {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 /* Перечень прав роли: длинный текст не растягивает колонку */
 .permissions-cell {
   max-width: 340px;
@@ -358,7 +366,10 @@ li + li {
 }
 
 .truncate-note {
-  max-width: 260px;
+  /* `min(…, 100%)` — обязательное ограничение: в таблице без жёсткой раскладки
+     блок шириной 260px шире своей ячейки вылезал бы в соседнюю колонку, и буквы
+     накладывались бы друг на друга. */
+  max-width: min(260px, 100%);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -375,7 +386,9 @@ li + li {
  */
 .cell-single {
   display: block;
-  max-width: 340px;
+  /* Верхняя граница не должна превышать ширину ячейки: иначе в таблице с
+     автоматической раскладкой блок вылезет в соседнюю колонку. */
+  max-width: min(340px, 100%);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -383,12 +396,12 @@ li + li {
 
 /* Узкая колонка: «Спецификация», «Исполнитель» и прочие короткие значения */
 .cell-single.narrow {
-  max-width: 190px;
+  max-width: min(190px, 100%);
 }
 
 /* Широкая колонка: наименование материала */
 .cell-single.wide {
-  max-width: 460px;
+  max-width: min(460px, 100%);
 }
 
 /* Вторая часть значения внутри однострочной ячейки — мельче и бледнее */
@@ -406,6 +419,15 @@ li + li {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
+  /*
+   * Горизонтальная прокрутка на широкой таблице неизбежна — колонок больше, чем
+   * поместится в экран, и сжимать их до нечитаемого состояния хуже. Поэтому её
+   * не прячем, а делаем предсказуемой: инерционная прокрутка на сенсорных
+   * экранах и запрет «перехватывать» колесо страницы при прокрутке таблицы вбок
+   * (иначе рядом прокручивается вся страница целиком).
+   */
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-scroll::-webkit-scrollbar {
@@ -551,6 +573,13 @@ table.data td.sticky-left {
 /* Шапка липких колонок должна перекрывать и заголовки, и ячейки */
 table.data th.sticky-left {
   z-index: 3;
+  /*
+   * Здесь `background: inherit` не годится: в углу «шапка × липкая колонка» под
+   * ячейкой всё равно видно уезжающие по горизонтали заголовки, потому что
+   * цвет строки под углом — это зебра, а не шапка. Поэтому у ячейки-заголовка
+   * липкой колонки своя сплошная подложка — цвет полосы шапки.
+   */
+  background: var(--surface-band);
   box-shadow: inset -1px 0 0 var(--line-strong);
 }
 
@@ -629,11 +658,62 @@ table.data th.sticky-left {
 
 /* ── Узкий экран ─────────────────────────────────────────────────── */
 
-@media (max-width: 820px) {
+/*
+ * Три целевых экрана и что для них важно:
+ *
+ *   1920×1080 (24" Full HD) — основной рабочий экран кладовщика и снабженца.
+ *     Ничего не трогаем: плотные строки, все колонки на месте, горизонтальной
+ *     прокрутки быть не должно. Если колонки не помещаются, страница уезжает
+ *     вбок — это сигнал «экран мельче задуманного», а не повод сжимать колонки.
+ *
+ *   1280 и планшет (≤1024) — влезает не всё. Уменьшаем поля ячеек и отступы
+ *     страницы: это возвращает примерно 60–80 пикселей ширины, которых не
+ *     хватает на последние колонки. Колонки не трогаем — иначе числа в
+ *     «Заказано» начнут переноситься, а это худший вид поломки на складе.
+ *
+ *   Телефон (≤640) — таблица прокручивается вбок целиком. Данные рабочего
+ *     места на телефоне не редактируют, но посмотреть остатки и дефицит должны
+ *     без зума. Поэтому шапка и подвал прячутся, кнопки становятся крупнее, а
+ *     карточки показателей выстраиваются в одну колонку.
+ */
+
+@media (min-width: 1600px) {
+  .app-main {
+    max-width: 1800px;
+  }
+
+  .app-header-inner,
+  .app-nav-inner {
+    max-width: 1800px;
+  }
+}
+
+@media (max-width: 1024px) {
+  :root {
+    /* Более узкие поля ячеек: возвращают ширину последним колонкам. */
+    --table-cell-px: 6px;
+    --gap-lg: 16px;
+  }
+
   .app-main {
     padding: var(--gap) var(--gap) var(--gap-lg);
   }
 
+  .page-head {
+    padding: 14px 16px;
+  }
+
+  /* Колонка материала — самая широкая, ей первой и уступаем место. */
+  .cell-single.wide {
+    max-width: min(320px, 100%);
+  }
+
+  .grid-cards {
+    grid-template-columns: repeat(auto-fill, minmax(min(196px, 100%), 1fr));
+  }
+}
+
+@media (max-width: 820px) {
   .app-header-inner {
     padding: 10px var(--gap);
   }
@@ -656,6 +736,116 @@ table.data th.sticky-left {
 
   .brand-divider {
     display: none;
+  }
+
+  /*
+   * Клавиатура на телефоне закрывает нижнюю часть экрана, поэтому «прибитая» к
+   * верху высота таблицы съедала бы полезную площадь: считаем от 100dvh, где он
+   * учитывает видимую часть, и отступаем меньше, потому что шапка стала ниже.
+   */
+  .table-scroll {
+    max-height: calc(100dvh - 168px);
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --fs-md: 13px;
+    --table-fs: 12.5px;
+    --table-cell-px: 6px;
+    --control-height: 38px;
+  }
+
+  .app-main {
+    padding: var(--gap-sm) var(--gap-sm) var(--gap-lg);
+  }
+
+  /* Подвал и шапка на телефоне занимают место, ничего не добавляя: убираем. */
+  .app-footer {
+    display: none;
+  }
+
+  .app-header-inner {
+    padding: 8px var(--gap-sm);
+    gap: var(--gap-sm);
+  }
+
+  .brand-name .brand-sub {
+    display: none;
+  }
+
+  /* Заголовок занимал треть экрана телефона */
+  h1 {
+    font-size: var(--fs-xl);
+  }
+
+  .page,
+  .app-main {
+    gap: var(--gap);
+  }
+
+  .grid-cards {
+    grid-template-columns: 1fr;
+    gap: var(--gap-sm);
+  }
+
+  /* Карточка показателей на телефоне — одна широкая полоса, а не плитка */
+  .card {
+    padding: 10px 12px;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--gap-sm);
+  }
+
+  .card .card-value {
+    font-size: 22px;
+  }
+
+  .card .card-note {
+    text-align: right;
+  }
+
+  /* Модальное окно: на телефоне — лист от низа экрана, а не карточка по центру */
+  .modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-top-width: 3px;
+    padding: 18px var(--gap) calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .modal h3 {
+    font-size: var(--fs-lg);
+  }
+
+  .modal .modal-actions {
+    /* Кнопки во всю ширину: на телефоне мелкая кнопка не попадает под палец */
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .modal .modal-actions .btn {
+    justify-content: center;
+    min-height: 42px;
+    width: 100%;
+  }
+
+  /* Область перетаскивания файлов на телефоне бесполезна — выбор файла есть,
+     но область всё равно должна занимать разумное место, а не всю страницу. */
+  .drop-zone {
+    padding: var(--gap);
+    flex-wrap: wrap;
+  }
+
+  .drop-zone-text {
+    flex-basis: 100%;
+    order: 2;
   }
 }
 

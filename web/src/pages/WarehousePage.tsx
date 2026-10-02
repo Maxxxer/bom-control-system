@@ -90,12 +90,19 @@ export function WarehousePage() {
     {
       key: 'material',
       title: 'Материал',
+      /*
+       * Ширина объявлена у КАЖДОЙ колонки — иначе таблица лишается жёсткой
+       * раскладки: браузер подгоняет колонки под содержимое, ячейки перестают
+       * обрезаться по границе, и текст соседних колонок накладывается друг на
+       * друга.
+       */
+      width: '340px',
       sortValue: (row) => `${row.name} ${row.model}`,
       text: (row) => row.name,
       render: (row) => (
-        <div>
-          <div>{row.name}</div>
-          <div className="mono muted">
+        <div className="cell-clip">
+          <div className="cell-single wide">{row.name}</div>
+          <div className="mono muted cell-single wide">
             {row.model}
             {row.code ? ` · ${row.code}` : ''}
             {row.manufacturer ? ` · ${row.manufacturer}` : ''}
@@ -103,10 +110,17 @@ export function WarehousePage() {
         </div>
       ),
     },
-    { key: 'unit', title: 'Ед.', text: (row) => row.unit, render: (row) => row.unit },
+    {
+      key: 'unit',
+      title: 'Ед.',
+      width: '64px',
+      text: (row) => row.unit,
+      render: (row) => row.unit,
+    },
     {
       key: 'warehouseQty',
       title: 'Остаток',
+      width: '108px',
       sortValue: (row) => row.warehouseQty,
       text: (row) => formatQty(row.warehouseQty),
       bulkField: 'warehouseQty',
@@ -124,6 +138,7 @@ export function WarehousePage() {
       key: 'reservedQty',
       title: 'Резерв',
       numeric: true,
+      width: '92px',
       sortValue: (row) => row.reservedQty,
       text: (row) => formatQty(row.reservedQty),
       render: (row) => formatQty(row.reservedQty),
@@ -132,6 +147,7 @@ export function WarehousePage() {
       key: 'freeQty',
       title: 'Свободно',
       numeric: true,
+      width: '96px',
       sortValue: (row) => row.freeQty,
       text: (row) => formatQty(row.freeQty),
       render: (row) => formatQty(row.freeQty),
@@ -140,6 +156,7 @@ export function WarehousePage() {
       key: 'positions',
       title: 'Позиций',
       numeric: true,
+      width: '88px',
       sortValue: (row) => row.positionsCount,
       text: (row) => String(row.positionsCount),
       render: (row) => row.positionsCount,
@@ -148,6 +165,7 @@ export function WarehousePage() {
       key: 'requiredTotal',
       title: 'Потребность',
       numeric: true,
+      width: '116px',
       sortValue: (row) => row.requiredTotal,
       text: (row) => formatQty(row.requiredTotal),
       render: (row) => formatQty(row.requiredTotal),
@@ -155,6 +173,7 @@ export function WarehousePage() {
     {
       key: 'flag',
       title: 'Состояние',
+      width: '164px',
       sortValue: (row) => (row.inconsistent ? 0 : 1),
       render: (row) =>
         row.inconsistent ? (

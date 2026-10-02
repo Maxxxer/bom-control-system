@@ -34,6 +34,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -73,13 +74,20 @@ export interface Column<Row> {
   render: (row: Row) => ReactNode;
   /** Числовой столбец: выравнивание вправо и моноширинный шрифт. */
   numeric?: boolean;
+  /**
+   * Ширина колонки в пикселях. Задавать нужно у КАЖДОЙ колонки: иначе таблица
+   * лишается жёсткой раскладки, браузер подгоняет колонки под содержимое, и
+   * содержимое соседних ячеек начинает накладываться друг на друга.
+   *
+   * Сумма ширин — это минимальная ширина таблицы. Дальше она растягивается до
+   * ширины окна, а лишнее делится между колонками пропорционально.
+   */
   width?: string;
   /**
    * Колонка прилипает к левому краю при горизонтальной прокрутке.
    *
    * Липкими могут быть только первые колонки, по порядку и без пропусков: если
-   * оставить «щель», в неё будет видно уезжающее содержимое. Требуется ширина в
-   * пикселях — по ней считается смещение следующей липкой колонки.
+   * оставить «щель», в неё будет видно уезжающее содержимое.
    */
   sticky?: boolean;
   /**
@@ -187,18 +195,28 @@ function declaredWidthOf<Row>(columns: Array<Column<Row>>): number {
 /**
  * Смещения липких колонок от левого края.
  *
+ * Смещения НЕ считаются от объявленных ширин: таблица растягивается на всю
+ * ширину окна, поэтому фактические ширины колонок больше объявленных, и посчитанное
+ * по объявленным смещение меньше нужного. Липкая колонка тогда наезжает на
+ * соседнюю — это и есть «буквы наложились друг на друга».
+ *
+ * Поэтому смещение берётся из DOM: `offsetLeft` липкой ячейки заголовка уже
+ * равен её настоящему положению. Значение пересчитывается по `ResizeObserver` —
+ * при изменении ширины окна, плотности строк и появлении полосы прокрутки.
+ *
  * Обход прекращается на первой нелипкой колонке: липкий «островок» в середине
  * таблицы бессмысленен — под ним всё равно прокручивается содержимое.
  */
-function stickyOffsetsOf<Row>(columns: Array<Column<Row>>): Map<string, number> {
+function measureStickyOffsets(container: HTMLElement | null): Map<string, number> {
   const offsets = new Map<string, number>();
-  let offset = 0;
-  for (const column of columns) {
-    if (!column.sticky) {
-      break;
+  if (!container) {
+    return offsets;
+  }
+  for (const header of container.querySelectorAll<HTMLTableCellElement>('th.sticky-left')) {
+    const key = header.dataset.columnKey;
+    if (key) {
+      offsets.set(key, header.offsetLeft);
     }
-    offsets.set(column.key, offset);
-    offset += widthInPixels(column.width);
   }
   return offsets;
 }
@@ -283,7 +301,30 @@ export function DataTable<Row>({
     });
   }, [rows, columns, sort]);
 
-  const stickyOffsets = useMemo(() => stickyOffsetsOf(columns), [columns]);
+  /*
+   * Фактические смещения липких колонок, снятые с разметки.
+   *
+   * Пока таблица не отрисована, смещений нет — и липкие ячейки просто не
+   * прилипают. Это лучше, чем прилипнуть не туда: после первой разметки
+   * `ResizeObserver` пересчитает смещения по-настоящему.
+   */
+  const [stickyOffsets, setStickyOffsets] = useState<Map<string, number>>(
+    () => new Map<string, number>(),
+  );
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const apply = (): void => {
+      setStickyOffsets(measureStickyOffsets(container));
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [columns]);
   // Ширины всех колонок известны → таблица получает точную ширину, а раскладка
   // становится жёсткой: объявленные ширины совпадают с фактическими, и смещения
   // липких колонок точны.
@@ -649,7 +690,18 @@ export function DataTable<Row>({
       >
         <table
           className={tableWidth ? 'data fixed' : 'data'}
-          style={tableWidth ? { width: `${tableWidth}px` } : undefined}
+          style={
+            tableWidth
+              ? /*
+                 * Ширина — по окну, но не уже суммы объявленных колонок: на
+                 * широком экране колонки растягиваются и таблица занимает всё
+                 * место, а на узком не сжимается, а прокручивается вбок. Раньше
+                 * ширина жёстко равнялась сумме колонок, и на 24" Full HD справа
+                 * оставалась пустая полоса в треть экрана.
+                 */
+                { width: '100%', minWidth: `${tableWidth}px` }
+              : undefined
+          }
         >
           <thead>
             <tr>
@@ -660,6 +712,7 @@ export function DataTable<Row>({
                 return (
                   <th
                     key={column.key}
+                    data-column-key={column.key}
                     className={offset === undefined ? undefined : 'sticky-left'}
                     style={cellStyle(column.width, offset)}
                     aria-sort={
