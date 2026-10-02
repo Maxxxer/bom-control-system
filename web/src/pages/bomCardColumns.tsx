@@ -2,9 +2,12 @@
  * Колонки карточки спецификации: правка полей спецификации прямо в строке.
  *
  * Что здесь важно и почему так:
- *   * редактируются ТОЛЬКО поля спецификации — операционные («Заказано»,
- *     «Поставлено», «Ожидаемая поставка») показаны как есть: у них свои рабочие
- *     места и свои права ролей;
+ *   * карточка показывает ТОЛЬКО то, чем занимается экономист: описание позиции,
+ *     количество, резерв и срок. Операционные поля («Заказано», «Поставлено»,
+ *     «Ожидаемая поставка») и служебные («Состояние», «Жизненный цикл») убраны —
+ *     у них свои рабочие экраны и свои роли, а в карточке они только шумят и
+ *     отвлекают от того, что здесь правят. Состояние позиции видно по строке
+ *     (цветом и значком «Ошибка данных»), а на рабочих местах — в своих колонках;
  *   * «№» и «Материал» прилипают к левому краю: колонок много, и без этого при
  *     горизонтальной прокрутке строка теряет опознаваемость (см. `DataTable`);
  *   * значение строки показано в одну линию: наименование и модель не
@@ -15,26 +18,16 @@
  *
  * Про массовый ввод. У каждой правящейся колонки указаны `bulkField` (имя поля,
  * которое понимает массовая правка) и текст значения — благодаря этому колонка
- * участвует в выделении и вставке блока из Excel. Операционные колонки остаются
- * только для чтения: их правит своя роль на своём экране, и вставка в них не
- * притворяется допустимой — таблица честно сообщает, сколько ячеек пропущено.
+ * участвует в выделении и вставке блока из Excel.
  */
 
 import type { PositionDto } from '../api/types.js';
 import { formatDate, formatQty } from '../format.js';
-import { Badge, StatusBadge } from '../ui/Badge.js';
 import type { Column } from '../ui/DataTable.js';
 import { EditableDate } from '../ui/EditableDate.js';
 import { EditableNumber } from '../ui/EditableNumber.js';
 import { EditableText } from '../ui/EditableText.js';
-import { lifecycleKind, lifecycleText, supplyStateText } from './positionLabels.js';
-import {
-  materialHint,
-  missingHint,
-  missingSummary,
-  SPEC_FIELD_LABEL,
-  type SpecFieldName,
-} from './bomSpecFields.js';
+import { materialHint, SPEC_FIELD_LABEL, type SpecFieldName } from './bomSpecFields.js';
 
 /** Сохранение одного поля спецификации; `true` — данные изменились. */
 export type SaveSpecField = (
@@ -215,32 +208,6 @@ export function buildBomCardColumns(
       ),
     },
     {
-      key: 'ordered',
-      title: 'Заказано',
-      numeric: true,
-      width: '92px',
-      sortValue: (row) => row.quantities.orderedQty,
-      text: (row) => formatQty(row.quantities.orderedQty),
-      render: (row) => formatQty(row.quantities.orderedQty),
-    },
-    {
-      key: 'delivery',
-      title: 'Поставлено',
-      numeric: true,
-      width: '104px',
-      sortValue: (row) => row.quantities.realDeliveryQty,
-      text: (row) => formatQty(row.quantities.realDeliveryQty),
-      render: (row) => formatQty(row.quantities.realDeliveryQty),
-    },
-    {
-      key: 'expected',
-      title: 'Ожидаемая поставка',
-      width: '116px',
-      sortValue: (row) => row.expectedDate ?? '',
-      text: (row) => (row.expectedDate ? formatDate(row.expectedDate) : ''),
-      render: (row) => <span className="mono">{formatDate(row.expectedDate)}</span>,
-    },
-    {
       key: 'deadline',
       title: 'Крайний срок',
       width: '116px',
@@ -255,38 +222,6 @@ export function buildBomCardColumns(
           disabled={locked}
           title={fieldHint(editable, 'deadline')}
           onSave={(next) => params.onSave(row, 'deadline', next)}
-        />
-      ),
-    },
-    {
-      key: 'state',
-      title: 'Состояние',
-      width: '140px',
-      sortValue: (row) => row.computed.supplyState,
-      text: (row) =>
-        row.computed.valid ? supplyStateText(row.computed.supplyState) : missingSummary(row),
-      render: (row) =>
-        row.computed.valid ? (
-          <StatusBadge
-            statusKey={row.computed.supplyState}
-            text={supplyStateText(row.computed.supplyState)}
-          />
-        ) : (
-          <span className="badge bad" title={missingHint(row)}>
-            Ошибка: {missingSummary(row)}
-          </span>
-        ),
-    },
-    {
-      key: 'lifecycle',
-      title: 'Жизненный цикл',
-      width: '128px',
-      sortValue: (row) => row.lifecycle,
-      text: (row) => lifecycleText(row.lifecycle),
-      render: (row) => (
-        <Badge
-          text={lifecycleText(row.lifecycle)}
-          kind={lifecycleKind(row.lifecycle) as 'ok' | 'bad' | 'neutral'}
         />
       ),
     },

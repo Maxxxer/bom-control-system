@@ -30,7 +30,24 @@ import { useToast } from '../ui/ToastProvider.js';
 import { buildBomCardColumns } from './bomCardColumns.js';
 import { requiresFix, touchesMaterialKey, type SpecFieldName } from './bomSpecFields.js';
 
-export function BomCardPanel({ code, onClose }: { code: string; onClose: () => void }) {
+/** Свойства карточки спецификации. */
+export interface BomCardPanelProps {
+  code: string;
+  onClose: () => void;
+  /**
+   * Режим дозаполнения после импорта.
+   *
+   * Появляется, когда экономист выбрал «Ввести отсутствующие позиции»: карточка
+   * открывается на правку, а внизу — кнопка «Сохранить и продолжить». Кнопка не
+   * записывает данные (каждое поле сохраняется сразу при вводе), а проверяет, что
+   * незаполненных позиций не осталось, и только тогда отпускает спецификацию в
+   * процесс. Пока есть недозаполненные строки, она неактивна и показывает их
+   * количество — иначе человек закрыл бы карточку, думая, что всё готово.
+   */
+  onComplete?: () => void;
+}
+
+export function BomCardPanel({ code, onClose, onComplete }: BomCardPanelProps) {
   const { can } = useSession();
   const toast = useToast();
   const { busy, run } = useAction();
@@ -134,10 +151,17 @@ export function BomCardPanel({ code, onClose }: { code: string; onClose: () => v
           </div>
           <div className="hint">
             Массовый ввод: Shift+щелчок выделяет блок ячеек, Ctrl+V вставляет данные из
-            Excel, Ctrl+D заполняет вниз. Операционные колонки («Заказано», «Поставлено»,
-            «Ожидаемая поставка») правятся на своих рабочих местах и в массовый ввод не
-            попадают — эти ячейки будут пропущены с отчётом.
+            Excel, Ctrl+D заполняет вниз. Операционные поля («Заказано», «Поставлено»,
+            «Ожидаемая поставка») в карточке не показаны — их ведут снабженец и
+            кладовщик на своих экранах.
           </div>
+          {onComplete ? (
+            <div className="hint">
+              Заполните пропущенные поля и нажмите «Сохранить и продолжить». Каждая
+              правка сохраняется сразу; кнопка лишь проверит, что незаполненных
+              позиций не осталось, и отправит спецификацию в работу.
+            </div>
+          ) : null}
         </div>
         <div className="row tight">
           {brokenCount > 0 ? (
@@ -202,6 +226,39 @@ export function BomCardPanel({ code, onClose }: { code: string; onClose: () => v
             busy={busy}
             onApplied={reload}
           />
+
+          {onComplete ? (
+            <div className="action-bar">
+              <span className="count">
+                {brokenCount > 0
+                  ? `Не заполнены обязательные поля в ${brokenCount} поз.`
+                  : 'Все позиции заполнены — можно продолжать'}
+              </span>
+              {brokenCount > 0 ? (
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  onClick={() => setOnlyErrors(true)}
+                  disabled={busy}
+                >
+                  Показать только их
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn primary"
+                disabled={busy || brokenCount > 0}
+                title={
+                  brokenCount > 0
+                    ? 'Сначала заполните обязательные поля во всех позициях'
+                    : 'Отправить спецификацию в работу'
+                }
+                onClick={onComplete}
+              >
+                Сохранить и продолжить
+              </button>
+            </div>
+          ) : null}
         </>
       ) : null}
     </section>

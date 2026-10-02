@@ -26,6 +26,7 @@ import { useSession } from '../session/SessionContext.js';
 import { Column, DataTable } from '../ui/DataTable.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DropZone } from '../ui/DropZone.js';
+import { AllMaterialsDialog } from '../ui/AllMaterialsDialog.js';
 import { DeadlinePromptDialog } from '../ui/DeadlinePromptDialog.js';
 import { useToast } from '../ui/ToastProvider.js';
 import { Icon } from '../ui/icons.js';
@@ -54,12 +55,22 @@ interface DeadlinePrompt {
   count: number;
 }
 
+/** Спецификация, для которой задан вопрос «Все материалы доступны?». */
+interface MaterialsQuestion {
+  bomCode: string;
+  total: number;
+  broken: number;
+  reserved: number;
+}
+
 export function BomsPage() {
   const { can } = useSession();
   const toast = useToast();
   const { busy, run } = useAction();
   const [reports, setReports] = useState<BomImportReport[]>([]);
   const [deadlinePrompt, setDeadlinePrompt] = useState<DeadlinePrompt | null>(null);
+  const [materialsQuestion, setMaterialsQuestion] = useState<MaterialsQuestion | null>(null);
+  const [fixingCode, setFixingCode] = useState('');
   const [openCode, setOpenCode] = useState('');
   const [toDelete, setToDelete] = useState<BomSummary | null>(null);
 
@@ -124,6 +135,9 @@ export function BomsPage() {
       );
       if (canDeadline && withoutDeadline > 0 && target.missingDeadline > 0) {
         setDeadlinePrompt({ bomCode: target.bomCode, count: target.missingDeadline });
+      } else if (canWrite && target.missingDeadline === 0) {
+        // Срок в файле был — сразу переходим к резерву и вопросу о готовности.
+        void reserveAndAsk(target.bomCode);
       }
     }
 
@@ -138,6 +152,47 @@ export function BomsPage() {
     toast.error(
       `Не поддерживается: ${names.join(', ')}. Поддерживаются .xls, .xlsx и .csv`,
     );
+  };
+
+  /**
+ * Скопировать потребность в резерв и задать вопрос «Все материалы доступны?».
+ *
+ * Резерв берётся из потребности («нужно» → «резерв») только там, где он ещё не
+ * заполнен. Если в файле спецификации есть своя колонка «Зарезервировано», её
+ * значения остаются: перетирать цифры, которые привёл экономист, было бы потерей
+ * данных. Без резерва склад не может показать свободный остаток, поэтому он
+ * проставляется сразу после импорта, а не отдельной задачей.
+ *
+ * После резерва карточка перечитывается: из неё берётся честное число
+ * недозаполненных позиций, и вопрос задаётся по факту, а не по отчёту импорта.
+ */
+  const reserveAndAsk = async (bomCode: string): Promise<void> => {
+    const outcome = await run(async () => {
+      const before = await api.fetchBomCard(bomCode);
+      // Резерв нужен только там, где его нет: нулевой резерв и отсутствие колонки
+      // в файле дают одно и то же значение, но взятое из файла число трогать нельзя.
+      const changes = before.positions
+        .filter((position) => !position.quantities.reservedQty && position.quantities.requiredQty > 0)
+        .map((position) => ({
+          positionId: position.positionId,
+          field: 'reservedQty',
+          value: String(position.quantities.requiredQty),
+        }));
+      if (changes.length) {
+        await api.applyPositionsBulk(changes);
+      }
+      const after = await api.fetchBomCard(bomCode);
+      return {
+        reserved: changes.length,
+        total: after.positions.length,
+        broken: after.positions.filter((position) => !position.computed.valid).length,
+      };
+    });
+
+    if (!outcome) {
+      return;
+    }
+    setMaterialsQuestion({ bomCode, ...outcome });
   };
 
   /**
@@ -179,6 +234,38 @@ export function BomsPage() {
         `Дата ${formatDate(isoDate)} проставлена позициям без срока: ${result.applied}`,
       );
     }
+    reload();
+    // Срок задан — дальше резерв из потребности и вопрос о готовности материалов.
+    await reserveAndAsk(target.bomCode);
+  };
+
+  /** Ответ «Да»: все материалы в наличии, спецификация уходит в процесс. */
+  const confirmAllAvailable = (): void => {
+    const question = materialsQuestion;
+    setMaterialsQuestion(null);
+    setReports([]);
+    if (question) {
+      toast.success(
+        `Спецификация «${question.bomCode}» принята в работу: ${question.total} поз. идут по процессу`,
+      );
+    }
+    reload();
+  };
+
+  /** Ответ «Ввести отсутствующие позиции»: открываем правку карточки. */
+  const openMissingPositions = (): void => {
+    const question = materialsQuestion;
+    setMaterialsQuestion(null);
+    if (question) {
+      setFixingCode(question.bomCode);
+    }
+  };
+
+  /** Экономист дозаполнил позиции и нажал «Сохранить и продолжить». */
+  const completeFixing = (bomCode: string): void => {
+    setFixingCode('');
+    setReports([]);
+    toast.success(`Спецификация «${bomCode}» заполнена и принята в работу`);
     reload();
   };
 
@@ -407,6 +494,26 @@ export function BomsPage() {
       ) : null}
 
       {openCode ? <BomCardPanel code={openCode} onClose={() => setOpenCode('')} /> : null}
+
+      {fixingCode ? (
+        <BomCardPanel
+          code={fixingCode}
+          onClose={() => setFixingCode('')}
+          onComplete={() => completeFixing(fixingCode)}
+        />
+      ) : null}
+
+      {materialsQuestion ? (
+        <AllMaterialsDialog
+          bomCode={materialsQuestion.bomCode}
+          total={materialsQuestion.total}
+          broken={materialsQuestion.broken}
+          reserved={materialsQuestion.reserved}
+          busy={busy}
+          onYes={confirmAllAvailable}
+          onFix={openMissingPositions}
+        />
+      ) : null}
 
       {deadlinePrompt ? (
         <DeadlinePromptDialog
